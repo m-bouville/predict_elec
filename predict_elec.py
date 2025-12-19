@@ -111,7 +111,7 @@ STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
 LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles
 LAMBDA_COVERAGE= 0.05
 LAMBDA_DERIV   = 0.1            # derivative weight in loss function
-QUANTILES      = (0.1, 0.5, 0.9)
+QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
 
 NUM_GEO_BLOCKS=[  1,  3,  4,  6]
 GEO_BLOCK_RATIO= 0.5            # each block is half the size of the previous (geometric)
@@ -156,6 +156,13 @@ assert sum(WEIGHTS_META.values()) == 1.
 assert set(WEIGHTS_META.keys()) == {'nn', 'lr', 'rf'}
 assert 1 <= VALIDATE_EVERY <= min(EPOCHS, PATIENCE), \
     (VALIDATE_EVERY, EPOCHS, PATIENCE)
+
+num_quantiles = len(QUANTILES)
+assert all([QUANTILES[i] + QUANTILES[num_quantiles - i - 1] == 1 
+            for i in range(num_quantiles // 2)]), \
+    "quantiles should be symmetric"    # otherwise: hard to interpret
+assert QUANTILES[num_quantiles // 2] == 0.5, "middle quantile must be the median"
+    # the code assumes it is
 
 
 
