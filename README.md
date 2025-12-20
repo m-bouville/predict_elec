@@ -10,11 +10,11 @@ The focus is currently on the half-hourly national French consumption (average: 
 
 
 ### Possible applications
-- Grid operations & unit commitment
-  - requires: avoiding peak underestimation;
-- Short-term electricity price forecasting & trading
-  - requires: better short-term predictions (esp. ramps and extreme events);
-- Long-term planning & energy transition analysis
+- Grid operations, unit commitment
+  - requires: avoiding underestimating peaks;
+- Short-term electricity price forecasting and trading
+  - requires: good short-term predictions (esp. ramps and extreme events);
+- Long-term planning, energy transition analysis
   - requires: interpretability of exogenous variables as causes.
 
 
@@ -22,20 +22,18 @@ The focus is currently on the half-hourly national French consumption (average: 
 ## Current State
 
 ### Model overview
-The current consumption forecasting system revolves around a Neural Network which uses Transformers to predict Quantiles (NNTQ), with direct multi-horizon prediction. Forecasts are produced using direct multi-horizon prediction.
+The current consumption forecasting system revolves around a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ), with direct multi-horizon prediction. Forecasts are produced using direct multi-horizon prediction.
 
 The model outputs multiple quantiles (e.g. `q10`, `q50`, `q90`) for each forecast horizon. The loss includes:
 - pinball (quantile) loss,
-- quantile crossing constraints applied sequentially,
-- sharpness (derivatives)
+- quantile crossing constraints applied sequentially (so that `q10` <= `q50` <= `q90`),
+- sharpness (derivatives).
 
 The NN is trained using:
 - exogenous features (temperature, solar, school holidays),
 - week-ends plus Fourier-like sine waves at different scales (day, year),
-- lagged consumption features and engineered statistics,
 - predictions from baseline models used as features: **linear regression (LR)** and **random forest (RF)**
   - LR and RF are *not* ensembled directly: they are treated as informative input features.
-
 
 
 ### Issues in the current model
@@ -60,6 +58,18 @@ The NN is trained using:
 - **No learned combination of predictors**
   - The meta-model is less powerful than it could be: LR, RF, and NN outputs are statically combined.
   - A learned meta-learner would allow nonlinear bias correction, make weights regime-dependent and improve robustness across seasons and extreme events.
+
+
+### Choice of application
+One further issue is that some questions could not have a clear, unambiguous answer:
+- for validation: should one check all predictions at _t_ individually or aggregate over _H_ horizons?
+- for the meta-model: LR and RF intrinsically make only one prediction for _t_, how to square this with _H_ predictions from the NN?
+
+This arose from the lack of a specific use case. Focusing on one application would allow an univocal answer.
+
+In Europe, prices are set daily at noon for the next day (day-ahead price). Producers and consumers must let the market know what their 48 half-hourly consumptions will be, from _h_ + 12 to _h_ + 36. Gearing the model toward this specific case has two advantages:
+- the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no aggreagtion);
+- the consumption at _t_ is predicted only once: the day before at noon, not _H_ times.
 
 
 
@@ -120,7 +130,7 @@ The implementation will proceed incrementally, keeping the current system as a s
   - Strict horizon alignment between all predictors
 
 - **Possible later extension**
-  - Light (partial) decoder for the meta-model only
+  - Light (partial) decoder
     - Parallel decoding
     - No autoregression
     - Explicit horizon conditioning if needed

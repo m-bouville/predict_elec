@@ -19,6 +19,8 @@ from   sklearn.ensemble        import RandomForestRegressor
 from   sklearn.preprocessing   import StandardScaler
 # from   sklearn.model_selection import TimeSeriesSplit
 
+import matplotlib.pyplot as plt
+        
 
 import architecture, IO
 
@@ -28,70 +30,44 @@ import architecture, IO
 # Create dataframes and vectors
 # ----------------------------------------------------------------------
 
-# def group_features(feature_cols):
-#     """
-#     Split features into:
-#       - known_future_deterministic
-#       - known_future_stochastic
-#       - encoder_only
-
-#     Enforces:
-#       - disjointness
-#       - full coverage
-#     """
-
-#     known_future_deterministic = [
-#         c for c in feature_cols
-#         if (
-#             "sin" in c or "cos" in c
-#             or c in ("is_weekend", "school_holidays")
-#         )
-#     ]
-
-#     known_future_stochastic = [c for c in feature_cols if 'degC' in c]
-#         # c.startswith("T") is too fragile
-
-#     encoder_only = [
-#         c for c in feature_cols
-#         if (
-#             ("SMA" in c) or ("diff" in c) or ("lag" in c) # explicitly based on future
-#             or ("_lr" in c) or ("rf" in c)                # implicitly based on future
-#         )
-#     ]
-        
+def df_features_calendar(dates: pd.DatetimeIndex,
+                verbose: int = 0) -> pd.DataFrame:
     
-#     # Assertions: disjointness
-#     s_det = set(known_future_deterministic)
-#     s_sto = set(known_future_stochastic)
-#     s_enc = set(encoder_only)
-
-#     # Assertions: disjointness
-#     assert s_det.isdisjoint(s_sto), "Overlap: deterministic & stochastic"
-#     assert s_det.isdisjoint(s_enc), "Overlap: deterministic & encoder-only"
-#     assert s_sto.isdisjoint(s_enc), "Overlap: stochastic & encoder-only"
-
-#     # Assertions: full coverage (plus target)
-#     all_grouped = s_det | s_sto | s_enc
-#     expected = set(feature_cols)
-
-#     assert all_grouped == expected, (
-#         "Feature grouping incomplete or inconsistent:\n"
-#         f"Missing: {expected - all_grouped}\n"
-#         f"Extra: {all_grouped - expected}"
-#     )
-
-#     return {
-#         "known_future_deterministic":known_future_deterministic,
-#         "known_future_stochastic":   known_future_stochastic,
-#         "encoder_only":              encoder_only,
-#     }
-
-
-def df_features(dict_fnames: Dict[str, str], output_fname: str,
-                verbose: int = 0) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df, dates_df = IO.load_data(dict_fnames, output_fname)
+    df = pd.DataFrame(index=dates)
     assert isinstance(df.index, pd.DatetimeIndex)
     
+    # periods
+    df['hour_norm'] = (df.index.hour + df.index.minute/60) / 24
+    df['dow_norm']  = (df.index.dayofweek + df['hour_norm']) / 7
+    df['doy_norm']  =  df.index.dayofyear / 365
+    
+    # sine waves
+    for _hours in [12, 24]:  # several periods per day
+        df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
+    
+    df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
+    # df['cos_1wk']  = np.cos(2*np.pi*df['dow_norm'])
+    # df['sin_12mo']  = np.sin(2*np.pi*df['doy_norm'])
+    df['cos_12mo'] = np.cos(2*np.pi*df['doy_norm'])
+    # df['cos_6mo']  = np.cos(4*np.pi*df['doy_norm'])  # 2 periods per year
+    
+    # remove temporary variables
+    df.drop(columns=['hour_norm', 'dow_norm', 'doy_norm'], inplace=True)
+    
+    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16)   # (0: Monday)
+    df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
+    df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
+    
+    if verbose >= 2:
+        print(df.head().to_string())
+    
+    return df
+        
+
+def df_features_consumption(consumption: pd.Series,
+                verbose: int = 0) -> pd.DataFrame:
+    
+    df = consumption.to_frame('consumption_GW')
     
     LAG = 1   # Base lag (30 min), lest we implicitly leak future information
     _shifted_conso = df['consumption_GW'].shift(LAG)
@@ -109,47 +85,40 @@ def df_features(dict_fnames: Dict[str, str], output_fname: str,
          "6h", min_periods= 5*2).mean()
     df["consumption_SMA_24h_GW"] = _shifted_conso.rolling(
         "24h", min_periods=22*2).mean()
+    
+    if verbose >= 2:
+        print(df.tail().to_string())  # head() would be made of NaNs
+    
+    return df.drop(columns=['consumption_GW'])
+   
 
+def df_features(dict_fnames: Dict[str, str], output_fname: str,
+                verbose: int = 0) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    df, dates_df = IO.load_data(dict_fnames, output_fname)
+    assert isinstance(df.index, pd.DatetimeIndex)
     
-    # periods
-    df['hour_norm'] = (df.index.hour + df.index.minute/60) / 24
-    df['dow_norm']  = (df.index.dayofweek + df['hour_norm']) / 7
-    df['doy_norm']  = df.index.dayofyear / 365
-    
-    # sine waves
-    for _hours in [12, 24]:  # several periods per day
-        df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
-    
-    df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
-    # df['cos_1wk']  = np.cos(2*np.pi*df['dow_norm'])
-    # df['sin_12mo']  = np.sin(2*np.pi*df['doy_norm'])
-    df['cos_12mo'] = np.cos(2*np.pi*df['doy_norm'])
-    # df['cos_6mo']  = np.cos(4*np.pi*df['doy_norm'])  # 2 periods per year
-    df.drop(columns=['hour_norm', 'dow_norm', 'doy_norm', 
-                     'year', 'month', 'timeofday', 'dateofyear'], inplace=True)
-    
-    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16)   # (0: Monday)
-    df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
-    df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
-    
-    # school holidays (old: single pd.Series)
-    # df["school_holidays"], dates_df.loc["school_holidays"] = \
-    #     IO.make_school_holidays_indicator(df.index, verbose)
+    # Fourier-like sine waves, weekends
+    df_calendar    = df_features_calendar(df.index, verbose)
 
+    # # moving averages and offsets based on consumption [/!\ risk of leak]
+    # df_consumption = df_features_consumption(df['consumption_GW'], verbose)
+    df_consumption = pd.DataFrame()
+    
+    
     # school holidays (one column per holiday type)
-    holiday_df, dates_df.loc["school_holidays"] = \
+    df_holiday, dates_df.loc["school_holidays"] = \
         IO.make_school_holidays_indicator(df.index, verbose)
-    df = pd.concat([df, holiday_df], axis=1)
-
-    # dates_df.loc["school_holidays"] = [_school_holidays.index.min(), 
-    #                                    _school_holidays.index.max()]
+    first_available = pd.Timestamp("2014-09-15", tz="UTC")
+        # upper bound for return to class
     
-    # print(df["school_holidays"].head(10))
-    # utils.plot_data(df["school_holidays"])
     
-    # Earliest date with valid Ministry data
-    first_available = pd.Timestamp("2014-09-15", tz="UTC")  
-    df = df.loc[df.index >= first_available]
+    # remove columns that are not features
+    df.drop(columns=['year', 'month', 'timeofday', 'dateofyear'], inplace=True)
+    
+    # merge types of features
+    df = pd.concat([df.loc[df.index >= first_available], df_holiday, 
+                    df_calendar, df_consumption], axis=1)
+                                                                                                                 
     
     dates_df.loc["df"]= [df.index.min(), df.index.max()]
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
@@ -158,13 +127,13 @@ def df_features(dict_fnames: Dict[str, str], output_fname: str,
         
     # df['date'] = df.index.year - 2000 + df.index.dayofyear / 365  # for long-term drift
     
-    # print(df.head().to tring())
     
     if verbose >= 1:
         print(dates_df)
     
     if verbose >= 2:
-        import matplotlib.pyplot as plt
+        # print(df.head().to_string())
+    
         plt.figure(figsize=(10,6))
         df.drop(columns=['consumption_GW']).iloc[-(8*24*2):].plot()
         plt.show()
