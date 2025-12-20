@@ -32,7 +32,7 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
                 baseline_losses: Dict[str, Dict[str, float]],
                 list_meta_train_loss: list, list_meta_min_train_loss: list, 
                 list_meta_valid_loss: list, list_meta_min_valid_loss: list,                
-                partial: bool = False) -> None:
+                partial: bool = False, verbose:int = 0) -> None:
     assert len(list_train_loss) == len(list_min_train_loss) ==\
            len(list_valid_loss) == len(list_min_valid_loss), \
         f"len(list_train_loss) ({len(list_train_loss)}), "\
@@ -40,11 +40,12 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
         f"len(list_valid_loss) ({len(list_valid_loss)}), "\
         f"len(list_min_valid_loss) ({len(list_min_valid_loss)}) must be equal)"
     length = len(list_train_loss)
-     
-    if not partial:
-        print("Training done. Plotting convergence...")
-    else:
-        print("Plotting convergence for training so far...")
+    
+    if verbose >= 1:
+        if not partial:
+            print("Training done. Plotting convergence...")
+        else:
+            print("Plotting convergence for training so far...")
     
         
     plt.figure(figsize=(10,6))

@@ -12,7 +12,8 @@ import pandas as pd
 
 import architecture, utils, IO, plots
 
-# sysstem dimensions
+
+# system dimensions
 # B = batch size
 # L = input length
 # H = prediction horizon
@@ -36,37 +37,11 @@ import architecture, utils, IO, plots
 # BUG? leak future information?
 # TODO move scheduler.step() into the loop
 # validate_with_aggregation: Validation is significantly more expensive than needed
-
-
-
-
-
-# remove SMA and diff from LR and RF?
-# Add features: public holidays, Xmas, sun
-# Add abilities to spot outliers
-
-
-# This code predicts electricity consumption in France using Transformers. 
-#   Analyse the code and the plots. Then offer 3 recommendations.
-#   Explain the purpose of each, advantages, drawbacks, implementation difficulty.
-#   Analyse the code, looking for inconsistencies and slow or inefficient implementation.
-#   For each indicate severity, as well as the difficulty and risk of modification.
-
-
-print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}, "
-          f"CUDA version: {torch.version.cuda}, "
-          f"CUDNN version: {torch.backends.cudnn.version()}")
-    
-    # clear VRAM
-    gc.collect()
-    torch.cuda.empty_cache()
-    # print(torch.cuda.memory_summary())
-else:
-    print("CUDA unavailable")
-print()
+# [done] remove SMA and diff from LR and RF?
+# Add features: 
+#  - public holidays, 
+#  - [done] Xmas, sun
+# [done] Add abilities to spot outliers
 
 
 
@@ -84,7 +59,7 @@ dict_fnames = {
 output_fname = "output/merged_aligned.csv"
 
 
-SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
+SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
 
 SEED         =   0              # For reproducibility
 
@@ -96,7 +71,7 @@ INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
 PRED_LENGTH  =   2 * 24*2       # How many future half-hours to predict
 
 BATCH_SIZE   = 512              # Training batch size
-EPOCHS       = [  5, 30, 40, 50] # Number of training epochs
+EPOCHS       = [  2, 30, 40, 50] # Number of training epochs
 
 MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
 NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
@@ -132,8 +107,9 @@ DISPLAY_EVERY=   2
 PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
-
 WEIGHTS_META: Dict[str, float] = {'nn': 0.7, 'lr':0.1, 'rf': 0.2}
+
+VERBOSE: int   = 0
 
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -164,6 +140,22 @@ assert all([QUANTILES[i] + QUANTILES[num_quantiles - i - 1] == 1
 assert QUANTILES[num_quantiles // 2] == 0.5, "middle quantile must be the median"
     # the code assumes it is
 
+if VERBOSE >= 1:
+    print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if torch.cuda.is_available():
+    if VERBOSE >= 1:
+        print(f"GPU: {torch.cuda.get_device_name(0)}, "
+              f"CUDA version: {torch.version.cuda}, "
+              f"CUDNN version: {torch.backends.cudnn.version()}")
+    
+    # clear VRAM
+    gc.collect()
+    torch.cuda.empty_cache()
+    # print(torch.cuda.memory_summary())
+elif VERBOSE >= 1:
+    print("CUDA unavailable")
+print()
 
 
 if __name__ == "__main__":
@@ -174,7 +166,7 @@ if __name__ == "__main__":
     # ============================================================
     
     df, dates_df = utils.df_features(dict_fnames, output_fname, 
-                           verbose = 1)  # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
+                           verbose = VERBOSE)  # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
     
 
 
@@ -209,38 +201,39 @@ if __name__ == "__main__":
     
     NUM_PATCHES = (INPUT_LENGTH - PATCH_LEN) // STRIDE + 1
 
-    IO.print_model_summary(
-        num_time_steps   = num_time_steps,
-        feature_cols     = feature_cols,
-        input_length     = INPUT_LENGTH,
-        pred_length      = PRED_LENGTH,
-        batch_size       = BATCH_SIZE,
-        epochs           = EPOCHS,
-        learning_rate    = LEARNING_RATE,
-        weight_decay     = WEIGHT_DECAY,
-        dropout          = DROPOUT,
-        warmup_steps     = WARMUP_STEPS,
-        patience         = PATIENCE,
-        min_delta        = MIN_DELTA,
-        model_dim        = MODEL_DIM,
-        num_layers       = NUM_LAYERS,
-        num_heads        = NUM_HEADS,
-        ffn_size         = FFN_SIZE,
-        patch_len        = PATCH_LEN,
-        stride           = STRIDE,
-        num_patches      = NUM_PATCHES,
-        quantiles        = QUANTILES,
-        lambda_cross     = LAMBDA_CROSS,
-        lambda_coverage=LAMBDA_COVERAGE,
-        lambda_deriv     = LAMBDA_DERIV
-    )
+    if VERBOSE >= 1:
+        IO.print_model_summary(
+            num_time_steps   = num_time_steps,
+            feature_cols     = feature_cols,
+            input_length     = INPUT_LENGTH,
+            pred_length      = PRED_LENGTH,
+            batch_size       = BATCH_SIZE,
+            epochs           = EPOCHS,
+            learning_rate    = LEARNING_RATE,
+            weight_decay     = WEIGHT_DECAY,
+            dropout          = DROPOUT,
+            warmup_steps     = WARMUP_STEPS,
+            patience         = PATIENCE,
+            min_delta        = MIN_DELTA,
+            model_dim        = MODEL_DIM,
+            num_layers       = NUM_LAYERS,
+            num_heads        = NUM_HEADS,
+            ffn_size         = FFN_SIZE,
+            patch_len        = PATCH_LEN,
+            stride           = STRIDE,
+            num_patches      = NUM_PATCHES,
+            quantiles        = QUANTILES,
+            lambda_cross     = LAMBDA_CROSS,
+            lambda_coverage=LAMBDA_COVERAGE,
+            lambda_deriv     = LAMBDA_DERIV
+        )
 
 
 # correlation matrix for temperatures
 # utils.temperature_correlation_matrix(df)
 
-
-print("Doing linear regression and random forest...")
+if VERBOSE >= 1:
+    print("Doing linear regression and random forest...")
 
 t_start = time.perf_counter()
 rf_params = dict(
@@ -254,7 +247,7 @@ rf_params = dict(
         lambda_cross= LAMBDA_CROSS,
         lambda_coverage=LAMBDA_COVERAGE,
         lambda_deriv= LAMBDA_DERIV,
-        verbose     = 1
+        verbose     = VERBOSE
     )
 
 cache_id = {
@@ -272,8 +265,8 @@ baseline_features_GW, baseline_models, baseline_losses_GW = \
         cache_dir      = "output",
         cache_id_dict  = cache_id,
     )
-        
-print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
+if VERBOSE >= 1:
+    print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
 
 
 # # df['consumption_regression'], _, lr_losses 
@@ -288,7 +281,7 @@ print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
 #     lambda_cross= LAMBDA_CROSS,
 #     lambda_coverage=LAMBDA_COVERAGE,
 #     lambda_deriv= LAMBDA_DERIV,
-#     verbose     = 1
+#     verbose     = VERBOSE
 # )
 
 
@@ -306,8 +299,9 @@ for name, series in baseline_features_GW.items():
 
 # ---- Construct final matrix: target first, then features ----
 
-print("Using features:", feature_cols)
-print("Using target:  ", target_col)
+if VERBOSE >= 1:
+    print("Using features:", feature_cols)
+    print("Using target:  ", target_col)
 
 
 series = np.column_stack([
@@ -325,7 +319,8 @@ del df
 
 block_sizes = architecture.geometric_block_sizes(
     NUM_PATCHES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO)
-print(f"{'block_sizes'  :17s} = {block_sizes}")
+if VERBOSE >= 1:
+    print(f"{'block_sizes'  :17s} = {block_sizes}")
 
 
 
@@ -334,12 +329,12 @@ print(f"{'block_sizes'  :17s} = {block_sizes}")
 # 3. TRAIN/TEST SPLIT (time-respecting)
 # ============================================================
 
-
-print(f"{len(series)/24/2/365.25:.1f} years of data, "
-      f"train: {TRAIN_SPLIT/24/2/365.25:.2f} yrs ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
-      f"test: {test_months/24/2/365.25:.2f} yrs"
-      f" (switching at {dates[TRAIN_SPLIT]})")
-print()
+if VERBOSE >= 1:
+    print(f"{len(series)/24/2/365.25:.1f} years of data, "
+          f"train: {TRAIN_SPLIT/24/2/365.25:.2f} yrs ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
+          f"test: {test_months/24/2/365.25:.2f} yrs"
+          f" (switching at {dates[TRAIN_SPLIT]})")
+    print()
 assert INPUT_LENGTH + 60 < test_months,\
     f"INPUT_LENGTH ({INPUT_LENGTH}) > test_months ({test_months}) - 60"
 
@@ -368,13 +363,15 @@ train_loader, valid_loader, test_loader, scaler_y, \
     X_test_GW, y_test_GW, test_dataset_scaled, test_scaled =\
         architecture.make_X_and_y(train_data, valid_data, test_data, 
             feature_cols, target_col,
-            input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE)
+            input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
+            verbose=VERBOSE)
     
 
 
 # scale loss for LR
 sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
-print(f"sigma_y = {sigma_y:.1f} GW")
+if VERBOSE >= 1:
+    print(f"sigma_y = {sigma_y:.1f} GW")
 baseline_losses_scaled = {
     name: {k: v / sigma_y**2 for k, v in d.items()}
     for name, d in baseline_losses_GW.items()
@@ -425,7 +422,7 @@ optimizer = torch.optim.Adam(model.parameters(),
 #     factor  = SCHED_FACTOR,
 #     patience= SCHED_PATIENCE,
 #     min_lr  = 1e-6,
-#     # verbose = True
+#     # verbose = VERBOSE >= 1
 # )
 
 def my_lr_warmup_cosine(step): 
@@ -446,7 +443,8 @@ early_stopping = architecture.EarlyStopping(patience=PATIENCE, min_delta=MIN_DEL
 # 6. TRAINING LOOP (modified to include auxiliary feature loss)
 # ============================================================
 
-print("Starting training...")
+if VERBOSE >= 1:
+    print("Starting training...")
     
 baseline_idx = dict()
 for _name in baseline_cfg:
@@ -539,13 +537,14 @@ for epoch in range(EPOCHS):
         min_loss_display_scaled = min_valid_loss_scaled
         
         t_epoch = time.perf_counter() - t_epoch_start
-
-        print(f"{epoch+1:3n} /{EPOCHS:3n} ={(epoch+1)/EPOCHS*100:3.0f}%,"
-              f"{t_epoch/60*(EPOCHS/(epoch+1)-1)+.5:3.0f} min left, "
-              f"loss (1e-3): "
-              f"train{train_loss_scaled*1000:4.0f} (best{min_train_loss_scaled*1000:4.0f}), "
-              f"valid{valid_loss_scaled*1000:4.0f} ({    min_valid_loss_scaled*1000:4.0f})"
-              f" {is_better}")
+        
+        if VERBOSE >= 1:
+            print(f"{epoch+1:3n} /{EPOCHS:3n} ={(epoch+1)/EPOCHS*100:3.0f}%,"
+                  f"{t_epoch/60*(EPOCHS/(epoch+1)-1)+.5:3.0f} min left, "
+                  f"loss (1e-3): "
+                  f"train{train_loss_scaled*1000:4.0f} (best{min_train_loss_scaled*1000:4.0f}), "
+                  f"valid{valid_loss_scaled*1000:4.0f} ({    min_valid_loss_scaled*1000:4.0f})"
+                  f" {is_better}")
 
     min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
     list_train_loss_scaled    .append(train_loss_scaled)
@@ -573,7 +572,7 @@ for epoch in range(EPOCHS):
                           None, None, None, None,
                           # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled, 
                           # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,   
-                          partial=True)
+                          partial=True, verbose=VERBOSE)
     
     # Check for early stopping
     if early_stopping(valid_loss_scaled):
@@ -590,74 +589,75 @@ plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
                   None, None, None, None,                     
                   # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled, 
                   # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,   
-                  partial=False)
+                  partial=False, verbose=VERBOSE)
 
+if VERBOSE >= 2:
+    y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
+        utils.aggregate_over_windows(
+            model        = model,
+            loader       = valid_loader,
+            dates        = valid_dates,
+            scaler_y     = scaler_y,
+            baseline_idx = baseline_idx,
+            device       = device,
+            input_length = INPUT_LENGTH,
+            weights_meta = WEIGHTS_META,
+            quantiles    = QUANTILES,
+        )
+    assert has_pred.dtype == bool, has_pred.dtype
+    assert has_pred.shape[0] == len(valid_dates), \
+        f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
+        
+    # window-aligned dates (prediction at t = i + input_length)
+    valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
+     
+    dates_masked  = valid_dates_win        [has_pred]
+    y_true_masked = y_valid_agg_scaled     [has_pred]
+    y_pred_masked = y_valid_pred_agg_scaled[has_pred]
+       
+    top_bad_days = utils.worst_days_by_loss(
+        dates     = dates_masked,
+        y_true    = y_true_masked,
+        y_pred    = y_pred_masked,
+        quantiles = QUANTILES,
+        temperature=Tavg_full[TRAIN_SPLIT-n_valid : TRAIN_SPLIT][has_pred],
+        top_n     = 25,
+    )
 
-# y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
-#     utils.aggregate_over_windows(
-#         model        = model,
-#         loader       = valid_loader,
-#         dates        = valid_dates,
-#         scaler_y     = scaler_y,
-#         baseline_idx = baseline_idx,
-#         device       = device,
-#         input_length = INPUT_LENGTH,
-#         weights_meta = WEIGHTS_META,
-#         quantiles    = QUANTILES,
-#     )
-# assert has_pred.dtype == bool, has_pred.dtype
-# assert has_pred.shape[0] == len(valid_dates), \
-#     f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
+    print(top_bad_days.to_string())
     
-# # window-aligned dates (prediction at t = i + input_length)
-# valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
- 
-# dates_masked  = valid_dates_win        [has_pred]
-# y_true_masked = y_valid_agg_scaled     [has_pred]
-# y_pred_masked = y_valid_pred_agg_scaled[has_pred]
-   
-# top_bad_days = utils.worst_days_by_loss(
-#     dates     = dates_masked,
-#     y_true    = y_true_masked,
-#     y_pred    = y_pred_masked,
-#     quantiles = QUANTILES,
-#     temperature=Tavg_full[TRAIN_SPLIT-n_valid : TRAIN_SPLIT][has_pred],
-#     top_n     = 25,
-# )
-
-# print(top_bad_days.to_string())
-
-
-# import matplotlib.pyplot as plt
-# day = top_bad_days.iloc[0]["date"]
-
-# q50_idx = QUANTILES.index(0.5)
-
-# day = top_bad_days.iloc[0]["date"]
-# mask_day = dates_masked.normalize() == day
-
-# # inverse-scale for plotting
-# y_true_day_GW = scaler_y.inverse_transform(
-#     y_true_masked.reshape(-1, 1)
-# ).ravel()
-
-# y_pred_day_GW = scaler_y.inverse_transform(
-#     y_pred_masked[:, q50_idx].reshape(-1, 1)
-# ).ravel()
-
-# plt.figure(figsize=(10, 4))
-# plt.plot(dates_masked, y_true_day_GW, label="true")
-# plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
-# plt.legend()
-# plt.title(f"Worst training day: {day}")
-# plt.show()
+    
+    # import matplotlib.pyplot as plt
+    # day = top_bad_days.iloc[0]["date"]
+    
+    # q50_idx = QUANTILES.index(0.5)
+    
+    # day = top_bad_days.iloc[0]["date"]
+    # mask_day = dates_masked.normalize() == day
+    
+    # # inverse-scale for plotting
+    # y_true_day_GW = scaler_y.inverse_transform(
+    #     y_true_masked.reshape(-1, 1)
+    # ).ravel()
+    
+    # y_pred_day_GW = scaler_y.inverse_transform(
+    #     y_pred_masked[:, q50_idx].reshape(-1, 1)
+    # ).ravel()
+    
+    # plt.figure(figsize=(10, 4))
+    # plt.plot(dates_masked, y_true_day_GW, label="true")
+    # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
+    # plt.legend()
+    # plt.title(f"Worst training day: {day}")
+    # plt.show()
 
 
 # ============================================================
 # 7. TEST PREDICTIONS
 # ============================================================
 
-print("Starting test ...")  #"(baseline: {name_baseline})...")
+if VERBOSE >= 1:
+    print("Starting test ...")  #"(baseline: {name_baseline})...")
 
 
 true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
@@ -687,12 +687,12 @@ for _name in ['rf']:  # 'lr',
 
 assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
 
-
-print()
-for tau in QUANTILES:
-    key = f"q{int(100*tau)}"
-    cov = utils.quantile_coverage(true_series_GW, dict_pred_series_GW[key])
-    print(f"Coverage {key}:{cov*100:5.1f}% (target{tau*100:3n}%)")
+if VERBOSE >= 1:
+    print()
+    for tau in QUANTILES:
+        key = f"q{int(100*tau)}"
+        cov = utils.quantile_coverage(true_series_GW, dict_pred_series_GW[key])
+        print(f"Coverage {key}:{cov*100:5.1f}% (target{tau*100:3n}%)")
 
 
 true_series_GW = true_series_GW.loc[common_idx]
@@ -759,10 +759,10 @@ with torch.no_grad():
 # assert true_series.index.equals(lr_series.index)
 
 utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                     WEIGHTS_META, unit="GW", verbose=1)
+                     WEIGHTS_META, unit="GW", verbose=VERBOSE)
    
-
-print("Plotting test results...")
+if VERBOSE >= 1:
+    print("Plotting test results...")
 
 plots.all_tests(true_series_GW, {'q50': dict_pred_series_GW['q50']}, 
                 dict_baseline_series_GW, future_series, name_baseline)

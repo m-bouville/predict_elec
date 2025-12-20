@@ -337,7 +337,7 @@ class MultiVarDataset(Dataset):
 def make_X_and_y(train_data, valid_data, test_data, 
                  feature_cols, target_col,
                  input_length:int, pred_length:int, batch_size:int,
-                 verbose: int = 2):
+                 verbose: int = 0):
     # Map column names -> column indices in train_data
     all_cols   = [target_col] + feature_cols
     col_to_idx = {col: i for i, col in enumerate(all_cols)}
