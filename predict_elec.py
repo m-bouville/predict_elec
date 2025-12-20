@@ -1,7 +1,7 @@
 import gc
 # from datetime import datetime
 import time
-from   typing import Dict  # List
+# from   typing import Dict  # List
 
 import torch
 # import torch.nn as nn
@@ -9,6 +9,14 @@ import torch
 import numpy  as np
 import pandas as pd
 
+# from   constants import *  # Spyder annoyingly complains: "may be defined in constants"
+from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INPUT_LENGTH,
+           PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
+           NUM_LAYERS, PATCH_LEN, STRIDE, LAMBDA_CROSS, LAMBDA_COVERAGE,
+           LAMBDA_DERIV, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
+           LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
+           MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY, WEIGHTS_META,
+           VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG)
 
 import architecture, utils, IO, plots
 
@@ -20,7 +28,7 @@ import architecture, utils, IO, plots
 # Q = number of quantiles (len(quantiles))
 
 # TODO look at tutorial on transformers in pytorch
-# TODO account for known future: sines, WE, T° (as forecast: _add noise_), etc. 
+# TODO account for known future: sines, WE, T° (as forecast: _add noise_), etc.
 #       (difficulty: medi-high, 2–4 days)
 # TODO  - scenarios, distribution of possible outcomes
 # TODO? compare per-horizon error vs LR
@@ -38,145 +46,58 @@ import architecture, utils, IO, plots
 # TODO move scheduler.step() into the loop
 # validate_with_aggregation: Validation is significantly more expensive than needed
 # [done] remove SMA and diff from LR and RF?
-# Add features: 
-#  - public holidays, 
+# Add features:
+#  - public holidays,
 #  - [done] Xmas, sun
 # [done] Add abilities to spot outliers
+# TODO add constant saying there are 48 data points per day
 
 
 
 
-
-# ============================================================
-# 1. CONFIGURATION CONSTANTS 
-# ============================================================
-
-dict_fnames = {
-    "consumption": "data/consommation-quotidienne-brute.csv",
-    "temperature": 'data/temperature-quotidienne-regionale.csv',
-    "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
-}
-output_fname = "output/merged_aligned.csv"
-
-
-SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
-
-SEED         =   0              # For reproducibility
-
-
-TRAIN_SPLIT_FRACTION=0.8
-VAL_RATIO    =   0.25           # validation from training set
-
-INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
-PRED_LENGTH  =   2 * 24*2       # How many future half-hours to predict
-
-BATCH_SIZE   = 512              # Training batch size
-EPOCHS       = [  2, 30, 40, 50] # Number of training epochs
-
-MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
-NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
-FFN_SIZE     = [  4,  4,  6,  8] # expansion factor
-NUM_LAYERS   = [  1,  2,  3,  6] # Number of transformer encoder layers
-
-# PatchEmbedding
-PATCH_LEN    =  24              # [half-hours]
-STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
-
-# losses
-LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles
-LAMBDA_COVERAGE= 0.05
-LAMBDA_DERIV   = 0.1            # derivative weight in loss function
-QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
-
-NUM_GEO_BLOCKS=[  1,  3,  4,  6]
-GEO_BLOCK_RATIO= 0.5            # each block is half the size of the previous (geometric)
-
-LEARNING_RATE=   7.5e-3          # Optimizer learning rate
-WEIGHT_DECAY =   1.e-7
-DROPOUT      =   0.05
-WARMUP_STEPS =[4000,2500,2250,2500]
-# SCHED_FACTOR =   0.5
-# SCHED_PATIENCE=  5
-
-
-PATIENCE     = [  5,  5,  5, 10]  # DEBUG: patience > nb epochas
-MIN_DELTA    =   10 / 1000
-
-VALIDATE_EVERY=  1
-DISPLAY_EVERY=   2
-PLOT_CONV_EVERY=10
-# INCR_STEPS_TEST=24                # only test every n half-hours
-
-WEIGHTS_META: Dict[str, float] = {'nn': 0.7, 'lr':0.1, 'rf': 0.2}
-
-VERBOSE: int   = 0
-
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-
-
-IDX_SYSTEM_SIZE = {'DEBUG': 0, 'SMALL': 1, 'LARGE': 2, 'HUGE': 3}[SYSTEM_SIZE]
-EPOCHS       = EPOCHS       [IDX_SYSTEM_SIZE]
-MODEL_DIM    = MODEL_DIM    [IDX_SYSTEM_SIZE]
-NUM_HEADS    = NUM_HEADS    [IDX_SYSTEM_SIZE]
-FFN_SIZE     = FFN_SIZE     [IDX_SYSTEM_SIZE]
-NUM_LAYERS   = NUM_LAYERS   [IDX_SYSTEM_SIZE]
-NUM_GEO_BLOCKS=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
-PATIENCE     = PATIENCE     [IDX_SYSTEM_SIZE]
-WARMUP_STEPS = WARMUP_STEPS [IDX_SYSTEM_SIZE]
-baseline_cfg = (utils.baseline_cfg)[IDX_SYSTEM_SIZE]
-
-assert MODEL_DIM % NUM_HEADS == 0, \
-    f"MODEL_DIM ({MODEL_DIM}) must be divisible by NUM_HEADS ({NUM_HEADS})."
-assert sum(WEIGHTS_META.values()) == 1.
-assert set(WEIGHTS_META.keys()) == {'nn', 'lr', 'rf'}
-assert 1 <= VALIDATE_EVERY <= min(EPOCHS, PATIENCE), \
-    (VALIDATE_EVERY, EPOCHS, PATIENCE)
-
-num_quantiles = len(QUANTILES)
-assert all([QUANTILES[i] + QUANTILES[num_quantiles - i - 1] == 1 
-            for i in range(num_quantiles // 2)]), \
-    "quantiles should be symmetric"    # otherwise: hard to interpret
-assert QUANTILES[num_quantiles // 2] == 0.5, "middle quantile must be the median"
-    # the code assumes it is
-
-if VERBOSE >= 1:
-    print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if torch.cuda.is_available():
-    if VERBOSE >= 1:
-        print(f"GPU: {torch.cuda.get_device_name(0)}, "
-              f"CUDA version: {torch.version.cuda}, "
-              f"CUDNN version: {torch.backends.cudnn.version()}")
-    
-    # clear VRAM
-    gc.collect()
-    torch.cuda.empty_cache()
-    # print(torch.cuda.memory_summary())
-elif VERBOSE >= 1:
-    print("CUDA unavailable")
-print()
 
 
 if __name__ == "__main__":
-    
-    
+
+    np.   random.seed(SEED)
+    torch.manual_seed(SEED)
+
+
+    if VERBOSE >= 1:
+        print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        if VERBOSE >= 1:
+            print(f"GPU: {torch.cuda.get_device_name(0)}, "
+                  f"CUDA version: {torch.version.cuda}, "
+                  f"CUDNN version: {torch.backends.cudnn.version()}")
+
+        # clear VRAM
+        gc.collect()
+        torch.cuda.empty_cache()
+        # print(torch.cuda.memory_summary())
+    elif VERBOSE >= 1:
+        print("CUDA unavailable")
+    print()
+
+
+
     # ============================================================
-    # 2. LOAD 
+    # 2. LOAD
     # ============================================================
-    
-    df, dates_df = utils.df_features(dict_fnames, output_fname, 
+
+    df, dates_df = utils.df_features(DICT_FNAMES, OUTPUT_FNAME,
                            verbose = VERBOSE)  # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
-    
+
 
 
     # ---- Identify columns ----
     target_col = "consumption_GW"
-    
+
     # Select numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    
-    
+
+
     # All features EXCEPT the target and date are predictors
     feature_cols = [
         c for c in numeric_cols
@@ -184,21 +105,21 @@ if __name__ == "__main__":
     ]
     # ['year', 'month', 'timeofday', 'Tmin_degC', 'Tmax_degC', 'Tavg_degC']
     # feature_cols = ['timeofday', 'Tavg_degC']
-    
-    
+
+
     # Keep date separately for plotting later
     dates = df.index
-    
+
     # Remove every row containing any NA (no filling)
     df = df[feature_cols + [target_col]].dropna().reset_index(drop=True)
     # print(dates[:10])
-    
+
     TRAIN_SPLIT = int(len(df) * TRAIN_SPLIT_FRACTION)
     test_months = len(df)-TRAIN_SPLIT
     n_valid     = int(TRAIN_SPLIT * VAL_RATIO)
-    
+
     num_time_steps = df.shape[0]
-    
+
     NUM_PATCHES = (INPUT_LENGTH - PATCH_LEN) // STRIDE + 1
 
     if VERBOSE >= 1:
@@ -242,7 +163,7 @@ rf_params = dict(
         feature_cols= feature_cols,
         train_end   = TRAIN_SPLIT-n_valid,
         val_end     = TRAIN_SPLIT,
-        models_cfg  = baseline_cfg,
+        models_cfg  = BASELINE_CFG,
         quantiles   = QUANTILES,
         lambda_cross= LAMBDA_CROSS,
         lambda_coverage=LAMBDA_COVERAGE,
@@ -269,7 +190,7 @@ if VERBOSE >= 1:
     print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
 
 
-# # df['consumption_regression'], _, lr_losses 
+# # df['consumption_regression'], _, lr_losses
 # baseline_features_GW, baseline_models, baseline_losses_GW = utils.regression_and_forest(
 #     df          = df,
 #     target_col  = target_col,
@@ -352,6 +273,11 @@ train_data  = train_data [:-n_valid]
 valid_dates = train_dates[-n_valid:]
 train_dates = train_dates[:-n_valid]
 
+# TODO: DayAheadDataset needs INPUT_LENGTH history before the first validation noon.
+#    val_start = TRAIN_SPLIT - INPUT_LENGTH - PRED_LENGTH
+
+# assert all(ts.hour == 12 for ts in train_dataset.forecast_origins)
+# assert len(set(test_results['predictions']['target_time'])) == len(test_results['predictions'])
 
 
 # ============================================================
@@ -361,11 +287,11 @@ train_dates = train_dates[:-n_valid]
 
 train_loader, valid_loader, test_loader, scaler_y, \
     X_test_GW, y_test_GW, test_dataset_scaled, test_scaled =\
-        architecture.make_X_and_y(train_data, valid_data, test_data, 
+        architecture.make_X_and_y(train_data, valid_data, test_data,
             feature_cols, target_col,
             input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
             verbose=VERBOSE)
-    
+
 
 
 # scale loss for LR
@@ -393,7 +319,7 @@ except NameError:
 gc.collect()
 torch.cuda.empty_cache()
 
-    
+
 
 model = architecture.TimeSeriesTransformer(
     num_features= NUM_FEATURES,
@@ -402,8 +328,8 @@ model = architecture.TimeSeriesTransformer(
     num_layers  = NUM_LAYERS,
     input_len   = INPUT_LENGTH,
     pred_len    = PRED_LENGTH,
-    patch_len   = PATCH_LEN, 
-    stride      = STRIDE, 
+    patch_len   = PATCH_LEN,
+    stride      = STRIDE,
     dropout     = DROPOUT,
     ffn_mult    = FFN_SIZE,
     num_quantiles=len(QUANTILES),
@@ -413,8 +339,8 @@ model = architecture.TimeSeriesTransformer(
 # model = torch.compile(model)  # Speedup: 1.5× to 2× on NVIDIA GPUs.
 model.to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), 
-                             lr=LEARNING_RATE, 
+optimizer = torch.optim.Adam(model.parameters(),
+                             lr=LEARNING_RATE,
                              weight_decay=WEIGHT_DECAY)
 # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 #     optimizer,
@@ -425,7 +351,7 @@ optimizer = torch.optim.Adam(model.parameters(),
 #     # verbose = VERBOSE >= 1
 # )
 
-def my_lr_warmup_cosine(step): 
+def my_lr_warmup_cosine(step):
     return architecture.lr_warmup_cosine(step, WARMUP_STEPS, EPOCHS, len(train_loader))
 scheduler = torch.optim.lr_scheduler.LambdaLR(
     optimizer,
@@ -445,11 +371,11 @@ early_stopping = architecture.EarlyStopping(patience=PATIENCE, min_delta=MIN_DEL
 
 if VERBOSE >= 1:
     print("Starting training...")
-    
+
 baseline_idx = dict()
-for _name in baseline_cfg:
+for _name in BASELINE_CFG:
     baseline_idx[_name] = feature_cols.index(f"consumption_{_name}")
-            
+
 
 min_train_loss_scaled     = 9.999; min_valid_loss_scaled     = 9.999
 meta_min_train_loss_scaled= 9.999; meta_min_valid_loss_scaled= 9.999
@@ -459,54 +385,54 @@ list_train_loss_scaled     = []; list_min_train_loss_scaled     = []
 list_valid_loss_scaled     = []; list_min_valid_loss_scaled     = []
 list_meta_train_loss_scaled= []; list_meta_min_train_loss_scaled= []
 list_meta_valid_loss_scaled= []; list_meta_min_valid_loss_scaled= []
-    
+
 amp_scaler = torch.amp.GradScaler(device=device)
 
 # first_step = True
-        
+
 
 t_epoch_start = time.perf_counter()
 for epoch in range(EPOCHS):
-    
+
     model.train()
     train_loss_scaled     = 0.; valid_loss_scaled     = 0.
     meta_train_loss_scaled= 0.; meta_valid_loss_scaled= 0.
-    
+
     for batch_idx, (x_scaled, y_scaled) in enumerate(train_loader):
         x_scaled_dev = x_scaled.to(device)
         y_scaled_dev = y_scaled.to(device)
-        
+
         # optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(x_scaled_dev)
             loss_scaled_dev = architecture.loss_wrapper_quantile_torch(
-                pred_scaled_dev, y_scaled_dev, quantiles=QUANTILES, 
-                lambda_cross=LAMBDA_CROSS, lambda_coverage=LAMBDA_COVERAGE, 
+                pred_scaled_dev, y_scaled_dev, quantiles=QUANTILES,
+                lambda_cross=LAMBDA_CROSS, lambda_coverage=LAMBDA_COVERAGE,
                 lambda_deriv=LAMBDA_DERIV)
-            
+
         amp_scaler.scale(loss_scaled_dev).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(optimizer)
-        amp_scaler.update() 
-   
+        amp_scaler.update()
+
         train_loss_scaled += loss_scaled_dev.item()
-        
+
         with torch.no_grad():  # monitoring only
             loss_meta_scaled = architecture.compute_meta_loss(
-                pred_scaled_dev, x_scaled_dev, y_scaled_dev, baseline_idx, 
-                WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS, 
+                pred_scaled_dev, x_scaled_dev, y_scaled_dev, baseline_idx,
+                WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
                 lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
         meta_train_loss_scaled += loss_meta_scaled.item()
-        
+
     scheduler.step()
     train_loss_scaled     /= len(train_loader)
     meta_train_loss_scaled/= len(train_loader)
-    
+
     # validation
     model.eval()
-    
-    if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0): 
+
+    if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
         valid_loss_scaled, meta_valid_loss_scaled = utils.validate_with_aggregation(
             model        = model,
             valid_loader = valid_loader,
@@ -518,14 +444,14 @@ for epoch in range(EPOCHS):
             pred_length  = PRED_LENGTH,
             # incr_steps   = INCR_STEPS_TEST,
             weights_meta = WEIGHTS_META,
-            quantiles    = QUANTILES, 
-            lambda_cross = LAMBDA_CROSS, 
+            quantiles    = QUANTILES,
+            lambda_cross = LAMBDA_CROSS,
             lambda_coverage=LAMBDA_COVERAGE,
             lambda_deriv = LAMBDA_DERIV
         )
-    
-    
-    if ((epoch+1) % DISPLAY_EVERY == 0) | (epoch == 0):      
+
+
+    if ((epoch+1) % DISPLAY_EVERY == 0) | (epoch == 0):
         # comparing latest loss to lowest so far
         if valid_loss_scaled <= min_loss_display_scaled - MIN_DELTA:
             is_better = '**'
@@ -533,11 +459,11 @@ for epoch in range(EPOCHS):
             is_better = '*'
         else:
             is_better = ''
-            
+
         min_loss_display_scaled = min_valid_loss_scaled
-        
+
         t_epoch = time.perf_counter() - t_epoch_start
-        
+
         if VERBOSE >= 1:
             print(f"{epoch+1:3n} /{EPOCHS:3n} ={(epoch+1)/EPOCHS*100:3.0f}%,"
                   f"{t_epoch/60*(EPOCHS/(epoch+1)-1)+.5:3.0f} min left, "
@@ -549,46 +475,46 @@ for epoch in range(EPOCHS):
     min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
     list_train_loss_scaled    .append(train_loss_scaled)
     list_min_train_loss_scaled.append(min_train_loss_scaled)
-    
+
     min_valid_loss_scaled = min(min_valid_loss_scaled, valid_loss_scaled)
     list_valid_loss_scaled    .append(valid_loss_scaled)
     list_min_valid_loss_scaled.append(min_valid_loss_scaled)
-    
+
     # metamodel
     meta_min_train_loss_scaled = min(meta_min_train_loss_scaled, meta_train_loss_scaled)
     list_meta_train_loss_scaled    .append(meta_train_loss_scaled)
     list_meta_min_train_loss_scaled.append(meta_min_train_loss_scaled)
-    
+
     meta_min_valid_loss_scaled = min(meta_min_valid_loss_scaled, meta_valid_loss_scaled)
     list_meta_valid_loss_scaled    .append(meta_valid_loss_scaled)
     list_meta_min_valid_loss_scaled.append(meta_min_valid_loss_scaled)
-    
-    
+
+
     if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
             & (epoch < EPOCHS-2):
-        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled, 
-                          list_valid_loss_scaled, list_min_valid_loss_scaled, 
+        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
+                          list_valid_loss_scaled, list_min_valid_loss_scaled,
                           None,  # baseline_losses_scaled,
                           None, None, None, None,
-                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled, 
-                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,   
+                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
                           partial=True, verbose=VERBOSE)
-    
+
     # Check for early stopping
     if early_stopping(valid_loss_scaled):
         print(f"Early stopping triggered at epoch {epoch+1}.")
         break
-    
-    
+
+
     torch.cuda.empty_cache()
 
 
-plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled, 
-                  list_valid_loss_scaled, list_min_valid_loss_scaled, 
+plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
+                  list_valid_loss_scaled, list_min_valid_loss_scaled,
                   None,  #baseline_losses_scaled,
-                  None, None, None, None,                     
-                  # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled, 
-                  # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,   
+                  None, None, None, None,
+                  # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+                  # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
                   partial=False, verbose=VERBOSE)
 
 if VERBOSE >= 2:
@@ -607,14 +533,14 @@ if VERBOSE >= 2:
     assert has_pred.dtype == bool, has_pred.dtype
     assert has_pred.shape[0] == len(valid_dates), \
         f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
-        
+
     # window-aligned dates (prediction at t = i + input_length)
     valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
-     
+
     dates_masked  = valid_dates_win        [has_pred]
     y_true_masked = y_valid_agg_scaled     [has_pred]
     y_pred_masked = y_valid_pred_agg_scaled[has_pred]
-       
+
     top_bad_days = utils.worst_days_by_loss(
         dates     = dates_masked,
         y_true    = y_true_masked,
@@ -625,25 +551,25 @@ if VERBOSE >= 2:
     )
 
     print(top_bad_days.to_string())
-    
-    
+
+
     # import matplotlib.pyplot as plt
     # day = top_bad_days.iloc[0]["date"]
-    
+
     # q50_idx = QUANTILES.index(0.5)
-    
+
     # day = top_bad_days.iloc[0]["date"]
     # mask_day = dates_masked.normalize() == day
-    
+
     # # inverse-scale for plotting
     # y_true_day_GW = scaler_y.inverse_transform(
     #     y_true_masked.reshape(-1, 1)
     # ).ravel()
-    
+
     # y_pred_day_GW = scaler_y.inverse_transform(
     #     y_pred_masked[:, q50_idx].reshape(-1, 1)
     # ).ravel()
-    
+
     # plt.figure(figsize=(10, 4))
     # plt.plot(dates_masked, y_true_day_GW, label="true")
     # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
@@ -665,7 +591,7 @@ true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
         X_test_GW, y_test_GW, test_loader, model, scaler_y,
         num_test_windows=len(test_dataset_scaled),
         feature_cols = feature_cols,
-        test_dates   = test_dates, 
+        test_dates   = test_dates,
         device       = device,
         input_length = INPUT_LENGTH,
         pred_length  = PRED_LENGTH,
@@ -676,9 +602,9 @@ name_baseline = 'rf' if 'rf' in dict_baseline_series_GW else 'lr'
 
 common_idx = true_series_GW.index.intersection(dict_pred_series_GW['q50'].index)
 
-for _name in ['rf']:  # 'lr', 
+for _name in ['rf']:  # 'lr',
     if _name in dict_baseline_series_GW:  # keep only those we trained
-        common_idx = common_idx.intersection(dict_baseline_series_GW[_name].index)  
+        common_idx = common_idx.intersection(dict_baseline_series_GW[_name].index)
 # common_idx = (
 #     true_series.index
 #     .intersection(dict_pred_series['median'].index)
@@ -700,7 +626,7 @@ for k in dict_pred_series_GW:
     dict_pred_series_GW    [k] = dict_pred_series_GW    [k].loc[common_idx]
 for k in dict_baseline_series_GW:
     dict_baseline_series_GW[k] = dict_baseline_series_GW[k].loc[common_idx]
-    
+
 # assert true_series.index.equals(dict_pred_series['median'].index),\
 #     (true_series.index, dict_pred_series['median'].index)
 # assert true_series.index.equals(dict_baseline_series['rf'].index),\
@@ -725,7 +651,7 @@ with torch.no_grad():
 
     pred = model(last_window)                         # (1, H, Q)
     pred = pred.squeeze(0).cpu().numpy()       # (H, Q)
-    
+
     # Inverse scaling (works column-wise)
     future_pred = scaler_y.inverse_transform(pred)     # (H, Q)
 
@@ -737,7 +663,7 @@ with torch.no_grad():
         )
         for i, tau in enumerate(QUANTILES)
     }
-    
+
     # free temporaries
     try:
         del pred, last_window, future_pred
@@ -760,11 +686,11 @@ with torch.no_grad():
 
 utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
                      WEIGHTS_META, unit="GW", verbose=VERBOSE)
-   
+
 if VERBOSE >= 1:
     print("Plotting test results...")
 
-plots.all_tests(true_series_GW, {'q50': dict_pred_series_GW['q50']}, 
+plots.all_tests(true_series_GW, {'q50': dict_pred_series_GW['q50']},
                 dict_baseline_series_GW, future_series, name_baseline)
 
 
@@ -791,7 +717,7 @@ except NameError:
 
 
 if torch.cuda.is_available():
-    # clear VRAM   
+    # clear VRAM
     gc.collect()
     torch.cuda.empty_cache()
     # torch.cuda.synchronize()

@@ -1,0 +1,111 @@
+__all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LENGTH',
+           'PRED_LENGTH', 'BATCH_SIZE', 'EPOCHS', 'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
+           'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'LAMBDA_CROSS', 'LAMBDA_COVERAGE',
+           'LAMBDA_DERIV', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
+           'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
+           'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY', 'WEIGHTS_META',
+           'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG']
+
+
+
+from   typing import Dict  # List
+
+
+import utils
+
+
+
+# ============================================================
+# 1. CONFIGURATION CONSTANTS
+# ============================================================
+
+SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
+
+SEED         =   0              # For reproducibility
+
+
+TRAIN_SPLIT_FRACTION=0.8
+VAL_RATIO    =   0.25           # validation from training set
+
+INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
+PRED_LENGTH  =   2 * 24*2       # How many future half-hours to predict
+
+BATCH_SIZE   = 512              # Training batch size
+EPOCHS       = [  2, 30, 40, 50] # Number of training epochs
+
+MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
+NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
+FFN_SIZE     = [  4,  4,  6,  8] # expansion factor
+NUM_LAYERS   = [  1,  2,  3,  6] # Number of transformer encoder layers
+
+# PatchEmbedding
+PATCH_LEN    =  24              # [half-hours]
+STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
+
+# losses
+LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles
+LAMBDA_COVERAGE= 0.05
+LAMBDA_DERIV   = 0.1            # derivative weight in loss function
+QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
+
+NUM_GEO_BLOCKS=[  1,  3,  4,  6]
+GEO_BLOCK_RATIO= 0.5            # each block is half the size of the previous (geometric)
+
+LEARNING_RATE=   7.5e-3          # Optimizer learning rate
+WEIGHT_DECAY =   1.e-7
+DROPOUT      =   0.05
+WARMUP_STEPS =[4000,2500,2250,2500]
+# SCHED_FACTOR =   0.5
+# SCHED_PATIENCE=  5
+
+
+PATIENCE     = [  5,  5,  5, 10]  # DEBUG: patience > nb epochas
+MIN_DELTA    =   10 / 1000
+
+VALIDATE_EVERY=  1
+DISPLAY_EVERY=   2
+PLOT_CONV_EVERY=10
+# INCR_STEPS_TEST=24                # only test every n half-hours
+
+WEIGHTS_META: Dict[str, float] = {'nn': 0.7, 'lr':0.1, 'rf': 0.2}
+
+VERBOSE: int   = 1
+
+
+DICT_FNAMES = {
+    "consumption": "data/consommation-quotidienne-brute.csv",
+    "temperature": 'data/temperature-quotidienne-regionale.csv',
+    "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
+}
+OUTPUT_FNAME = "output/merged_aligned.csv"
+
+
+
+# Pick correct value from list of possibilites
+IDX_SYSTEM_SIZE = {'DEBUG': 0, 'SMALL': 1, 'LARGE': 2, 'HUGE': 3}[SYSTEM_SIZE]
+EPOCHS       = EPOCHS       [IDX_SYSTEM_SIZE]
+MODEL_DIM    = MODEL_DIM    [IDX_SYSTEM_SIZE]
+NUM_HEADS    = NUM_HEADS    [IDX_SYSTEM_SIZE]
+FFN_SIZE     = FFN_SIZE     [IDX_SYSTEM_SIZE]
+NUM_LAYERS   = NUM_LAYERS   [IDX_SYSTEM_SIZE]
+NUM_GEO_BLOCKS=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
+PATIENCE     = PATIENCE     [IDX_SYSTEM_SIZE]
+WARMUP_STEPS = WARMUP_STEPS [IDX_SYSTEM_SIZE]
+BASELINE_CFG = (utils.baseline_cfg)[IDX_SYSTEM_SIZE]
+
+
+# Checking
+assert MODEL_DIM % NUM_HEADS == 0, \
+    f"MODEL_DIM ({MODEL_DIM}) must be divisible by NUM_HEADS ({NUM_HEADS})."
+assert sum(WEIGHTS_META.values()) == 1.
+assert set(WEIGHTS_META.keys()) == {'nn', 'lr', 'rf'}
+assert 1 <= VALIDATE_EVERY <= min(EPOCHS, PATIENCE), \
+    (VALIDATE_EVERY, EPOCHS, PATIENCE)
+
+num_quantiles = len(QUANTILES)
+assert all([QUANTILES[i] + QUANTILES[num_quantiles - i - 1] == 1
+            for i in range(num_quantiles // 2)]), \
+    "quantiles should be symmetric"    # otherwise: hard to interpret
+assert QUANTILES[num_quantiles // 2] == 0.5, "middle quantile must be the median"
+    # the code assumes it is
+
