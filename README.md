@@ -59,6 +59,10 @@ The NN is trained using:
   - The meta-model is less powerful than it could be: LR, RF, and NN outputs are statically combined.
   - A learned meta-learner would allow nonlinear bias correction, make weights regime-dependent and improve robustness across seasons and extreme events.
 
+- **Temperature predictions**
+  - Currently, the only temperature used is the actual one, even though at the time of predicting consumption only a forecast can be available, not the true measured value.
+  - The severity of this artificial reduction of the variance depends on the length of the horizon _H_.
+
 
 ### Choice of application
 One further issue is that some questions could not have a clear, unambiguous answer:
@@ -68,7 +72,7 @@ One further issue is that some questions could not have a clear, unambiguous ans
 This arose from the lack of a specific use case. Focusing on one application would allow an univocal answer.
 
 In Europe, prices are set daily at noon for the next day (day-ahead price). Producers and consumers must let the market know what their 48 half-hourly consumptions will be, from _h_ + 12 to _h_ + 36. Gearing the model toward this specific case has two advantages:
-- the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no aggreagtion);
+- the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no aggregation);
 - the consumption at _t_ is predicted only once: the day before at noon, not _H_ times.
 
 
@@ -139,6 +143,15 @@ Any decoder-based extension must remain compatible with:
 - direct validation,
 - stable feature semantics,
 - and the absence of feedback to the quantile model.
+
+
+#### Working entirely on predicting [_h_ + 12, _h_ + 36]?
+The model should be validated and tested on relevant periods. But should it also be the case for training?
+
+- The number of samples is off by nearly a factor of 50, but this number is artificially high:
+  - noon-only: 3 650 _non-overlapping_ training samples in ten years;
+  - all origins: 175 000 _overlapping_ training samples.
+- Training only from _h_ + 12 to _h_ + 36 lets the model rely on the fact that time step number 24 is always midnight. No need for a decoder or extra degrees of freedom to get this pattern right.
 
 
 ### Stage 2 — Mean-Based Meta-Model (deterministic layer)

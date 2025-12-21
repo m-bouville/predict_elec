@@ -96,9 +96,11 @@ def load_weights(path, verbose: int = 2) -> pd.Series:
 # https://odre.opendatasoft.com/explore/dataset/temperature-quotidienne-regionale/
 # Last processing
 #   December 12, 2025 3:00 AM (metadata)
-#   December 2, 2025 3:01 AM (data) 
+#   December  2, 2025 3:01 AM (data) 
 
-def load_temperature(path, weights, verbose: int = 0):
+def load_temperature(path, weights,
+                     # noise_std: float or Tuple [float] = 0.,  # realistic forecast error
+                     verbose: int = 0):
     # temperature data
     df      = pd.read_csv(path, sep=';')
     if 'Date' not in df.columns:

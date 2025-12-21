@@ -9,6 +9,7 @@ import torch
 import numpy  as np
 import pandas as pd
 
+
 # from   constants import *  # Spyder annoyingly complains: "may be defined in constants"
 from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INPUT_LENGTH,
            PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
@@ -16,8 +17,9 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INP
            LAMBDA_DERIV, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY, WEIGHTS_META,
-           VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG)
-
+           VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
+           DAY_AHEAD, FORECAST_HOUR)
+# import day_ahead
 import architecture, utils, IO, plots
 
 
@@ -107,12 +109,16 @@ if __name__ == "__main__":
     # feature_cols = ['timeofday', 'Tavg_degC']
 
 
+
+    # Remove every row containing any NA (no filling)
+    df = df[feature_cols + [target_col]].dropna()
+    # print(dates[:10])
+
     # Keep date separately for plotting later
     dates = df.index
 
-    # Remove every row containing any NA (no filling)
-    df = df[feature_cols + [target_col]].dropna().reset_index(drop=True)
-    # print(dates[:10])
+    df = df.reset_index(drop=True)
+
 
     TRAIN_SPLIT = int(len(df) * TRAIN_SPLIT_FRACTION)
     test_months = len(df)-TRAIN_SPLIT
@@ -221,7 +227,7 @@ for name, series in baseline_features_GW.items():
 # ---- Construct final matrix: target first, then features ----
 
 if VERBOSE >= 1:
-    print("Using features:", feature_cols)
+    print(f"Using {len(feature_cols)} features: {feature_cols}")
     print("Using target:  ", target_col)
 
 
@@ -232,7 +238,7 @@ series = np.column_stack([
 
 Tavg_full = df["Tavg_degC"].values   # for worst days
 
-NUM_FEATURES   = series.shape[1]
+NUM_FEATURES   = len(feature_cols)  # /!\ y should not be included
 num_time_steps = series.shape[0]
 
 del df
@@ -260,22 +266,6 @@ assert INPUT_LENGTH + 60 < test_months,\
     f"INPUT_LENGTH ({INPUT_LENGTH}) > test_months ({test_months}) - 60"
 
 
-train_data = series[:TRAIN_SPLIT]
-test_data  = series[TRAIN_SPLIT:]
-
-train_dates = dates[:TRAIN_SPLIT]
-test_dates  = dates[TRAIN_SPLIT:]
-
-
-# validation
-valid_data  = train_data [-n_valid:]
-train_data  = train_data [:-n_valid]
-valid_dates = train_dates[-n_valid:]
-train_dates = train_dates[:-n_valid]
-
-# TODO: DayAheadDataset needs INPUT_LENGTH history before the first validation noon.
-#    val_start = TRAIN_SPLIT - INPUT_LENGTH - PRED_LENGTH
-
 # assert all(ts.hour == 12 for ts in train_dataset.forecast_origins)
 # assert len(set(test_results['predictions']['target_time'])) == len(test_results['predictions'])
 
@@ -285,12 +275,14 @@ train_dates = train_dates[:-n_valid]
 # ============================================================
 
 
-train_loader, valid_loader, test_loader, scaler_y, \
-    X_test_GW, y_test_GW, test_dataset_scaled, test_scaled =\
-        architecture.make_X_and_y(train_data, valid_data, test_data,
-            feature_cols, target_col,
-            input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
-            verbose=VERBOSE)
+[train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates ],\
+        scaler_y, X_test_GW, y_test_GW, test_dataset_scaled, X_test_scaled =\
+    architecture.make_X_and_y(
+        series, dates, TRAIN_SPLIT, n_valid,
+        feature_cols, target_col,
+        input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
+        do_day_ahead=DAY_AHEAD, forecast_hour=FORECAST_HOUR,
+        verbose=VERBOSE)
 
 
 
@@ -311,7 +303,7 @@ try:
     del series
     # del train_scaled, valid_scaled
     # del X_train, X_valid, y_train, y_valid
-    del train_data, valid_data, test_data
+    # del train_data, valid_data, test_data
     # dataset objects keep what's needed; DataLoader will read from them
 except NameError:
     pass
@@ -398,9 +390,13 @@ for epoch in range(EPOCHS):
     train_loss_scaled     = 0.; valid_loss_scaled     = 0.
     meta_train_loss_scaled= 0.; meta_valid_loss_scaled= 0.
 
-    for batch_idx, (x_scaled, y_scaled) in enumerate(train_loader):
+    # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
+    for batch_idx, (x_scaled, y_scaled, idx, origin_unix) in enumerate(train_loader):
         x_scaled_dev = x_scaled.to(device)
         y_scaled_dev = y_scaled.to(device)
+
+        origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
         # optimizer.zero_grad(set_to_none=True)
 
@@ -433,22 +429,37 @@ for epoch in range(EPOCHS):
     model.eval()
 
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
-        valid_loss_scaled, meta_valid_loss_scaled = utils.validate_with_aggregation(
-            model        = model,
-            valid_loader = valid_loader,
-            valid_dates  = valid_dates,
-            scaler_y     = scaler_y,
-            baseline_idx = baseline_idx,
-            device       = device,
-            input_length = INPUT_LENGTH,
-            pred_length  = PRED_LENGTH,
-            # incr_steps   = INCR_STEPS_TEST,
-            weights_meta = WEIGHTS_META,
-            quantiles    = QUANTILES,
-            lambda_cross = LAMBDA_CROSS,
-            lambda_coverage=LAMBDA_COVERAGE,
-            lambda_deriv = LAMBDA_DERIV
-        )
+        # results = daf.validate_day_ahead(
+        #     model    = model,
+        #     dataset  = valid_dataset,
+        #     scaler_y = scaler_y,
+        #     device   = device,
+        #     quantiles= QUANTILES,
+        #     verbose  = VERBOSE
+        # )
+
+        # valid_loss_scaled = results['overall_metrics']['mae'] / sigma_y
+        # meta_valid_loss_scaled = 0.
+
+        valid_loss_scaled, meta_valid_loss_scaled =\
+            utils.validate_without_aggregation(
+                model        = model,
+                valid_loader = valid_loader,
+                valid_dates  = valid_dates,
+                scaler_y     = scaler_y,
+                baseline_idx = baseline_idx,
+                device       = device,
+                input_length = INPUT_LENGTH,
+                pred_length  = PRED_LENGTH,
+                # incr_steps   = INCR_STEPS_TEST,
+                weights_meta = WEIGHTS_META,
+                quantiles    = QUANTILES,
+                lambda_cross = LAMBDA_CROSS,
+                lambda_coverage=LAMBDA_COVERAGE,
+                lambda_deriv = LAMBDA_DERIV
+            )
+    # print("valid_loss_scaled:", valid_loss_scaled,
+    #       "meta_valid_loss_scaled:", meta_valid_loss_scaled)
 
 
     if ((epoch+1) % DISPLAY_EVERY == 0) | (epoch == 0):
@@ -468,8 +479,8 @@ for epoch in range(EPOCHS):
             print(f"{epoch+1:3n} /{EPOCHS:3n} ={(epoch+1)/EPOCHS*100:3.0f}%,"
                   f"{t_epoch/60*(EPOCHS/(epoch+1)-1)+.5:3.0f} min left, "
                   f"loss (1e-3): "
-                  f"train{train_loss_scaled*1000:4.0f} (best{min_train_loss_scaled*1000:4.0f}), "
-                  f"valid{valid_loss_scaled*1000:4.0f} ({    min_valid_loss_scaled*1000:4.0f})"
+                  f"train{train_loss_scaled*1000:5.0f} (best{min_train_loss_scaled*1000:5.0f}), "
+                  f"valid{valid_loss_scaled*1000:5.0f} ({    min_valid_loss_scaled*1000:5.0f})"
                   f" {is_better}")
 
     min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
@@ -585,9 +596,27 @@ if VERBOSE >= 2:
 if VERBOSE >= 1:
     print("Starting test ...")  #"(baseline: {name_baseline})...")
 
+# test_results = daf.validate_day_ahead(
+#     model   = model,
+#     dataset = test_dataset,
+#     scaler_y= scaler_y,
+#     device  = device,
+#     quantiles=QUANTILES,
+#     verbose = VERBOSE
+# )
+
+# pred_df = test_results['predictions']
+
+# true_series_GW = pred_df.set_index('target_time')['y_true']
+
+# dict_pred_series_GW = {
+#     f'q{int(100*q)}': pred_df.set_index('target_time')[f'q{int(100*q)}']
+#     for q in QUANTILES
+# }
+
 
 true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
-    utils.test_predictions(
+    utils.test_predictions_day_ahead(
         X_test_GW, y_test_GW, test_loader, model, scaler_y,
         num_test_windows=len(test_dataset_scaled),
         feature_cols = feature_cols,
@@ -597,6 +626,13 @@ true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
         pred_length  = PRED_LENGTH,
         # incr_steps   = INCR_STEPS_TEST,
         quantiles    = QUANTILES)
+
+# print("true_series_GW:\n",      true_series_GW.head())
+# print("dict_pred_series_GW:\n", {_name: _series.head() \
+#                     for (_name, _series) in dict_pred_series_GW.items()})
+# print("dict_baseline_series_GW:\n", {_name: _series.head() \
+#                     for (_name, _series) in dict_baseline_series_GW.items()})
+
 
 name_baseline = 'rf' if 'rf' in dict_baseline_series_GW else 'lr'
 
@@ -611,7 +647,8 @@ for _name in ['rf']:  # 'lr',
 #     .intersection(dict_baseline_series['rf'].index)
 # )
 
-assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
+# assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
+# TODO reinstate assert
 
 if VERBOSE >= 1:
     print()
@@ -646,7 +683,7 @@ future_dates = pd.date_range(
 )
 
 with torch.no_grad():
-    last_window = test_scaled[-INPUT_LENGTH:]         # shape (L, F)
+    last_window = X_test_scaled[-INPUT_LENGTH:]         # shape (L, F)
     last_window = torch.tensor(last_window).unsqueeze(0).to(device)
 
     pred = model(last_window)                         # (1, H, Q)

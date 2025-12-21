@@ -27,11 +27,11 @@ def data(df, xlabel=None, ylabel=None, title=None) -> None:
 # Convergence
 # --------------------------------------------------------
 
-def convergence(list_train_loss: list, list_min_train_loss: list, 
-                list_valid_loss: list, list_min_valid_loss: list, 
+def convergence(list_train_loss: list, list_min_train_loss: list,
+                list_valid_loss: list, list_min_valid_loss: list,
                 baseline_losses: Dict[str, Dict[str, float]],
-                list_meta_train_loss: list, list_meta_min_train_loss: list, 
-                list_meta_valid_loss: list, list_meta_min_valid_loss: list,                
+                list_meta_train_loss: list, list_meta_min_train_loss: list,
+                list_meta_valid_loss: list, list_meta_min_valid_loss: list,
                 partial: bool = False, verbose:int = 0) -> None:
     assert len(list_train_loss) == len(list_min_train_loss) ==\
            len(list_valid_loss) == len(list_min_valid_loss), \
@@ -40,14 +40,14 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
         f"len(list_valid_loss) ({len(list_valid_loss)}), "\
         f"len(list_min_valid_loss) ({len(list_min_valid_loss)}) must be equal)"
     length = len(list_train_loss)
-    
+
     if verbose >= 1:
         if not partial:
             print("Training done. Plotting convergence...")
         else:
             print("Plotting convergence for training so far...")
-    
-        
+
+
     plt.figure(figsize=(10,6))
 
     # neural net
@@ -60,7 +60,7 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
     if baseline_losses is not None:
         shape = {'lr': ',',     'rf': 'o'}
         for name, d in baseline_losses.items():
-            plt.scatter(1, d['train'], label=f"train {name}", color="green", 
+            plt.scatter(1, d['train'], label=f"train {name}", color="green",
                         marker=shape[name], alpha=0.6)
             plt.scatter(1, d['valid'], label=f"valid {name}", color="green", marker=shape[name])
 
@@ -79,7 +79,7 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
     plt.yscale('log')
     plt.xlabel("epoch")
     plt.ylabel(("(partial) " if partial else "") + "training loss (log)")
-    
+
     # legend (two columns)
     handles, labels = plt.gca().get_legend_handles_labels()
         # Split into train vs valid groups by label name
@@ -98,7 +98,7 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
 # Plotting the test set
 # --------------------------------------------------------
 
-def _apply_range(series: pd.Series, 
+def _apply_range(series: pd.Series,
                 date_range: Optional[Tuple[pd.Timestamp, pd.Timestamp]]
                 ):
     if date_range is None:
@@ -114,7 +114,7 @@ def _apply_moving_average(series: pd.Series, ma: Optional[int]):
 def _apply_groupby(series: pd.Series, col: Optional[str]):
     if col is None:
         return series
-    if col in ['year', 'month', 'day', 'hour', 'minute', 'dayofyear']: 
+    if col in ['year', 'month', 'day', 'hour', 'minute', 'dayofyear']:
         return series.groupby(getattr(series.index, col)).mean()
     if col == 'timeofday':
         timeofday = series.index.hour + series.index.minute/60
@@ -126,15 +126,15 @@ def _apply_groupby(series: pd.Series, col: Optional[str]):
 
 
 
-def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series], 
-         baseline_series: pd.Series, future_series: pd.Series, 
+def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
+         baseline_series: pd.Series, future_series: pd.Series,
          name_baseline: str,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
          ylim: [float, float] or None = None,
          date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
          moving_average: Optional[int] = None,
          groupby:        Optional[str] = None) -> None:
-            
+
     # preparation: range and/or SME
     _true_series     = _apply_groupby(_apply_range(_apply_moving_average(
         true_series, moving_average),     date_range), groupby)
@@ -147,7 +147,7 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
         s = _apply_range  (s, date_range)
         s = _apply_groupby(s, groupby)
         _dict_pred_series[name] = s
-    
+
     _future_series = future_series # SMA would make little sense
     # if future_series is not None:
     #     _future_series = _apply_moving_average(future_series, moving_average)
@@ -156,7 +156,7 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
 
 
     plt.figure(figsize=(10,6))
-  
+
     if _true_series is not None:
         plt.plot(_true_series.index, _true_series.values, label="actual", color="black")
 
@@ -166,65 +166,65 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
                  alpha=0.7,
                  label=f"forecast NN ({name})") # if k == 0 else None)
 
-    plt.plot(_baseline_series.index, _baseline_series.values, 
+    plt.plot(_baseline_series.index, _baseline_series.values,
              label=f"forecast {name_baseline}", color="green")
 
     if _future_series is not None:
         plt.plot(_future_series.index,_future_series.values, label="future", color="blue")
-        
+
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
     if ylabel is not None:  plt.ylabel(ylabel)
     if title  is not None:  plt.title (title)
     plt.legend()
     plt.show()
-    
 
 
-def all_tests(true_series:         pd.Series, 
-              dict_pred_series:    Dict[str, pd.Series], 
-              dict_baseline_series:Dict[str, pd.Series], 
+
+def all_tests(true_series:         pd.Series,
+              dict_pred_series:    Dict[str, pd.Series],
+              dict_baseline_series:Dict[str, pd.Series],
               future_series:       pd.Series,
               name_baseline:       str,
               days_zoom:           int | Tuple[int] = [8, 61],
-              ylim:  Tuple[Tuple[float, float], Tuple[float, float]] = [[35, 55], [-2, 2]]
+              ylim:  Tuple[Tuple[float, float], Tuple[float, float]] = [[35, 65], [-4, 4]]
              ) -> None:
     # print("latest date:")
     # print("true:", true_series.index[-1])
     # print("pred:", max([s.index[-1] for s in dict_pred_series]))
     # print("regr:", lr_series.index[-1])
-    
+
     # test(true_series, dict_pred_series, lr_series, future_series, name_baseline)
-    
+
     baseline_series = dict_baseline_series[name_baseline]
     SMA_consumption = [None, 2*24]
     SMA_residual    = [2*2,  2*24]
-    
+
     for _idx, _zoom in enumerate(days_zoom):
-        # zoom        
+        # zoom
         zoom_horizon= pd.Timedelta(days=_zoom)
         zoom_end    = true_series.index[-1]
         zoom_start  = zoom_end - zoom_horizon
-        
-        
+
+
         # plot consumption
-        _SMA    = SMA_consumption[_idx]        
+        _SMA    = SMA_consumption[_idx]
         _SMA_str = f" (SMA {_SMA/2} hrs)" if _SMA is not None else ""
-        test(true_series, dict_pred_series, baseline_series, None, 
-             name_baseline, ylabel=f"consumption{_SMA_str} [GW]", 
+        test(true_series, dict_pred_series, baseline_series, None,
+             name_baseline, ylabel=f"consumption{_SMA_str} [GW]",
              ylim=ylim[0], date_range=[zoom_start, zoom_end], moving_average=_SMA)
-                
+
         # compute and plot residuals
-        _SMA    = SMA_residual[_idx]        
+        _SMA    = SMA_residual[_idx]
         _SMA_str = f" (SMA {_SMA/2} hrs)" if _SMA is not None else ""
-        
+
         residual_true_series     = true_series - true_series
         residual_baseline_series = baseline_series   - true_series
         dict_residual_pred_series= {name: series - true_series\
             for name, series in dict_pred_series.items()}
-            
-        test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None, 
-             name_baseline, ylabel=f"consumption difference{_SMA_str} [GW]", 
+
+        test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
+             name_baseline, ylabel=f"consumption difference{_SMA_str} [GW]",
              ylim=ylim[1], date_range=[zoom_start, zoom_end], moving_average=_SMA)
 
 
@@ -234,26 +234,26 @@ def all_tests(true_series:         pd.Series,
     zoom_end    = true_series.index[-1]
     zoom_start  = zoom_end - zoom_horizon
 
-    test(true_series, dict_pred_series, baseline_series, None, 
-         name_baseline, xlabel="time of day", ylabel="consumption [GW]", 
+    test(true_series, dict_pred_series, baseline_series, None,
+         name_baseline, xlabel="time of day", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=[zoom_start, zoom_end], groupby='timeofday')
     test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
-         name_baseline, xlabel="time of day", ylabel="consumption difference [GW]", 
+         name_baseline, xlabel="time of day", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=[zoom_start, zoom_end], groupby='timeofday')
 
 
     # plot consumption over a week
-    test(true_series, dict_pred_series, baseline_series, None, 
-         name_baseline, xlabel="day of week", ylabel="consumption [GW]", 
+    test(true_series, dict_pred_series, baseline_series, None,
+         name_baseline, xlabel="day of week", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=[zoom_start, zoom_end], groupby='dayofweek')
     test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
-         name_baseline, xlabel="day of week", ylabel="consumption difference [GW]", 
-         ylim=ylim[1], date_range=[zoom_start, zoom_end], groupby='dayofweek', 
+         name_baseline, xlabel="day of week", ylabel="consumption difference [GW]",
+         ylim=ylim[1], date_range=[zoom_start, zoom_end], groupby='dayofweek',
          moving_average=SMA_residual[0])  # smoothing a little
 
 
 
-    
+
 
 def plot_quantile_fan(
     true_series: pd.Series,
@@ -347,5 +347,5 @@ def plot_quantile_fan(
     ax.grid(alpha=0.3)
 
     plt.tight_layout()
-    
+
     plt.show()

@@ -10,11 +10,10 @@ from   torch.utils.data         import Dataset, DataLoader
 from   sklearn.preprocessing   import StandardScaler
 
 import numpy  as np
-# import pandas as pd
+import pandas as pd
 
 
-import  day_ahead_forecast as daf
-import  utils
+import  day_ahead, utils
 
 
 
@@ -283,55 +282,149 @@ def compute_meta_loss(
 # 3. DATASET CLASS (multivariate input → multistep target + future features)
 # ============================================================
 
-class MultiVarDataset(Dataset):
-    def __init__(self, data, split:str, input_len:int, pred_len:int, target_index=0):
-        """
-        data: numpy array of shape (T, F)
-            column 0 must be the target (log-real_TR)
-        input_len: number of past steps (L)
-        pred_len: number of future steps (H)
-        target_index: which column to forecast (0 by default)
-        """
-        self.data        = data.astype(np.float32)
-        self.split       = split
-        self.input_len   = input_len
-        self.pred_len    = pred_len
-        self.target_index= target_index
+# class MultiVarDataset(Dataset):
+#     def __init__(self, data, split:str, input_len:int, pred_len:int, target_index=0):
+#         """
+#         data: numpy array of shape (T, F)
+#             column 0 must be the target (log-real_TR)
+#         input_len: number of past steps (L)
+#         pred_len: number of future steps (H)
+#         target_index: which column to forecast (0 by default)
+#         """
+#         self.data        = data.astype(np.float32)
+#         self.split       = split
+#         self.input_len   = input_len
+#         self.pred_len    = pred_len
+#         self.target_index= target_index
 
-    def __len__(self):
-        # +1 to match original sliding window count
-        return len(self.data) - self.input_len - self.pred_len + 1
+#     def __len__(self):
+#         # +1 to match original sliding window count
+#         return len(self.data) - self.input_len - self.pred_len + 1
 
-    def __getitem__(self, idx):
-        # Input window (all features)
-        x = self.data[idx : idx + self.input_len]              # shape (L, F)
+#     def __getitem__(self, idx):
+#         # Input window (all features)
+#         x = self.data[idx : idx + self.input_len]              # shape (L, F)
 
-        # Multi-step target (only the 1 column)
-        y = self.data[
-            idx + self.input_len : idx + self.input_len + self.pred_len,
-            self.target_index
-        ]                                                      # shape (H,)
+#         # Multi-step target (only the 1 column)
+#         y = self.data[
+#             idx + self.input_len : idx + self.input_len + self.pred_len,
+#             self.target_index
+#         ]                                                      # shape (H,)
 
-        # # ground-truth future non-target features (for auxiliary loss)
-        # y_features = self.data[
-        #     idx + self.input_len : idx + self.input_len + self.pred_len,
-        #     1:
-        # ]                                                      # shape (H, F-1)
+#         # # ground-truth future non-target features (for auxiliary loss)
+#         # y_features = self.data[
+#         #     idx + self.input_len : idx + self.input_len + self.pred_len,
+#         #     1:
+#         # ]                                                      # shape (H, F-1)
 
-        if self.split == "test" or self.split == "valid":
-            return (
-                torch.tensor(x),                # (L, F)
-                torch.tensor(y).unsqueeze(-1),  # (H, 1)
-                # torch.tensor(y_features),       # (H, F-1)
-                idx                             # NEW: the true global window index
-            )
-        else:
-            return (
-                torch.tensor(x),                # (L, F)
-                torch.tensor(y).unsqueeze(-1),  # (H, 1)
-                # torch.tensor(y_features),       # (H, F-1)
-            )
+#         if self.split == "test" or self.split == "valid":
+#             return (
+#                 torch.tensor(x),                # (L, F)
+#                 torch.tensor(y).unsqueeze(-1),  # (H, 1)
+#                 # torch.tensor(y_features),       # (H, F-1)
+#                 idx                             # the true global window index
+#             )
+#         else:
+#             return (
+#                 torch.tensor(x),                # (L, F)
+#                 torch.tensor(y).unsqueeze(-1),  # (H, 1)
+#                 # torch.tensor(y_features),       # (H, F-1)
+#             )
 
+
+
+
+# def make_X_and_y(series, dates,
+#                  train_split, n_valid,
+#                  feature_cols, target_col,
+#                  input_length:int, pred_length:int, batch_size:int,
+#                  verbose: int = 0):
+
+
+#     # TODO: DayAheadDataset needs INPUT_LENGTH history before the first validation noon.
+#     #    val_start = TRAIN_SPLIT - INPUT_LENGTH - PRED_LENGTH
+
+
+#     # Map column names -> column indices in train_data
+#     all_cols   = [target_col] + feature_cols
+#     col_to_idx = {col: i for i, col in enumerate(all_cols)}
+
+#     feature_idx= [col_to_idx[c] for c in feature_cols]
+#     target_idx =  col_to_idx[target_col]
+
+
+#     # 1. Extract X and y using names
+#     X_GW = series[:, feature_idx];  y_GW = series[:, target_idx]
+
+#     # if verbose >= 2:
+#     #     print(f"y_train: mean{y_train_GW.mean():6.2f} GW, std{y_train_GW.std():6.2f} GW")
+#     #     print(f"y_valid: mean{y_valid_GW.mean():6.2f} GW, std{y_valid_GW.std():6.2f} GW")
+
+
+#     # 2. Fit two different scalers (on training set)
+#     scaler_x = StandardScaler()
+#     scaler_y = StandardScaler()
+
+#     X_train_GW = X_GW[:train_split][:-n_valid]
+#     y_train_GW = y_GW[:train_split][:-n_valid]
+#     scaler_x.fit(X_train_GW)
+#     scaler_y.fit(y_train_GW.reshape(-1, 1))
+
+
+#     # 3. Transform X and y separately
+#     X_scaled = scaler_x.transform(X_GW)
+#     y_scaled = scaler_y.transform(y_GW.reshape(-1, 1)).ravel()
+
+#     df_scaled = np.column_stack([y_scaled, X_scaled])
+
+
+#     # 5. SAFETY CHECKS
+#     print("scaler_y.mean_.shape:", scaler_y.mean_.shape)
+#     print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
+
+#     assert scaler_y.mean_.shape[0] == 1, "scaler_y must be fitted on ONE target only"
+#     assert df_scaled     .shape[1] == 1 + len(feature_cols), "scaled feature count mismatch"
+
+
+#     # 4. Rebuild scaled arrays for your pipeline
+#     #    (target in column 0, features after)
+#     train_scaled = df_scaled[:train_split]
+#     test_scaled  = df_scaled[train_split:]
+
+#      # validation
+#     valid_scaled = train_scaled[-n_valid:]
+#     train_scaled = train_scaled[:-n_valid]
+
+
+#     # 5. DATASET FOR TRANSFORMER
+#     train_dataset_scaled = MultiVarDataset(
+#         train_scaled, "train", input_length, pred_length, target_index=0)
+#     valid_dataset_scaled = MultiVarDataset(
+#         valid_scaled, "valid", input_length, pred_length, target_index=0)
+#     test_dataset_scaled  = MultiVarDataset(
+#         test_scaled,  "test",  input_length, pred_length, target_index=0)
+
+#     # Note: DataLoader now yields tuples (x, y, y_features)
+#     train_loader = DataLoader(train_dataset_scaled, batch_size=batch_size,
+#                               shuffle=True, drop_last=True)
+#     valid_loader = DataLoader(valid_dataset_scaled, batch_size=batch_size*4,
+#                               shuffle=False, drop_last=False) # was drop_last=True
+#     test_loader  = DataLoader(test_dataset_scaled , batch_size=64,
+#                               shuffle=False, drop_last=False) # was w/o drop_last
+
+
+#     train_dates = dates[:train_split]
+#     test_dates  = dates[train_split:]
+#     valid_dates = train_dates[-n_valid:]
+#     train_dates = train_dates[:-n_valid]
+
+#     test_data  = series[train_split:]
+#     X_test_GW  = test_data[:, feature_idx];  y_test_GW  = test_data [:, target_idx]
+
+
+#     return [train_loader,valid_loader,test_loader], \
+#            [train_dates, valid_dates, test_dates ],\
+#             scaler_y, X_test_GW, y_test_GW, test_dataset_scaled, test_scaled
 
 
 
@@ -339,7 +432,22 @@ def make_X_and_y(series, dates,
                  train_split, n_valid,
                  feature_cols, target_col,
                  input_length:int, pred_length:int, batch_size:int,
+                 do_day_ahead:bool=False, forecast_hour:int=12,
                  verbose: int = 0):
+
+    assert series.shape[0] == len(dates), \
+        f"series.shape ({series.shape}) != len(dates) ({len(dates)})"
+
+    # print(f"Forecast hour: {forecast_hour:2n}:00")
+    # print(f"input_length:{input_length:4n} [half-hours]")
+    # print(f"pred_length: {pred_length :4n} [half-hours]")
+    # print(f"batch_size:  {batch_size  :4n}")
+    # print()
+
+    train_dates = dates[:train_split]
+    test_dates  = dates[train_split:]
+    valid_dates = train_dates[-n_valid:]
+    train_dates = train_dates[:-n_valid]
 
 
     # TODO: DayAheadDataset needs INPUT_LENGTH history before the first validation noon.
@@ -352,6 +460,9 @@ def make_X_and_y(series, dates,
 
     feature_idx= [col_to_idx[c] for c in feature_cols]
     target_idx =  col_to_idx[target_col]
+
+    test_data  = series[train_split:]
+    X_test_GW  = test_data[:, feature_idx];  y_test_GW  = test_data [:, target_idx]
 
 
     # 1. Extract X and y using names
@@ -380,11 +491,12 @@ def make_X_and_y(series, dates,
 
 
     # 5. SAFETY CHECKS
-    print("scaler_y.mean_.shape:", scaler_y.mean_.shape)
-    print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
+    # print("scaler_y.mean_.shape:", scaler_y.mean_.shape)
+    # print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
 
     assert scaler_y.mean_.shape[0] == 1, "scaler_y must be fitted on ONE target only"
-    assert df_scaled     .shape[1] == 1 + len(feature_cols), "scaled feature count mismatch"
+    assert df_scaled     .shape[1] == 1 + len(feature_cols), \
+        "scaled feature count mismatch"
 
 
     # 4. Rebuild scaled arrays for your pipeline
@@ -396,36 +508,252 @@ def make_X_and_y(series, dates,
     valid_scaled = train_scaled[-n_valid:]
     train_scaled = train_scaled[:-n_valid]
 
-
-    # 5. DATASET FOR TRANSFORMER
-    train_dataset_scaled = MultiVarDataset(
-        train_scaled, "train", input_length, pred_length, target_index=0)
-    valid_dataset_scaled = MultiVarDataset(
-        valid_scaled, "valid", input_length, pred_length, target_index=0)
-    test_dataset_scaled  = MultiVarDataset(
-        test_scaled,  "test",  input_length, pred_length, target_index=0)
-
-    # Note: DataLoader now yields tuples (x, y, y_features)
-    train_loader = DataLoader(train_dataset_scaled, batch_size=batch_size,
-                              shuffle=True, drop_last=True)
-    valid_loader = DataLoader(valid_dataset_scaled, batch_size=batch_size*4,
-                              shuffle=False, drop_last=False) # was drop_last=True
-    test_loader  = DataLoader(test_dataset_scaled , batch_size=64,
-                              shuffle=False, drop_last=False) # was w/o drop_last
+    # print("len(X_scaled) [half-hours]", len(train_scaled),len(valid_scaled),len(test_scaled))
+    # print("len(X_dates)  [half-hours]", len(train_dates), len(valid_dates), len(test_dates))
 
 
-    train_dates = dates[:train_split]
-    test_dates  = dates[train_split:]
-    valid_dates = train_dates[-n_valid:]
-    train_dates = train_dates[:-n_valid]
 
-    test_data  = series[train_split:]
-    X_test_GW  = test_data[:, feature_idx];  y_test_GW  = test_data [:, target_idx]
+    # DAY-AHEAD PATH (SCALED, DELEGATED)
+
+    if do_day_ahead:
+
+        assert pred_length == 48,\
+            f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
+
+        def build_day_ahead(data, date_slice):
+            return day_ahead.DayAheadDataset(
+                data        = data,
+                dates       = date_slice,
+                input_length= input_length,
+                pred_length = pred_length,
+                forecast_hour=forecast_hour,
+                target_index= target_idx
+            ) # X_list, y_list, origin_list, target_dates_list
+
+        train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
+        valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
+        test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
+
+        print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
+              len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
+
+        # print("DATASET TYPE:", type   (train_dataset_scaled))
+        # print("DATASET LEN :", len    (train_dataset_scaled))
+        # print("HAS __len__ :",   hasattr(train_dataset_scaled, "__len__"))
+        # print("HAS __getitem__:",hasattr(train_dataset_scaled, "__getitem__"))
 
 
-    return [train_loader,valid_loader,test_loader], \
-           [train_dates, valid_dates, test_dates ],\
-            scaler_y, X_test_GW, y_test_GW, test_dataset_scaled, test_scaled
+        # if verbose >= 1:
+        #     print("\n[make_X_and_y] Day-ahead mode (scaled)")
+            # print(f"  Train samples: {len(train_dataset_scaled)}")
+            # print(f"  Valid samples: {len(valid_dataset_scaled)}")
+            # print(f"  Test samples:  {len(test_dataset_scaled )}")
+
+        # print(train_dataset_scaled[0][0][:5])
+
+        def build_loader(dataset, shuffle, drop_last):
+            return DataLoader(
+                dataset,
+                batch_size = batch_size if shuffle else batch_size * 2,
+                shuffle    = shuffle,
+                drop_last  = drop_last,
+                # num_workers= num_workers,
+                # pin_memory = pin_memory,
+            )
+
+        train_loader = build_loader(train_dataset_scaled, shuffle=True, drop_last=True )
+        valid_loader = build_loader(valid_dataset_scaled, shuffle=False,drop_last=False)
+        test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
+
+        print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
+
+        # print(); print("valid_loader:")
+        # for batch_idx, (x_scaled, y_scaled, origin_unix) in enumerate(valid_loader):
+            # # Convert back to timestamps if needed
+            # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+            # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
+
+        return (
+            [train_loader,valid_loader,test_loader], \
+            [train_dates, valid_dates, test_dates ],\
+             scaler_y, X_test_GW, y_test_GW,
+             test_dataset_scaled, test_scaled[:, feature_idx]
+        )
+
+
+    # SLIDING-WINDOW PATH (UNCHANGED, uses *_scaled)
+    raise NotImplementedError(
+        "Original sliding-window implementation is obsolete."
+    )
+
+    # # 5. DATASET FOR TRANSFORMER
+    # train_dataset_scaled = MultiVarDataset(
+    #     train_scaled, "train", input_length, pred_length, target_index=0)
+    # valid_dataset_scaled = MultiVarDataset(
+    #     valid_scaled, "valid", input_length, pred_length, target_index=0)
+    # test_dataset_scaled  = MultiVarDataset(
+    #     test_scaled,  "test",  input_length, pred_length, target_index=0)
+
+    # # Note: DataLoader now yields tuples (x, y, y_features)
+    # train_loader = DataLoader(train_dataset_scaled, batch_size=batch_size,
+    #                           shuffle=True, drop_last=True)
+    # valid_loader = DataLoader(valid_dataset_scaled, batch_size=batch_size*4,
+    #                           shuffle=False, drop_last=False) # was drop_last=True
+    # test_loader  = DataLoader(test_dataset_scaled , batch_size=64,
+    #                           shuffle=False, drop_last=False) # was w/o drop_last
+
+
+
+    # return [train_loader,valid_loader,test_loader], \
+    #        [train_dates, valid_dates, test_dates ],\
+    #         scaler_y, X_test_GW, y_test_GW, test_dataset_scaled, test_scaled
+
+
+
+
+# def make_X_and_y(train_data, valid_data, test_data,
+#                  feature_cols, target_col,
+#                  input_length:int, pred_length:int, batch_size:int,
+#                  day_ahead:bool=False, forecast_hour:int=12, dates=None,
+#                  verbose: int = 0):
+
+#     # Helper: dataset + loader
+#     def build_loader(dataset, shuffle, drop_last):
+#         return DataLoader(
+#             dataset,
+#             batch_size=batch_size if shuffle else batch_size * 2,
+#             shuffle    = shuffle,
+#             drop_last  = drop_last,
+#             # num_workers= num_workers,
+#             # pin_memory = pin_memory,
+#         )
+
+#     if day_ahead:
+#         assert dates is not None
+#         assert pred_length == 48,\
+#             f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
+
+#     # Map column names -> column indices in train_data
+#     all_cols   = [target_col] + feature_cols
+#     col_to_idx = {col: i for i, col in enumerate(all_cols)}
+
+
+#     feature_idx= [col_to_idx[c] for c in feature_cols]
+#     target_idx =  col_to_idx[target_col]
+
+#     # TODO: 1. run scaler_x and scaler_y, transform, 2. split into train, valide, test
+#     #    not in the opposite order.
+
+#     # 1. Extract X and y using names
+#     X_train_GW = train_data[:, feature_idx];  y_train_GW = train_data[:, target_idx]
+#     X_valid_GW = valid_data[:, feature_idx];  y_valid_GW = valid_data[:, target_idx]
+#     X_test_GW  = test_data [:, feature_idx];  y_test_GW  = test_data [:, target_idx]
+
+#     if verbose >= 2:
+#         print(f"y_train: mean{y_train_GW.mean():6.2f} GW, std{y_train_GW.std():6.2f} GW")
+#         print(f"y_valid: mean{y_valid_GW.mean():6.2f} GW, std{y_valid_GW.std():6.2f} GW")
+
+
+#     # 2. Fit TWO different scalers
+#     scaler_x = StandardScaler()
+#     scaler_y = StandardScaler()
+
+#     scaler_x.fit(X_train_GW)
+#     scaler_y.fit(y_train_GW.reshape(-1, 1))
+
+
+#     # print("scaler_y.mean_.shape:", scaler_y.mean_.shape)
+#     # print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
+
+
+#     # 3. Transform X and y separately
+#     X_train_scaled = scaler_x.transform(X_train_GW)
+#     X_valid_scaled = scaler_x.transform(X_valid_GW)
+#     X_test_scaled  = scaler_x.transform(X_test_GW)
+
+#     y_train_scaled = scaler_y.transform(y_train_GW.reshape(-1, 1)).ravel()
+#     y_valid_scaled = scaler_y.transform(y_valid_GW.reshape(-1, 1)).ravel()
+#     y_test_scaled  = scaler_y.transform(y_test_GW .reshape(-1, 1)).ravel()
+
+
+#     # 4. Rebuild scaled arrays for your pipeline
+#     #    (target in column 0, features after)
+#     train_scaled = np.column_stack([y_train_scaled, X_train_scaled])
+#     valid_scaled = np.column_stack([y_valid_scaled, X_valid_scaled])
+#     test_scaled  = np.column_stack([y_test_scaled , X_test_scaled ])
+
+
+#     # 5. SAFETY CHECKS (important)
+#     assert scaler_y.mean_.shape[0] == 1, "scaler_y must be fitted on ONE target only"
+#     assert train_scaled  .shape[1] == 1 + len(feature_cols),\
+#         "scaled feature count mismatch"
+
+
+#     # DAY-AHEAD PATH (SCALED, DELEGATED)
+
+#     if day_ahead:
+#         from day_ahead_forecast import create_day_ahead_dataset
+
+#         assert pred_length == 48, "Day-ahead forecasting requires pred_length=48"
+
+#         def build_day_ahead(data, date_slice):
+#             return create_day_ahead_dataset(
+#                 data=data,
+#                 dates=date_slice,
+#                 input_length=input_length,
+#                 pred_length=pred_length,
+#                 forecast_hour=forecast_hour,
+#             )
+
+#         train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
+#         valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
+#         test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
+
+#         train_loader = build_loader(train_dataset_scaled, True,  True)
+#         valid_loader = build_loader(valid_dataset_scaled, False, False)
+#         test_loader  = build_loader(test_dataset_scaled,  False, False)
+
+#         print("\n[make_X_and_y] Day-ahead mode (scaled)")
+#         print(f"  Forecast hour: {forecast_hour}:00")
+#         print(f"  Train samples: {len(train_dataset_scaled)}")
+#         print(f"  Valid samples: {len(valid_dataset_scaled)}")
+#         print(f"  Test samples:  {len(test_dataset_scaled )}")
+
+#         return (
+#             train_loader,
+#             valid_loader,
+#             test_loader,
+#             scaler_y,       # <-- IMPORTANT: preserved
+#             None,
+#             None,
+#             test_dataset_scaled,
+#             test_scaled,
+#         )
+
+
+#     # SLIDING-WINDOW PATH (UNCHANGED, uses *_scaled)
+#     raise NotImplementedError(
+#         "Original sliding-window implementation is obsolete."
+#     )
+
+#     # train_dataset_scaled = MultiVarDataset(
+#     #     train_scaled, "train", input_length, pred_length, target_index=0)
+#     # valid_dataset_scaled = MultiVarDataset(
+#     #     valid_scaled, "valid", input_length, pred_length, target_index=0)
+#     # test_dataset_scaled  = MultiVarDataset(
+#     #     test_scaled,  "test",  input_length, pred_length, target_index=0)
+
+
+#     # # Note: DataLoader now yields tuples (x, y, y_features)
+#     # train_loader = DataLoader(train_dataset_scaled, batch_size=batch_size,
+#     #                           shuffle=True, drop_last=True)
+#     # valid_loader = DataLoader(valid_dataset_scaled, batch_size=batch_size*4,
+#     #                           shuffle=False, drop_last=False) # was drop_last=True
+#     # test_loader  = DataLoader(test_dataset_scaled , batch_size=64,
+#     #                           shuffle=False, drop_last=False) # was w/o drop_last
+
+#     return train_loader, valid_loader, test_loader, scaler_y, \
+#         X_test_GW, y_test_GW, test_dataset_scaled, test_scaled
 
 
 

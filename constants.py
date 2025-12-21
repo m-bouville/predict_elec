@@ -4,7 +4,8 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LE
            'LAMBDA_DERIV', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY', 'WEIGHTS_META',
-           'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG']
+           'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
+           'DAY_AHEAD', 'FORECAST_HOUR']
 
 
 
@@ -19,7 +20,7 @@ import utils
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
+SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
 
 SEED         =   0              # For reproducibility
 
@@ -27,11 +28,14 @@ SEED         =   0              # For reproducibility
 TRAIN_SPLIT_FRACTION=0.8
 VAL_RATIO    =   0.25           # validation from training set
 
-INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
-PRED_LENGTH  =   2 * 24*2       # How many future half-hours to predict
+DAY_AHEAD:bool = True
+FORECAST_HOUR:int = 12
 
-BATCH_SIZE   = 512              # Training batch size
-EPOCHS       = [  2, 30, 40, 50] # Number of training epochs
+INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
+PRED_LENGTH  =   1 * 24*2       # BUG should be 36h  How many future half-hours to predict
+
+BATCH_SIZE   =  64              # Training batch size
+EPOCHS       = [  5, 40, 60, 80] # Number of training epochs
 
 MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
 NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
@@ -59,7 +63,7 @@ WARMUP_STEPS =[4000,2500,2250,2500]
 # SCHED_PATIENCE=  5
 
 
-PATIENCE     = [  5,  5,  5, 10]  # DEBUG: patience > nb epochas
+PATIENCE     = [  5, 10, 10, 10]  # DEBUG: patience > nb epochas
 MIN_DELTA    =   10 / 1000
 
 VALIDATE_EVERY=  1
