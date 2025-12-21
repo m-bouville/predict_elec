@@ -442,7 +442,7 @@ for epoch in range(EPOCHS):
         # meta_valid_loss_scaled = 0.
 
         valid_loss_scaled, meta_valid_loss_scaled =\
-            utils.validate_without_aggregation(
+            utils.validate_day_ahead(
                 model        = model,
                 valid_loader = valid_loader,
                 valid_dates  = valid_dates,
