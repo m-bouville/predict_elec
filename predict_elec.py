@@ -20,7 +20,7 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INP
            VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
            DAY_AHEAD, FORECAST_HOUR)
 # import day_ahead
-import architecture, utils, IO, plots
+import architecture, losses, utils, IO, plots
 
 
 # system dimensions
@@ -52,7 +52,9 @@ import architecture, utils, IO, plots
 #  - public holidays,
 #  - [done] Xmas, sun
 # [done] Add abilities to spot outliers
-# TODO add constant saying there are 48 data points per day
+# TODO add constant NUM_STEPS_PER_DAY saying there are 48 data points per day
+# TODO make PRED_LENGTH == 36h and validate h+12 to h+36
+
 
 
 
@@ -118,6 +120,14 @@ if __name__ == "__main__":
     dates = df.index
 
     df = df.reset_index(drop=True)
+
+    print(df.head())
+
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10,6))
+    plt.plot(dates, df['consumption_GW'])
+    plt.show()
+
 
 
     TRAIN_SPLIT = int(len(df) * TRAIN_SPLIT_FRACTION)
@@ -196,20 +206,6 @@ if VERBOSE >= 1:
     print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
 
 
-# # df['consumption_regression'], _, lr_losses
-# baseline_features_GW, baseline_models, baseline_losses_GW = utils.regression_and_forest(
-#     df          = df,
-#     target_col  = target_col,
-#     feature_cols= feature_cols,
-#     train_end   = TRAIN_SPLIT-n_valid,
-#     val_end     = TRAIN_SPLIT,
-#     models_cfg  = baseline_cfg,
-#     quantiles   = QUANTILES,
-#     lambda_cross= LAMBDA_CROSS,
-#     lambda_coverage=LAMBDA_COVERAGE,
-#     lambda_deriv= LAMBDA_DERIV,
-#     verbose     = VERBOSE
-# )
 
 
 # reset random number generation because sklearn changed it
@@ -402,7 +398,7 @@ for epoch in range(EPOCHS):
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(x_scaled_dev)
-            loss_scaled_dev = architecture.loss_wrapper_quantile_torch(
+            loss_scaled_dev = losses.loss_wrapper_quantile_torch(
                 pred_scaled_dev, y_scaled_dev, quantiles=QUANTILES,
                 lambda_cross=LAMBDA_CROSS, lambda_coverage=LAMBDA_COVERAGE,
                 lambda_deriv=LAMBDA_DERIV)
@@ -415,7 +411,7 @@ for epoch in range(EPOCHS):
         train_loss_scaled += loss_scaled_dev.item()
 
         with torch.no_grad():  # monitoring only
-            loss_meta_scaled = architecture.compute_meta_loss(
+            loss_meta_scaled = losses.compute_meta_loss(
                 pred_scaled_dev, x_scaled_dev, y_scaled_dev, baseline_idx,
                 WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
                 lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
@@ -595,24 +591,6 @@ if VERBOSE >= 2:
 
 if VERBOSE >= 1:
     print("Starting test ...")  #"(baseline: {name_baseline})...")
-
-# test_results = daf.validate_day_ahead(
-#     model   = model,
-#     dataset = test_dataset,
-#     scaler_y= scaler_y,
-#     device  = device,
-#     quantiles=QUANTILES,
-#     verbose = VERBOSE
-# )
-
-# pred_df = test_results['predictions']
-
-# true_series_GW = pred_df.set_index('target_time')['y_true']
-
-# dict_pred_series_GW = {
-#     f'q{int(100*q)}': pred_df.set_index('target_time')[f'q{int(100*q)}']
-#     for q in QUANTILES
-# }
 
 
 true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \

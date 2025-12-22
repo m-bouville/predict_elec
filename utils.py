@@ -5,7 +5,7 @@ import hashlib
 import pickle
 
 from   typing import Sequence, List, Tuple, Dict  #, Optional
-from   collections import defaultdict
+# from   collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -22,7 +22,7 @@ from   sklearn.preprocessing   import StandardScaler
 import matplotlib.pyplot as plt
 
 
-import architecture, IO
+import losses, IO  # architecture
 
 
 
@@ -294,10 +294,10 @@ def validate_day_ahead(
         y_true  = y_scaled[:, 0, 0].cpu().numpy()  # (B,), scaled
 
 
-    nn_loss_scaled   = architecture.loss_wrapper_quantile_numpy(
+    nn_loss_scaled   = losses.loss_wrapper_quantile_numpy(
         pred_nn,   y_true, quantiles, lambda_cross,
         lambda_coverage,lambda_deriv)
-    meta_loss_scaled = architecture.loss_wrapper_quantile_numpy(
+    meta_loss_scaled = losses.loss_wrapper_quantile_numpy(
         pred_meta_scaled, y_true, quantiles, lambda_cross,
         lambda_coverage, lambda_deriv)
     # nn_loss_scaled   = np.mean((y_nn_scaled   - y_true_scaled) ** 2)
@@ -536,13 +536,13 @@ def regression_and_forest(
         pred_test_GW  = models[name].predict(X_test_GW )
 
         # Calculate losses
-        losses_GW[name]['train'] = architecture.loss_wrapper_quantile_numpy(
+        losses_GW[name]['train'] = losses.loss_wrapper_quantile_numpy(
             pred_train_GW, y_train_GW, quantiles, lambda_cross,
             lambda_coverage, lambda_deriv)
-        losses_GW[name]['valid'] = architecture.loss_wrapper_quantile_numpy(
+        losses_GW[name]['valid'] = losses.loss_wrapper_quantile_numpy(
             pred_valid_GW, y_valid_GW, quantiles, lambda_cross,
             lambda_coverage, lambda_deriv)
-        losses_GW[name]['test' ] = architecture.loss_wrapper_quantile_numpy(
+        losses_GW[name]['test' ] = losses.loss_wrapper_quantile_numpy(
             pred_test_GW,  y_test_GW,  quantiles, lambda_cross,
             lambda_coverage, lambda_deriv)
 

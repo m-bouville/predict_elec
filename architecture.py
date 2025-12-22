@@ -1,10 +1,10 @@
 
-from   typing import Tuple, Dict  #, Sequence, List, Optional
+# from   typing import Tuple, Dict  #, Sequence, List, Optional
 # from   collections import defaultdict
 
 import torch
 import torch.nn as nn
-from   torch.utils.data         import Dataset, DataLoader
+from   torch.utils.data         import DataLoader  # Dataset
 # from   torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from   sklearn.preprocessing   import StandardScaler
@@ -13,269 +13,106 @@ import numpy  as np
 import pandas as pd
 
 
-import  day_ahead, utils
+# import losses  # utils, day_ahead
 
 
 
-# ----------------------------------------------------------------------
-# losses
-# ----------------------------------------------------------------------
 
-# Pinball (quantile) loss
-# ----------------------------------------------------------------------
 
-def quantile_loss_with_crossing_torch(
-    y_pred:         torch.Tensor,     # (B, H, 3)
-    y_true:         torch.Tensor,     # (B, H) or (B, H, 1)
-    quantiles:      Tuple[float, ...],
-    lambda_cross:   float,
-    lambda_coverage:float
-) -> torch.Tensor:
+# ==============================================================================
+# 2. DATASET CLASS FOR DAY-AHEAD FORECASTING
+# ==============================================================================
+
+class DayAheadDataset(torch.utils.data.Dataset):
     """
-    Joint quantile loss with crossing penalty.
+    PyTorch Dataset for day-ahead market forecasting.
+
+    Each sample represents one forecast made at noon, predicting the next
+    48 half-hourly values.
     """
 
-    if y_true.ndim == 3:
-        y_true = y_true.squeeze(-1)
+    def __init__(
+        self,
+        data:  np.ndarray,
+        dates: pd.DatetimeIndex,
+        input_length : int,
+        pred_length  : int,
+        forecast_hour: int,
+        target_index : int
+    ):
+        """
+        Parameters
+        ----------
+        data : np.ndarray
+            Shape (T, F) where F includes target in column 0
+        dates : pd.DatetimeIndex
+            Timestamps for each row
+        input_length : int
+            Number of historical half-hours
+        pred_length : int
+            Number of future half-hours to predict
+        forecast_hour : int
+            Hour when forecast is made
+        target_index : int
+            Column index of target variable
+        """
+        self.data         = data.astype(np.float32)
+        self.dates        = dates
+        self.input_length = input_length
+        self.pred_length  = pred_length
+        self.forecast_hour= forecast_hour
+        self.target_index = target_index
 
-    loss = 0.
+        # Pre-compute valid forecast indices
+        self.valid_indices   = []
+        self.forecast_origins= []
 
-    for i, tau in enumerate(quantiles):
-        diff = y_true - y_pred[..., i]
-        loss += torch.mean(torch.maximum(tau * diff, -(1-tau) * diff))
+        for idx_steps, date in enumerate(dates):
+            if (date.hour   == forecast_hour and
+                date.minute == 0 and
+                idx_steps >= input_length and
+                idx_steps + pred_length < len(data)):
 
-        # Coverage penalty
-        if lambda_coverage > 0.:
-            coverage = (y_true <= y_pred[..., i]).float().mean()
-            alpha = 1. / (tau * (1-tau))   # emphasizes tails
-            loss += lambda_coverage * alpha * (coverage - tau) ** 2
+                self.valid_indices   .append(idx_steps)
+                self.forecast_origins.append(date)
 
-    # Crossing penalty
-    if lambda_cross > 0.:
-        penalty = torch.relu(y_pred[..., :-1] - y_pred[..., 1:])
-        loss   += lambda_cross * penalty.sum(dim=-1).mean()
+        # print("forecast_origins:", type(self.forecast_origins[0]))
 
+    def __len__(self):
+        return len(self.valid_indices)
 
-    return loss
+    def __getitem__(self, idx_days):
+        """
+        Returns
+        -------
+        x : torch.Tensor
+            Input features, shape (input_length, F)
+        y : torch.Tensor
+            Target values, shape (pred_length, 1)
+        forecast_origin : pd.Timestamp
+            When this forecast was made
+        """
+        idx_steps = self.valid_indices[idx_days]
 
+        # Input: all features from history
+        X = self.data[idx_steps - self.input_length : idx_steps]  # (input_length, F)
+        X = np.delete(X, self.target_index, axis=1)
 
-def quantile_loss_with_crossing_numpy(
-        y_pred        : np.ndarray,     # (B, H, Q)
-        y_true        : np.ndarray,     # (B, H)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float
-    ) -> float:
-
-    loss = 0.
-
-    for i, tau in enumerate(quantiles):
-        diff = y_true - y_pred[..., i]
-        loss += np.mean(np.maximum(tau * diff, -(1-tau) * diff))
-
-        # Coverage penalty
-        if lambda_coverage > 0.:
-            coverage = (y_true <= y_pred[..., i]).mean()
-            alpha = 1. / (tau * (1-tau))   # emphasizes tails
-            loss += lambda_coverage * alpha * (coverage - tau) ** 2
-
-    # Crossing penalty
-    if lambda_cross > 0.:
-        penalty = np.maximum(0., y_pred[..., :-1] - y_pred[..., 1:])
-        loss   += lambda_cross * np.mean(np.sum(penalty, axis=-1))
-
-    return float(loss)
-
-
-# losses with derivatives
-# ----------------------------------------------------------------------
-
-# /!\ These two MUST remain equivalent.
-#    When making modifications, we modify both in parallel.
-
-def derivative_loss_torch(
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-    ) -> torch.Tensor:
-    """
-    First-order finite-difference derivative loss.
-
-    Parameters
-    ----------
-    y_pred : torch.Tensor
-        Shape (B, H, Q) or (B, H)
-    y_true : torch.Tensor
-        Shape (B, H)
-
-    Returns
-    -------
-    torch.Tensor
-        Scalar loss
-    """
-
-    # No horizon → no derivative loss
-    if y_pred.dim() < 2:
-        return y_pred.new_zeros(())
-
-    # Ensure (B, H, Q)
-    if y_pred.dim() == 2:
-        y_pred = y_pred.unsqueeze(-1)
-
-    # Now we REQUIRE a horizon
-    if y_pred.shape[1] < 2:
-        return y_pred.new_zeros(())
-
-    assert y_pred.shape[:2] == y_true.shape, (y_pred.shape, y_true.shape)
-
-    # Temporal finite differences (within each sample)
-    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, H-1, Q)
-    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, H-1)
-
-    # Broadcast true derivatives over quantiles
-    dy_true = dy_true.unsqueeze(-1)                  # (B, H-1, 1)
-
-    return torch.mean((dy_pred - dy_true) ** 2)  # MSE on derivative mismatch
+        # Target: only consumption, future values
+        y = self.data[idx_steps : idx_steps + self.pred_length, self.target_index]
 
 
-def derivative_loss_numpy(
-        y_pred: np.ndarray,
-        y_true: np.ndarray,
-    ) -> float:
-    """
-    NumPy version of first-order finite-difference derivative loss.
-    Returns 0. if no temporal dimension is present.
-    Must match derivative_loss_torch exactly.
+        # origin = self.forecast_origins[idx_days]
+        # print(f"Type: {type(origin)}, Value: {origin}")
+        # origin_int = int(origin.timestamp())
+        # print(f"After conversion: {type(origin_int)}, Value: {origin_int}")
 
-    Parameters
-    ----------
-    y_pred : np.ndarray
-         Shape (B, H, Q), (B, H), or (B,)
-    y_true : np.ndarray
-         Shape (B, H) or (B,)
-
-    Returns
-    -------
-    float
-         Scalar loss
-    """
-
-    # No horizon → no derivative loss
-    if y_pred.ndim < 2 or y_true.ndim < 2:
-        return 0.
-
-    # Ensure (B, H, Q)
-    if y_pred.ndim == 2:
-        y_pred = y_pred[..., np.newaxis]   # (B, H, 1)
-
-    # Horizon must exist
-    if y_pred.shape[1] < 2:
-        return 0.
-
-    assert y_pred.shape[:2] == y_true.shape, (
-        y_pred.shape, y_true.shape
-    )
-
-    # Temporal finite differences
-    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, H-1, Q)
-    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, H-1)
-
-    dy_true = dy_true[..., np.newaxis]               # (B, H-1, 1)
-
-    return float(np.mean((dy_pred - dy_true) ** 2))
-
-
-# wrappers (add together all components to the loss)
-# ----------------------------------------------------------------------
-
-def loss_wrapper_quantile_torch(
-        y_pred        : torch.Tensor,   # (B, H, Q)
-        y_true        : torch.Tensor,   # (B, H) or (B, H, 1)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-    ) -> torch.Tensor:
-    """
-    Torch loss wrapper for quantile forecasts.
-    """
-
-    # Base quantile + crossing loss
-    loss = quantile_loss_with_crossing_torch(
-        y_pred       = y_pred,
-        y_true       = y_true,
-        quantiles    = quantiles,
-        lambda_cross = lambda_cross,
-        lambda_coverage=lambda_coverage
-    )
-
-    # Optional derivative loss (per quantile)
-    if lambda_deriv > 0.:
-        _y_true = y_true.squeeze(-1) if y_true.ndim == 3 else y_true
-        loss += lambda_deriv * derivative_loss_torch(y_pred, _y_true)
-
-    return loss
-
-
-def loss_wrapper_quantile_numpy(
-        y_pred        : np.ndarray,     # (B, H, Q)
-        y_true        : np.ndarray,     # (B, H)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-    ) -> float:
-    """
-    NumPy loss wrapper for quantile forecasts.
-    MUST match torch version exactly.
-    """
-
-    loss = quantile_loss_with_crossing_numpy(
-        y_pred       = y_pred,
-        y_true       = y_true,
-        quantiles    = quantiles,
-        lambda_cross = lambda_cross,
-        lambda_coverage=lambda_coverage
-    )
-
-    if lambda_deriv > 0.:
-        loss += lambda_deriv * derivative_loss_numpy(y_pred, y_true)
-
-    return float(loss)
-
-
-
-# Metamodel: losses (predictions are in utils.py)
-# ----------------------------------------------------------------------
-
-def compute_meta_loss(
-        pred_scaled   : torch.Tensor,   # (B, H)
-        x_scaled      : torch.Tensor,   # (B, L, F)
-        y_scaled      : torch.Tensor,   # (B, H, 1)
-        baseline_idx  : Dict[str, int],
-        weights_meta  : Dict[str, float],
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float
-    ) -> torch.Tensor:
-    """
-    Returns:
-        meta_loss_scaled : torch scalar tensor
-    """
-
-    B, _, _ = x_scaled.shape
-
-    pred_meta_scaled = utils.compute_meta_prediction_torch(
-        pred_scaled, x_scaled, baseline_idx, weights_meta, len(quantiles)//2)
-
-    # Match target shape
-    y_scaled_1 = y_scaled[:, 0, 0]  # .reshape(B)
-
-    return loss_wrapper_quantile_torch(pred_meta_scaled, y_scaled_1,
-                    quantiles, lambda_cross, lambda_coverage, lambda_deriv)
-
-
-
+        return (
+            torch.tensor(X),
+            torch.tensor(y).unsqueeze(-1),  # (pred_length, 1)
+            idx_steps,
+            int(self.forecast_origins[idx_days].timestamp()) # pd.Timestamp != batchable
+        )
 
 
 # ============================================================
@@ -377,7 +214,7 @@ def make_X_and_y(series, dates,
             f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
 
         def build_day_ahead(data, date_slice):
-            return day_ahead.DayAheadDataset(
+            return DayAheadDataset(
                 data        = data,
                 dates       = date_slice,
                 input_length= input_length,
@@ -390,8 +227,8 @@ def make_X_and_y(series, dates,
         valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
         test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
 
-        print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
-              len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
+        # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
+        #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
 
         # print("DATASET TYPE:", type   (train_dataset_scaled))
         # print("DATASET LEN :", len    (train_dataset_scaled))
@@ -421,7 +258,7 @@ def make_X_and_y(series, dates,
         valid_loader = build_loader(valid_dataset_scaled, shuffle=False,drop_last=False)
         test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
 
-        print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
+        # print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
 
         # print(); print("valid_loader:")
         # for batch_idx, (x_scaled, y_scaled, origin_unix) in enumerate(valid_loader):
