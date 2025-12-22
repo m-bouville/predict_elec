@@ -272,7 +272,10 @@ assert INPUT_LENGTH + 60 < test_months,\
 
 
 [train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates ],\
-        scaler_y, X_test_GW, y_test_GW, test_dataset_scaled, X_test_scaled =\
+        scaler_y, [X_GW, y_GW], \
+        [X_train_GW, y_train_GW, train_dataset_scaled], \
+        [X_valid_GW, y_valid_GW, valid_dataset_scaled], \
+        [X_test_GW,  y_test_GW,  test_dataset_scaled ], X_test_scaled =\
     architecture.make_X_and_y(
         series, dates, TRAIN_SPLIT, n_valid,
         feature_cols, target_col,
@@ -280,7 +283,11 @@ assert INPUT_LENGTH + 60 < test_months,\
         do_day_ahead=DAY_AHEAD, forecast_hour=FORECAST_HOUR,
         verbose=VERBOSE)
 
-
+if VERBOSE >= 2:
+    print(f"Train mean:{scaler_y.mean_ [0]:6.2f} GW")
+    print(f"Train std :{scaler_y.scale_[0]:6.2f} GW")
+    print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
+    print(f"Test mean :{y_test_GW.mean()  :6.2f} GW")
 
 # scale loss for LR
 sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
@@ -458,54 +465,27 @@ for epoch in range(EPOCHS):
     #       "meta_valid_loss_scaled:", meta_valid_loss_scaled)
 
 
-    if ((epoch+1) % DISPLAY_EVERY == 0) | (epoch == 0):
-        # comparing latest loss to lowest so far
-        if valid_loss_scaled <= min_loss_display_scaled - MIN_DELTA:
-            is_better = '**'
-        elif valid_loss_scaled <= min_loss_display_scaled:
-            is_better = '*'
-        else:
-            is_better = ''
-
-        min_loss_display_scaled = min_valid_loss_scaled
-
-        t_epoch = time.perf_counter() - t_epoch_start
-
-        if VERBOSE >= 1:
-            print(f"{epoch+1:3n} /{EPOCHS:3n} ={(epoch+1)/EPOCHS*100:3.0f}%,"
-                  f"{t_epoch/60*(EPOCHS/(epoch+1)-1)+.5:3.0f} min left, "
-                  f"loss (1e-3): "
-                  f"train{train_loss_scaled*1000:5.0f} (best{min_train_loss_scaled*1000:5.0f}), "
-                  f"valid{valid_loss_scaled*1000:5.0f} ({    min_valid_loss_scaled*1000:5.0f})"
-                  f" {is_better}")
-
-    min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
-    list_train_loss_scaled    .append(train_loss_scaled)
-    list_min_train_loss_scaled.append(min_train_loss_scaled)
-
-    min_valid_loss_scaled = min(min_valid_loss_scaled, valid_loss_scaled)
-    list_valid_loss_scaled    .append(valid_loss_scaled)
-    list_min_valid_loss_scaled.append(min_valid_loss_scaled)
-
-    # metamodel
-    meta_min_train_loss_scaled = min(meta_min_train_loss_scaled, meta_train_loss_scaled)
-    list_meta_train_loss_scaled    .append(meta_train_loss_scaled)
-    list_meta_min_train_loss_scaled.append(meta_min_train_loss_scaled)
-
-    meta_min_valid_loss_scaled = min(meta_min_valid_loss_scaled, meta_valid_loss_scaled)
-    list_meta_valid_loss_scaled    .append(meta_valid_loss_scaled)
-    list_meta_min_valid_loss_scaled.append(meta_min_valid_loss_scaled)
-
-
-    if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
-            & (epoch < EPOCHS-2):
-        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-                          list_valid_loss_scaled, list_min_valid_loss_scaled,
-                          None,  # baseline_losses_scaled,
-                          None, None, None, None,
-                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
-                          partial=True, verbose=VERBOSE)
+    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled,
+            meta_min_train_loss_scaled, meta_min_valid_loss_scaled,
+            list_train_loss_scaled, list_min_train_loss_scaled,
+            list_valid_loss_scaled, list_min_valid_loss_scaled,
+            list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+            list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled) = \
+        utils.display_evolution(
+                epoch, t_epoch_start,
+                train_loss_scaled, valid_loss_scaled,
+                min_train_loss_scaled,  min_valid_loss_scaled,
+                min_loss_display_scaled,
+                meta_train_loss_scaled, meta_min_train_loss_scaled,
+                meta_valid_loss_scaled, meta_min_valid_loss_scaled,
+                # lists
+                list_train_loss_scaled, list_min_train_loss_scaled,
+                list_valid_loss_scaled, list_min_valid_loss_scaled,
+                list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+                list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+                # constants
+                EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY,
+                MIN_DELTA, VERBOSE)
 
     # Check for early stopping
     if early_stopping(valid_loss_scaled):
@@ -525,11 +505,36 @@ plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
                   partial=False, verbose=VERBOSE)
 
 
-# TODO
-# if VERBOSE >= 1:
-#     print("\nTraining metrics [GW]:")
-#     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-#                          WEIGHTS_META, unit="GW", verbose=VERBOSE)
+if VERBOSE >= 1:
+    true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
+        utils.test_predictions_day_ahead(
+            X_train_GW, train_loader, model, scaler_y,
+            # num_test_windows=len(train_dataset_scaled),
+            feature_cols = feature_cols,
+            test_dates   = train_dates,
+            device       = device,
+            input_length = INPUT_LENGTH,
+            pred_length  = PRED_LENGTH,
+            # incr_steps   = INCR_STEPS_TEST,
+            quantiles    = QUANTILES)
+    print("\nTraining metrics [GW]:")
+    utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
+
+    true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
+        utils.test_predictions_day_ahead(
+            X_valid_GW, valid_loader, model, scaler_y,
+            # num_test_windows=len(valid_dataset_scaled),
+            feature_cols = feature_cols,
+            test_dates   = valid_dates,
+            device       = device,
+            input_length = INPUT_LENGTH,
+            pred_length  = PRED_LENGTH,
+            # incr_steps   = INCR_STEPS_TEST,
+            quantiles    = QUANTILES)
+    print("\nvalidation metrics [GW]:")
+    utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
 
 
 if VERBOSE >= 2:
@@ -603,8 +608,8 @@ if VERBOSE >= 1:
 
 true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
     utils.test_predictions_day_ahead(
-        X_test_GW, y_test_GW, test_loader, model, scaler_y,
-        num_test_windows=len(test_dataset_scaled),
+        X_test_GW, test_loader, model, scaler_y,
+        # num_test_windows=len(test_dataset_scaled),
         feature_cols = feature_cols,
         test_dates   = test_dates,
         device       = device,
@@ -637,12 +642,12 @@ for _name in ['rf']:  # 'lr',
 # TODO reinstate assert
 
 if VERBOSE >= 1:
-    print()
+    print("\nTesting quantiles")
     for tau in QUANTILES:
         key = f"q{int(100*tau)}"
         cov = utils.quantile_coverage(true_series_GW, dict_pred_series_GW[key])
-        print(f"Coverage {key}:{cov*100:5.1f}% "
-              f"({(cov-tau)*100:4.1f}%pt off target of{tau*100:3n}%)")
+        print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
+              f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
 
 
 true_series_GW = true_series_GW.loc[common_idx]

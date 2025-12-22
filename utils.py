@@ -6,8 +6,9 @@
 
 
 # import os
+import time
 
-from   typing import Sequence, Tuple, Dict  #, List, Optional
+from   typing import List, Sequence, Tuple, Dict  #, Optional
 
 import torch
 import torch.nn as nn
@@ -22,7 +23,7 @@ from   sklearn.preprocessing   import StandardScaler
 import matplotlib.pyplot as plt
 
 
-import losses, IO  # architecture
+import losses, IO, plots  # architecture
 
 
 
@@ -313,11 +314,13 @@ def validate_day_ahead(
 
 @torch.no_grad()
 def test_predictions_day_ahead(
-    X_test_GW, y_test_GW, test_loader, model, scaler_y,
-    num_test_windows, feature_cols, test_dates, device,
+    X_subset_GW, subset_loader, model, scaler_y,
+    feature_cols, test_dates, device,
     input_length: int, pred_length: int,
     quantiles: Tuple[float, ...], is_validation: bool = False
 ) -> Tuple[pd.Series, Dict[str, pd.Series], Dict[str, pd.Series]]:
+    # subset: train, valid ot test
+
 
     model.eval()
 
@@ -332,23 +335,23 @@ def test_predictions_day_ahead(
     records = []  # one record per (origin, horizon)
 
     # Iterate once: no aggregation
-    for batch_idx, batch_scaled in enumerate(test_loader):
-        x_batch_scaled, y_batch_scaled, idx_batch, datetime_int = batch_scaled
-        idx_batch   = idx_batch   .cpu().numpy()   # origin indices
-        datetime_int= datetime_int.cpu().numpy()
+    for (X_scaled, y_scaled, idx_subset, forecast_origin_int) in subset_loader:
+        idx_subset         = idx_subset         .cpu().numpy()   # origin indices
+        forecast_origin_int= forecast_origin_int.cpu().numpy()
 
         # NN prediction
-        x_scaled_dev = x_batch_scaled.to(device)
-        pred_scaled = model(x_scaled_dev).cpu().numpy()  # (B, H, Q)
+        X_scaled_dev = X_scaled.to(device)
+        pred_scaled  = model(X_scaled_dev).cpu().numpy()  # (B, H, Q)
 
         B, H, Q = pred_scaled.shape
         # print(B, H, Q)
         assert H == pred_length
         assert Q == len(quantiles)
+        # assert B <= batch_size
 
         # Inverse-scale ground truth
         y_true_GW = scaler_y.inverse_transform(
-            y_batch_scaled[:, :, 0].cpu().numpy().reshape(-1, 1)
+            y_scaled[:, :, 0].cpu().numpy().reshape(-1, 1)
         ).reshape(B, H)
 
         # Inverse-scale predictions
@@ -358,17 +361,19 @@ def test_predictions_day_ahead(
 
         # One prediction per target timestamp
         for b in range(B):
-            # origin_time = pd.Timestamp(datetime_int[b], unit='s')
+            forecast_origin_time = pd.Timestamp(forecast_origin_int[b], unit='s')
 
             for h in range(H):
-                target_idx = idx_batch[b] + h
-                if target_idx >= len(test_dates):
+                idx_subset_current = idx_subset[b] + 1 + h
+                if idx_subset_current >= len(test_dates):
                     continue
 
-                target_time = test_dates[target_idx]
+                # target_time = test_dates[target_idx]
+
+                time_current = forecast_origin_time + pd.Timedelta(minutes=30 * (h+1))
 
                 row = {
-                    "target_time": target_time,
+                    "time_current": time_current,
                     "y_true": y_true_GW[b, h],
                 }
 
@@ -378,12 +383,12 @@ def test_predictions_day_ahead(
                 # Baselines at the same target time
                 for nm in baseline_names:
                     col = feature_cols.index(f"consumption_{nm}")
-                    row[nm] = X_test_GW[target_idx, col]
+                    row[nm] = X_subset_GW[idx_subset_current, col]
 
                 records.append(row)
 
     # Build DataFrame
-    df = pd.DataFrame.from_records(records).set_index("target_time").sort_index()
+    df = pd.DataFrame.from_records(records).set_index("time_current").sort_index()
 
     # Output format
     true_series_GW = df["y_true"]
@@ -526,6 +531,90 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
         plt.legend()
         plt.tight_layout()
         plt.show()
+
+
+
+
+# -------------------------------------------------------
+# Display evolution
+# -------------------------------------------------------
+
+def display_evolution(
+        epoch: int, t_epoch_start,
+        train_loss_scaled     : float, valid_loss_scaled    : float,
+        min_train_loss_scaled : float, min_valid_loss_scaled: float,
+        min_loss_display_scaled:float,
+        meta_train_loss_scaled: float, meta_min_train_loss_scaled: float,
+        meta_valid_loss_scaled: float, meta_min_valid_loss_scaled: float,
+        # lists
+        list_train_loss_scaled: List[float], list_min_train_loss_scaled: List[float],
+        list_valid_loss_scaled: List[float], list_min_valid_loss_scaled: List[float],
+        list_meta_train_loss_scaled: List[float], list_meta_min_train_loss_scaled: List[float],
+        list_meta_valid_loss_scaled: List[float], list_meta_min_valid_loss_scaled: List[float],
+        # constants
+        num_epochs: int, display_every: int, plot_conv_every: int,
+        min_delta: float, verbose:int=0)\
+            -> Tuple[float, float, float, float, float, float, float,
+                     List[float], List[float], List[float], List[float],
+                     List[float], List[float], List[float], List[float]]:
+
+    if ((epoch+1) % display_every == 0) | (epoch == 0):
+        # comparing latest loss to lowest so far
+        if valid_loss_scaled <= min_loss_display_scaled - min_delta:
+            is_better = '**'
+        elif valid_loss_scaled <= min_loss_display_scaled:
+            is_better = '*'
+        else:
+            is_better = ''
+
+        min_loss_display_scaled = min_valid_loss_scaled
+
+        t_epoch = time.perf_counter() - t_epoch_start
+
+        if verbose >= 1:
+            print(f"{epoch+1:3n} /{num_epochs:3n} ={(epoch+1)/num_epochs*100:3.0f}%,"
+                  f"{t_epoch/60*(num_epochs/(epoch+1)-1)+.5:3.0f} min left, "
+                  f"loss (1e-3): "
+                  f"train{train_loss_scaled*1000:5.0f} (best{min_train_loss_scaled*1000:5.0f}), "
+                  f"valid{valid_loss_scaled*1000:5.0f} ({    min_valid_loss_scaled*1000:5.0f})"
+                  f" {is_better}")
+
+    min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
+    list_train_loss_scaled    .append(train_loss_scaled)
+    list_min_train_loss_scaled.append(min_train_loss_scaled)
+
+    min_valid_loss_scaled = min(min_valid_loss_scaled, valid_loss_scaled)
+    list_valid_loss_scaled    .append(valid_loss_scaled)
+    list_min_valid_loss_scaled.append(min_valid_loss_scaled)
+
+    # metamodel
+    meta_min_train_loss_scaled = min(meta_min_train_loss_scaled, meta_train_loss_scaled)
+    list_meta_train_loss_scaled    .append(meta_train_loss_scaled)
+    list_meta_min_train_loss_scaled.append(meta_min_train_loss_scaled)
+
+    meta_min_valid_loss_scaled = min(meta_min_valid_loss_scaled, meta_valid_loss_scaled)
+    list_meta_valid_loss_scaled    .append(meta_valid_loss_scaled)
+    list_meta_min_valid_loss_scaled.append(meta_min_valid_loss_scaled)
+
+
+    if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
+            & (epoch < num_epochs-2):
+        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
+                          list_valid_loss_scaled, list_min_valid_loss_scaled,
+                          None,  # baseline_losses_scaled,
+                          None, None, None, None,
+                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+                          partial=True, verbose=verbose)
+
+    return (min_train_loss_scaled,  min_valid_loss_scaled,
+            min_loss_display_scaled,
+            meta_min_train_loss_scaled, meta_min_valid_loss_scaled,
+            # lists
+            list_train_loss_scaled, list_min_train_loss_scaled,
+            list_valid_loss_scaled, list_min_valid_loss_scaled,
+            list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+            list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled)
 
 
 
