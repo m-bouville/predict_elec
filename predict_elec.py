@@ -20,7 +20,7 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INP
            VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
            DAY_AHEAD, FORECAST_HOUR)
 # import day_ahead
-import architecture, losses, utils, IO, plots
+import architecture, losses, utils, LR_RF, IO, plots
 
 
 # system dimensions
@@ -121,12 +121,12 @@ if __name__ == "__main__":
 
     df = df.reset_index(drop=True)
 
-    print(df.head())
+    # print(df.head())
 
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=(10,6))
-    plt.plot(dates, df['consumption_GW'])
-    plt.show()
+    # import matplotlib.pyplot as plt
+    # plt.figure(figsize=(10,6))
+    # plt.plot(dates, df['consumption_GW'])
+    # plt.show()
 
 
 
@@ -197,7 +197,7 @@ cache_id = {
 }
 
 baseline_features_GW, baseline_models, baseline_losses_GW = \
-    utils.load_or_compute_rf_predictions(
+    LR_RF.load_or_compute_rf_predictions(
         compute_kwargs = rf_params,
         cache_dir      = "output",
         cache_id_dict  = cache_id,
@@ -524,9 +524,17 @@ plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
                   # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
                   partial=False, verbose=VERBOSE)
 
+
+# TODO
+# if VERBOSE >= 1:
+#     print("\nTraining metrics [GW]:")
+#     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+#                          WEIGHTS_META, unit="GW", verbose=VERBOSE)
+
+
 if VERBOSE >= 2:
     y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
-        utils.aggregate_over_windows(
+        utils.aggregate_day_ahead(
             model        = model,
             loader       = valid_loader,
             dates        = valid_dates,
@@ -633,7 +641,8 @@ if VERBOSE >= 1:
     for tau in QUANTILES:
         key = f"q{int(100*tau)}"
         cov = utils.quantile_coverage(true_series_GW, dict_pred_series_GW[key])
-        print(f"Coverage {key}:{cov*100:5.1f}% (target{tau*100:3n}%)")
+        print(f"Coverage {key}:{cov*100:5.1f}% "
+              f"({(cov-tau)*100:4.1f}%pt off target of{tau*100:3n}%)")
 
 
 true_series_GW = true_series_GW.loc[common_idx]
@@ -699,8 +708,10 @@ with torch.no_grad():
 # assert true_series.index.equals(pred_series.index)
 # assert true_series.index.equals(lr_series.index)
 
-utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                     WEIGHTS_META, unit="GW", verbose=VERBOSE)
+if VERBOSE >= 1:
+    print("\nTesting metrics [GW]:")
+    utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
 
 if VERBOSE >= 1:
     print("Plotting test results...")

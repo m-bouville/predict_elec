@@ -12,9 +12,12 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LE
 from   typing import Dict  # List
 
 
-import utils
+import utils, LR_RF
 
 
+NUM_STEPS_PER_DAY = 24*2
+def days_to_steps(num_days: float, num_steps_per_day=NUM_STEPS_PER_DAY) -> int:
+    return int(round(num_days*num_steps_per_day))
 
 # ============================================================
 # 1. CONFIGURATION CONSTANTS
@@ -29,10 +32,10 @@ TRAIN_SPLIT_FRACTION=0.8
 VAL_RATIO    =   0.25           # validation from training set
 
 DAY_AHEAD:bool = True
-FORECAST_HOUR:int = 12
+FORECAST_HOUR:int = 12          # 12: noon
 
-INPUT_LENGTH =  14 * 24*2       # How many half-hours the model sees
-PRED_LENGTH  =   1 * 24*2       # BUG should be 36h  How many future half-hours to predict
+INPUT_LENGTH = days_to_steps(14)       # How many half-hours the model sees
+PRED_LENGTH  = days_to_steps( 1)       # BUG should be 36h  How many future half-hours to predict
 
 BATCH_SIZE   =  64              # Training batch size
 EPOCHS       = [  5, 40, 60, 80] # Number of training epochs
@@ -43,7 +46,7 @@ FFN_SIZE     = [  4,  4,  6,  8] # expansion factor
 NUM_LAYERS   = [  1,  2,  3,  6] # Number of transformer encoder layers
 
 # PatchEmbedding
-PATCH_LEN    =  24              # [half-hours]
+PATCH_LEN    = days_to_steps(0.5)              # [half-hours]
 STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
 
 # losses
@@ -95,7 +98,7 @@ NUM_LAYERS   = NUM_LAYERS   [IDX_SYSTEM_SIZE]
 NUM_GEO_BLOCKS=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
 PATIENCE     = PATIENCE     [IDX_SYSTEM_SIZE]
 WARMUP_STEPS = WARMUP_STEPS [IDX_SYSTEM_SIZE]
-BASELINE_CFG = (utils.baseline_cfg)[IDX_SYSTEM_SIZE]
+BASELINE_CFG = (LR_RF.baseline_cfg)[IDX_SYSTEM_SIZE]
 
 
 # Checking
