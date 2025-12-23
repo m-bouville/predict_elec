@@ -18,15 +18,15 @@ import plots
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
 # Last processing
 #    December  2, 2025 4:28 PM (metadata)
-#    December  2, 2025 4:28 PM (data) 
+#    December  2, 2025 4:28 PM (data)
 
 def load_consumption(path, verbose: int = 0):
-    
+
     df = pd.read_csv(path, sep=';')
 
     if 'Date - Heure' not in df.columns:
         raise RuntimeError(f"No datetime-like column found in {path}")
-    
+
     col = 'Date - Heure'
     # col = df.columns[cols.index(key)]
     df[col] = pd.to_datetime(df[col])
@@ -39,34 +39,34 @@ def load_consumption(path, verbose: int = 0):
         "Consommation brute électricité (MW) - RTE": 'consumption_GW'
         })
     df['consumption_GW'] = df['consumption_GW']/1000
-    
+
     # plots.data(df.resample('D').mean(),
     #           xlabel="date", ylabel="consumption (MW)")
-    
+
     df['year']     = df.index.year
     df['month']    = df.index.month
     df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
         year=2000, month=d.month, day=d.day))
     df['timeofday']= df.index.hour + df.index.minute/60
-    
-    
+
+
     if verbose >= 2:
         print(df.head())
-        
+
         plots.data(df.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date", ylabel="consumption (GW)")
-        
+
         _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').mean()\
                   .rename(columns={"consumption_GW": "winter"})
         _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').mean()\
                   .rename(columns={"consumption_GW": "summer"})
         plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
                   .drop(columns=['year','month', 'dateofyear']),
-                  xlabel="time of day (UTC)", ylabel="consumption (GW)", 
+                  xlabel="time of day (UTC)", ylabel="consumption (GW)",
                   title ="seasonal consumption")
-    
+
     return df
 
 
@@ -82,21 +82,21 @@ def load_weights(path, verbose: int = 2) -> pd.Series:
             .mean()
         )
     weights = df_weigths / df_weigths.sum()
-    
+
     weights.index = [_normalize_name(r) for r in weights.index]
-        
+
     if not np.isclose(weights.sum(), 1.0):
         raise ValueError(f"Temperature weights do not sum to 100% ({weights.sum()}%)")
-    
+
     if verbose >= 2:  print(weights)
-    
+
     return weights
-    
-    
+
+
 # https://odre.opendatasoft.com/explore/dataset/temperature-quotidienne-regionale/
 # Last processing
 #   December 12, 2025 3:00 AM (metadata)
-#   December  2, 2025 3:01 AM (data) 
+#   December  2, 2025 3:01 AM (data)
 
 def load_temperature(path, weights,
                      # noise_std: float or Tuple [float] = 0.,  # realistic forecast error
@@ -105,18 +105,18 @@ def load_temperature(path, weights,
     df      = pd.read_csv(path, sep=';')
     if 'Date' not in df.columns:
         raise RuntimeError(f"No date column found in {path}")
-    
+
     df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%y', utc=True)
     df = df.set_index('Date').sort_index()
     df.index.name = "date"
-    
+
     df['Région'] = [_normalize_name(r) for r in df['Région']]
     df.drop(columns=["Code INSEE région"], errors="ignore", inplace=True)
-    
+
     df = df.rename(columns={
         "TMin (°C)": 'Tmin_degC', "TMax (°C)": 'Tmax_degC', "TMoy (°C)": 'Tavg_degC'
         })
-    
+
     # 2. Pivot by region
     def _pivot(col):
         return (
@@ -128,11 +128,11 @@ def load_temperature(path, weights,
     Tavg = _pivot("Tavg_degC")
     Tmin = _pivot("Tmin_degC")
     Tmax = _pivot("Tmax_degC")
-    
-    
-    # 3. Align weights 
-    weights_aligned = weights.reindex(df['Région']) 
-    
+
+
+    # 3. Align weights
+    weights_aligned = weights.reindex(df['Région'])
+
     if weights_aligned.isna().any():
         missing = weights_aligned[weights_aligned.isna()].index.tolist()
         raise ValueError(f"Missing weights for regions: {missing}")
@@ -157,8 +157,8 @@ def load_temperature(path, weights,
             lambda row: weighted_quantile(row.values, weights_aligned.values, q),
             axis=1
         ).round(2)
-    
-    
+
+
     # 5. Build output features
     out = pd.DataFrame(index=Tavg.index)
 
@@ -178,12 +178,12 @@ def load_temperature(path, weights,
 
     # for heating, we care only about T <= X °C
     HEATING_REF_DEGC: int = 12
-    Tsat_local = Tavg.clip(upper=HEATING_REF_DEGC)  
+    Tsat_local = Tavg.clip(upper=HEATING_REF_DEGC)
     Tsat_local_3days = Tsat_local.rolling(3, min_periods=3).mean()
     name = 'Tavg_sat'+str(HEATING_REF_DEGC)
     out[name+'_degC']      = weighted_mean(Tsat_local)
     out[name+'_3days_degC']= weighted_mean(Tsat_local_3days)
-    
+
     # fraction of the population heating
     heating_on_r = (Tavg < HEATING_REF_DEGC).astype(int)
     out[name+'_frac']      = heating_on_r.mul(weights, axis=1).sum(axis=1)
@@ -194,20 +194,20 @@ def load_temperature(path, weights,
     out['month']    = out.index.month
     out['dateofyear']=out.index.map(lambda d: pd.Timestamp(
         year=2000, month=d.month, day=d.day))
-    
+
     if verbose >= 1:
         print(f"[load_temperature] {len(Tavg.columns)} régions, {len(out)} days")
-        
+
     if verbose >= 2:
         print(out.drop(columns='dateofyear').head().to_string())
-        
+
     #     plots.data(df, xlabel="date", ylabel="temperature (°C)")
-            
+
         plots.data(out.groupby('dateofyear').mean().sort_index()\
                     .drop(columns=['year','month']),
-                  xlabel="date of year", ylabel="temperature (°C)", 
+                  xlabel="date of year", ylabel="temperature (°C)",
                   title ="seasonal temperature")
-    
+
     return out
 
 
@@ -215,30 +215,32 @@ def load_temperature(path, weights,
 #       rayonnement-solaire-vitesse-vent-tri-horaires-regionaux/
 # Last processing
 #    December 16, 2025 3:00 AM (metadata)
-#    December  3, 2025 3:00 AM (data) 
+#    December  3, 2025 3:00 AM (data)
 
-def load_solar(path, verbose: int = 0):
-    df = pd.read_csv(path, sep=';')
+# BUG: The whole of September 2021 is missing
 
-    # Detect datetime column (example name)
-    col = "Date"
-    df[col] = pd.to_datetime(df[col], utc=True)
-    df = df.set_index(col).sort_index()
-    df.index.name = "datetime"
-    
-    df.drop(columns=["Code INSEE région"], errors="ignore", inplace=True)
+# def load_solar(path, verbose: int = 0):
+#     df = pd.read_csv(path, sep=';')
 
-    # National average (like temperature)
-    df = df.select_dtypes(include=[np.number]).groupby(df.index).mean()
+#     # Detect datetime column (example name)
+#     col = "Date"
+#     df[col] = pd.to_datetime(df[col], utc=True)
+#     df = df.set_index(col).sort_index()
+#     df.index.name = "datetime"
 
-    # Rename explicitly
-    
-    df['solar_kW_per_m2'] = df['Rayonnement solaire global (W/m2)'] / 1000
-    df.drop(columns=['Rayonnement solaire global (W/m2)'], inplace=True)
-    df = df.rename(columns={"Vitesse du vent à 100m (m/s)": 'wind_m_per_s'})
+#     df.drop(columns=["Code INSEE région"], errors="ignore", inplace=True)
 
-    if verbose >= 2:
-        print(df.head())
+#     # National average (like temperature)
+#     df = df.select_dtypes(include=[np.number]).groupby(df.index).mean()
+
+#     # Rename explicitly
+
+#     df['solar_kW_per_m2'] = df['Rayonnement solaire global (W/m2)'] / 1000
+#     df.drop(columns=['Rayonnement solaire global (W/m2)'], inplace=True)
+#     df = df.rename(columns={"Vitesse du vent à 100m (m/s)": 'wind_m_per_s'})
+
+#     if verbose >= 2:
+#         print(df.head())
 
     return df
 
@@ -246,7 +248,7 @@ def load_solar(path, verbose: int = 0):
 def analyze_datetime(df, freq=None, name="dataset"):
     """
     Report duplicates and missing timestamps in a datetime-indexed DataFrame.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
@@ -266,7 +268,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
         print("/!\ Duplicates found:")
         dup_rows = df[df.index.duplicated(keep=False)].sort_index().index
         print(dup_rows)
-        
+
         # counts = df.index[df.index.duplicated()].value_counts()
         # print("\nDuplicate counts:")
         # print(counts)
@@ -294,34 +296,37 @@ def analyze_datetime(df, freq=None, name="dataset"):
                 print("... (more omitted)")
         else:
             print(f"✓ No missing timestamps at freq = {freq}")
-            
 
-def load_data(dict_fnames: dict, output_fname: str, verbose: int = 0)\
+
+def load_data(dict_fnames: dict, output_fname: str,
+              num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     dfs = {}
-    
+
     weights = load_weights('data/consommation-annuelle-brute-regionale.csv', verbose)
-    
+
     # Load both CSVs
     for name, path in dict_fnames.items():
         if not os.path.exists(path):
             raise FileNotFoundError(f"Input file not found: {path}")
 
-        
-        if verbose >= 1: 
+
+        if verbose >= 1:
             print(f"Loading {path}...")
         if name == 'consumption':
             dfs[name] = load_consumption(path, verbose)
-            if verbose >= 3: 
-                analyze_datetime(dfs["consumption"], freq="30T",name="consumption")
+            if verbose >= 3:
+                analyze_datetime(dfs["consumption"],
+                                 freq=f"{minutes_per_step}T", name="consumption")
         elif name == 'temperature':
             dfs[name] = load_temperature(path, weights, verbose=verbose)
-            if verbose >= 3: 
-                analyze_datetime(dfs["temperature"], freq="D",  name="temperature")
-        elif name == 'solar':
-            dfs[name] = load_solar(path, verbose)
             if verbose >= 3:
-                analyze_datetime(dfs["solar"],       freq="3H", name="solar")
+                analyze_datetime(dfs["temperature"], freq="D",  name="temperature")
+        # elif name == 'solar':
+            # BUG: The whole of September 2021 is missing
+            # dfs[name] = load_solar(path, verbose)
+            # if verbose >= 3:
+            #     analyze_datetime(dfs["solar"],       freq="3H", name="solar")
 
     starts = {name: df.index.min() for name, df in dfs.items()}
     ends   = {name: df.index.max() for name, df in dfs.items()}
@@ -329,11 +334,11 @@ def load_data(dict_fnames: dict, output_fname: str, verbose: int = 0)\
         "start": pd.Series(starts),
         "end":   pd.Series(ends),
     })
-    
+
     # # Common range
     # starts = [df.index.min() for df in dfs.values()]
     # ends   = [df.index.max() for df in dfs.values()]
-    
+
     common_start = max(starts.values())
     common_end   = min(ends  .values())
 
@@ -342,7 +347,7 @@ def load_data(dict_fnames: dict, output_fname: str, verbose: int = 0)\
         print(f"Common end:   {common_end}")
 
     # Half‑hour index (padding will generate NAs which will be trimmed later)
-    idx = pd.date_range(start= common_start, 
+    idx = pd.date_range(start= common_start,
                         end  = common_end + pd.Timedelta(days=1), freq="30min")
 
     META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
@@ -351,32 +356,32 @@ def load_data(dict_fnames: dict, output_fname: str, verbose: int = 0)\
     # Align
     aligned = []
     for name, df in dfs.items():
-        
+
         # If there are duplicate timestamps, collapse them by averaging
         if df.index.has_duplicates:
             df = df.groupby(df.index).mean()  # TODO despicable
-                
+
         # Keep metadata ONLY for the consumption dataset
         if name != "consumption":
             df.drop(columns=[c for c in META_COLS if c in df.columns], inplace=True)
-    
+
         d = df.reindex(idx)
-        
+
         # # ---- Fill 24 hours of temperature when data are daily ----
         # is_daily = (
-        #     (df.index.hour == 0).all() 
+        #     (df.index.hour == 0).all()
         #     and (df.index.minute == 0).all()
         #     and (df.index.second == 0).all()
-        # )        
+        # )
         # if is_daily:
         #     d = d.ffill(limit=48)   # 48×30min = 24 hours
-            
+
         delta = df.index.to_series().diff().dropna().mode()[0]
         if delta == pd.Timedelta(days=1):
-            d = d.ffill(limit=24*2)
+            d = d.ffill(limit=num_steps_per_day)
         elif delta == pd.Timedelta(hours=3):
             d = d.ffill(limit= 3*2)
-    
+
         # d = d.add_prefix(f"{name}_")
         aligned.append(d)
 
@@ -384,16 +389,16 @@ def load_data(dict_fnames: dict, output_fname: str, verbose: int = 0)\
     merged.index.name = "datetime"
 
     merged.to_csv(output_fname)
-    
+
     if verbose >= 2:
         print(f"Saved merged dataset to {output_fname}")
         print(merged.head())
-    
+
         plots.data(merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date")
-    
+
     return merged, dates_df
 
 
@@ -445,7 +450,7 @@ def school_holidays(fname1: str = 'data/fr-en-calendrier-scolaire.csv',
                     fname2: str = 'data/vacances_scolaires_2015_2017.csv') -> pd.DataFrame:
     # URL = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/'
     # 'fr-en-calendrier-scolaire/exports/csv?delimiter=;'
-    
+
     holidays = pd.read_csv(fname1, sep=";")
 
     # Keep only metropolitan France, which is A/B/C zones
@@ -458,19 +463,19 @@ def school_holidays(fname1: str = 'data/fr-en-calendrier-scolaire.csv',
         subset=["zones", "start_date", "end_date", 'description'],
         keep="first"
     )
-                
+
     # Convert dates
     holidays["start_date"] = pd.to_datetime(holidays["start_date"])
     holidays["end_date"]   = pd.to_datetime(holidays["end_date"])
-    
+
 
     # Complement: holidays 2015-17
-    holidays_2015_2017 = pd.read_csv(fname2, sep=",", comment="#")        
+    holidays_2015_2017 = pd.read_csv(fname2, sep=",", comment="#")
     holidays_2015_2017["start_date"]= pd.to_datetime(holidays_2015_2017["start_date"],utc=True)
     holidays_2015_2017["end_date"]  = pd.to_datetime(holidays_2015_2017["end_date"],  utc=True)
 
     holidays = pd.concat([holidays_2015_2017, holidays], axis=0)
-    
+
     list_names = []
     for _, row in holidays.iterrows():
         name_norm = _normalize_name(row['description'])
@@ -486,10 +491,10 @@ def school_holidays(fname1: str = 'data/fr-en-calendrier-scolaire.csv',
         list_names += matched
     holidays['name'] = list_names
     holidays.drop(columns=['location', 'description'], inplace=True)
-    
+
     # print(holidays.head())
     # print(holidays.tail())
-    
+
     return holidays
 
 def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
@@ -502,59 +507,59 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
     # Initialize counts at 0
     # zone_count = pd.Series(0, index=dates)
 
-    holidays = school_holidays()    
+    holidays = school_holidays()
     if verbose >= 3:
         print(holidays.head())
-    
+
     # holidays_2015_2017 =\
     #     pd.read_csv('data/vacances_scolaires_2015_2017.csv', sep=",", comment="#")
-        
+
     # holidays_2015_2017["start_date"]= pd.to_datetime(holidays_2015_2017["start_date"],utc=True)
     # holidays_2015_2017["end_date"]  = pd.to_datetime(holidays_2015_2017["end_date"],  utc=True)
     # if verbose >= 3:
     #     print(holidays_2015_2017.head())
-        
-    # holidays = pd.concat([holidays_2015_2017.drop(columns='holiday'), 
+
+    # holidays = pd.concat([holidays_2015_2017.drop(columns='holiday'),
     #                       holidays], axis=0)
     if verbose >= 3:
         print(holidays.head())
-        
+
     # Initialize output: one column per holiday type
     holiday_types = holidays["name"].unique()
-    
+
     out = pd.DataFrame(
         0,
         index=dates,
         columns=[f"holiday_{h}" for h in holiday_types]
     )
-    
+
     # For each holiday entry (zone-specific)
     for _, row in holidays.iterrows():
         start, end = row["start_date"], row["end_date"]
         htype = row["name"]   # canonical holiday type
-    
+
         # Holidays are [start, end)
         mask = (dates >= start) & (dates < end)
-    
+
         # Each zone contributes +1 to its holiday type
         out.loc[mask, f"holiday_{htype}"] += 1
-       
+
     if verbose >= 3:
         print(out.head())
-    
+
     return out, [holidays["start_date"].min(), holidays["end_date"].max()]
-    
+
     # # old version: a single list for all holidays
     # for _, row in holidays.iterrows():
     #     start, end = row['start_date'], row['end_date']
     #     # start, end, zone = row["start_date"], row["end_date"], row["zone"]
-        
+
     #     # Build mask: holidays are [start, end) in Paris official calendar
     #     mask = (dates >= start) & (dates < end)
 
     #     # Each zone adds one
     #     zone_count[mask] += 1
-    
+
     # return zone_count, [holidays['start_date'].min(), holidays['end_date'].max()]
 
 
@@ -565,10 +570,10 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
 # ----------------------------------------------------------------------
 
 def print_model_summary(
+    minutes_per_step,  num_steps_per_day,
     num_time_steps,
     feature_cols,
-    input_length,
-    pred_length,
+    input_length, pred_length,
     # incr_steps_test,
     batch_size,
     epochs,
@@ -576,17 +581,11 @@ def print_model_summary(
     weight_decay,
     dropout,
     warmup_steps,
-    patience,
-    min_delta,
-    model_dim,
-    num_layers,
-    num_heads,
-    ffn_size,
-    patch_len,
-    stride,
-    num_patches,
+    patience,  min_delta,
+    model_dim,  num_layers,  num_heads, ffn_size,
+    patch_len,  stride,  num_patches,
     quantiles,
-    lambda_cross:   float, 
+    lambda_cross:   float,
     lambda_coverage:float,
     lambda_deriv:   float,
 ):
@@ -596,18 +595,22 @@ def print_model_summary(
     # steps per epoch (optimizer updates)
     steps_per_epoch = np.ceil(num_samples / batch_size) if batch_size > 0 else 0
 
+    print("\n===== DATA =====")
+    print(f"{'MINUTES_PER_STEP':17s} ={minutes_per_step:5n}")
+    print(f"{'NUM_STEPS_PER_DAY':17s} ={num_steps_per_day:5n}")
+
     print("\n===== MODEL CONSTANTS =====")
     print(f"{'INPUT_LENGTH':17s} ={input_length:5n} half-hours ={input_length/24/2:5.1f} days")
     print(f"{'PRED_LENGTH' :17s} ={pred_length :5n} half-hours ={pred_length /24/2:5.1f} days")
     # print(f"{'INCR_STEPS_TEST':17s} ={incr_steps_test:5n} half-hours ="
     #       f"{incr_steps_test/24/2:5.1f} days")
-    
+
     print("\n===== LOSSES =====")
     print(f"{'QUANTILES'   :17s} = {quantiles}")
     print(f"{'LAMBDA_CROSS':17s} ={lambda_cross:8.2f}")
     print(f"{'LAMBDA_COVERAGE':17s} ={lambda_coverage:8.2f}")
     print(f"{'LAMBDA_DERIV':17s} ={lambda_deriv:8.2f}")
-    
+
 
     print("\n===== TRAINING =====")
     print(f"{'BATCH_SIZE'  :17s} ={batch_size:5n}")
