@@ -33,8 +33,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        data:  np.ndarray,
-        dates: pd.DatetimeIndex,
+        data_subset  :  np.ndarray,
+        dates_subset : pd.DatetimeIndex,
         input_length : int,
         pred_length  : int,
         forecast_hour: int,
@@ -43,9 +43,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
         """
         Parameters
         ----------
-        data : np.ndarray
-            Shape (T, F) where F includes target in column 0
-        dates : pd.DatetimeIndex
+        data_subset : np.ndarray
+            Shape (T, F+1): includes target in column 0
+        dates_subset : pd.DatetimeIndex
             Timestamps for each row
         input_length : int
             Number of historical half-hours
@@ -56,51 +56,53 @@ class DayAheadDataset(torch.utils.data.Dataset):
         target_index : int
             Column index of target variable
         """
-        self.data         = data.astype(np.float32)
-        self.dates        = dates
+        self.data_subset  = data_subset.astype(np.float32)
+        self.dates_subset = dates_subset
         self.input_length = input_length
         self.pred_length  = pred_length
         self.forecast_hour= forecast_hour
         self.target_index = target_index
 
         # Pre-compute valid forecast indices
-        self.valid_indices   = []
-        self.forecast_origins= []
+        self.start_indices_subset= []
+        self.forecast_origins    = []
 
-        for idx_steps, date in enumerate(dates):
+        for idx_steps_subset, date in enumerate(dates_subset):
             if (date.hour   == forecast_hour and
                 date.minute == 0 and
-                idx_steps >= input_length and
-                idx_steps + pred_length < len(data)):
+                idx_steps_subset >= input_length and
+                idx_steps_subset + pred_length < len(data_subset)):
 
-                self.valid_indices   .append(idx_steps)
-                self.forecast_origins.append(date)
+                self.start_indices_subset.append(idx_steps_subset)
+                self.forecast_origins    .append(date)
 
         # print("forecast_origins:", type(self.forecast_origins[0]))
 
     def __len__(self):
-        return len(self.valid_indices)
+        return len(self.start_indices_subset)
 
-    def __getitem__(self, idx_days):
+    def __getitem__(self, idx_days_subset):
         """
         Returns
         -------
-        x : torch.Tensor
+        X : torch.Tensor
             Input features, shape (input_length, F)
         y : torch.Tensor
-            Target values, shape (pred_length, 1)
-        forecast_origin : pd.Timestamp
-            When this forecast was made
+            Target values,  shape (pred_length,  1)
+        idx_steps : List[int]
+            Acceptable indices in self.start_indices_subset
+        forecast_origin : List[int]
+            When this forecast was made (converted to int)
         """
-        idx_steps = self.valid_indices[idx_days]
+        idx_subset = self.start_indices_subset[idx_days_subset]
 
-        # Input: all features from history
-        X = self.data[idx_steps - self.input_length : idx_steps]  # (input_length, F)
+        # Input: all features (=> excluding consumption) from past
+        X = self.data_subset[idx_subset - self.input_length : idx_subset]  # (L, F)
         X = np.delete(X, self.target_index, axis=1)
 
-        # Target: only consumption, future values
-        y = self.data[idx_steps : idx_steps + self.pred_length, self.target_index]
-
+        # Target: only consumption, future values (excluding present datetime)
+        y = self.data_subset[idx_subset+1 : idx_subset+1 + self.pred_length,
+                             self.target_index]
 
         # origin = self.forecast_origins[idx_days]
         # print(f"Type: {type(origin)}, Value: {origin}")
@@ -110,16 +112,15 @@ class DayAheadDataset(torch.utils.data.Dataset):
         return (
             torch.tensor(X),
             torch.tensor(y).unsqueeze(-1),  # (pred_length, 1)
-            idx_steps,
-            int(self.forecast_origins[idx_days].timestamp()) # pd.Timestamp != batchable
+            idx_subset,
+            int(self.forecast_origins[idx_days_subset].timestamp())
+                # pd.Timestamp != batchable
         )
 
 
 # ============================================================
 # 3. make_X_and_y
 # ============================================================
-
-
 
 def make_X_and_y(series, dates,
                  train_split, n_valid,
@@ -184,7 +185,7 @@ def make_X_and_y(series, dates,
 
 
     # 5. SAFETY CHECKS
-    # print("scaler_y.mean_.shape:", scaler_y.mean_.shape)
+    # print("scaler_y.mean_.shape: ", scaler_y.mean_.shape)
     # print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
 
     assert scaler_y.mean_.shape[0] == 1, "scaler_y must be fitted on ONE target only"
@@ -213,14 +214,14 @@ def make_X_and_y(series, dates,
         assert pred_length == 48,\
             f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
 
-        def build_day_ahead(data, date_slice):
+        def build_day_ahead(data_subset, date_slice):
             return DayAheadDataset(
-                data        = data,
-                dates       = date_slice,
-                input_length= input_length,
-                pred_length = pred_length,
-                forecast_hour=forecast_hour,
-                target_index= target_idx
+                data_subset  = data_subset,
+                dates_subset = date_slice,
+                input_length = input_length,
+                pred_length  = pred_length,
+                forecast_hour= forecast_hour,
+                target_index = target_idx
             ) # X_list, y_list, origin_list, target_dates_list
 
         train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
@@ -269,8 +270,11 @@ def make_X_and_y(series, dates,
         return (
             [train_loader,valid_loader,test_loader], \
             [train_dates, valid_dates, test_dates ],\
-             scaler_y, X_test_GW, y_test_GW,
-             test_dataset_scaled, test_scaled[:, feature_idx]
+             scaler_y, [X_GW, y_GW],
+             [X_train_GW, y_train_GW, train_dataset_scaled],
+             [X_GW[:train_split][-n_valid:], y_GW[:train_split][-n_valid:], valid_dataset_scaled],
+             [X_test_GW, y_test_GW, test_dataset_scaled],
+             test_scaled[:, feature_idx]
         )
 
 

@@ -111,7 +111,7 @@ def load_temperature(path, weights,
     df.index.name = "date"
 
     df['Région'] = [_normalize_name(r) for r in df['Région']]
-    df.drop(columns=["Code INSEE région"], errors="ignore", inplace=True)
+    df.drop(columns=['Code INSEE région', 'ID'], errors="ignore", inplace=True)
 
     df = df.rename(columns={
         "TMin (°C)": 'Tmin_degC', "TMax (°C)": 'Tmax_degC', "TMoy (°C)": 'Tavg_degC'
@@ -125,9 +125,14 @@ def load_temperature(path, weights,
         )
 
     df = df.reset_index()
-    Tavg = _pivot("Tavg_degC")
-    Tmin = _pivot("Tmin_degC")
-    Tmax = _pivot("Tmax_degC")
+    Tavg = _pivot("Tavg_degC").drop(columns=['corse'])  # Corsica is an outlier
+    Tmin = _pivot("Tmin_degC").drop(columns=['corse'])  #   warm and small
+    Tmax = _pivot("Tmax_degC").drop(columns=['corse'])
+
+    # Tavg['num_NAs'] = Tavg.isna().sum(axis=1)
+    # print("Tavg\n", Tavg[Tavg['num_NAs'] > 0].head(10))
+    # Tmax['num_NAs'] = Tmax.isna().sum(axis=1)
+    # print("Tmax\n", Tmax[Tmax['num_NAs'] > 0].head(10))
 
 
     # 3. Align weights

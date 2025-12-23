@@ -127,8 +127,8 @@ def _apply_groupby(series: pd.Series, col: Optional[str]):
 
 
 def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
-         baseline_series: pd.Series, future_series: pd.Series,
-         name_baseline: str,
+         baseline_series: pd.Series or None, future_series: pd.Series,
+         name_baseline: str or None,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
          ylim: [float, float] or None = None,
          date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
@@ -139,7 +139,8 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
     _true_series     = _apply_groupby(_apply_range(_apply_moving_average(
         true_series, moving_average),     date_range), groupby)
     _baseline_series = _apply_groupby(_apply_range(_apply_moving_average(
-        baseline_series, moving_average), date_range), groupby)
+        baseline_series, moving_average), date_range), groupby) \
+            if name_baseline is not None else None
 
     _dict_pred_series = {}
     for name, series in dict_pred_series.items():
@@ -166,8 +167,10 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
                  alpha=0.7,
                  label=f"forecast NN ({name})") # if k == 0 else None)
 
-    plt.plot(_baseline_series.index, _baseline_series.values,
-             label=f"forecast {name_baseline}", color="green")
+
+    if name_baseline is not None:
+        plt.plot(_baseline_series.index, _baseline_series.values,
+                 label=f"forecast {name_baseline}", color="green")
 
     if _future_series is not None:
         plt.plot(_future_series.index,_future_series.values, label="future", color="blue")
@@ -187,7 +190,7 @@ def all_tests(true_series:         pd.Series,
               future_series:       pd.Series,
               name_baseline:       str,
               days_zoom:           int | Tuple[int] = [8, 61],
-              ylim:  Tuple[Tuple[float, float], Tuple[float, float]] = [[35, 65], [-4, 4]]
+              ylim:  Tuple[Tuple[float, float], Tuple[float, float]] = [[35, 55], [-4, 4]]
              ) -> None:
     # print("latest date:")
     # print("true:", true_series.index[-1])
@@ -196,7 +199,8 @@ def all_tests(true_series:         pd.Series,
 
     # test(true_series, dict_pred_series, lr_series, future_series, name_baseline)
 
-    baseline_series = dict_baseline_series[name_baseline]
+    baseline_series = dict_baseline_series[name_baseline] \
+        if name_baseline is not None else None
     SMA_consumption = [None, 2*24]
     SMA_residual    = [2*2,  2*24]
 
@@ -218,8 +222,9 @@ def all_tests(true_series:         pd.Series,
         _SMA    = SMA_residual[_idx]
         _SMA_str = f" (SMA {_SMA/2} hrs)" if _SMA is not None else ""
 
-        residual_true_series     = true_series - true_series
-        residual_baseline_series = baseline_series   - true_series
+        residual_true_series     = true_series    - true_series
+        residual_baseline_series = baseline_series- true_series \
+            if name_baseline is not None else None
         dict_residual_pred_series= {name: series - true_series\
             for name, series in dict_pred_series.items()}
 

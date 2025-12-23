@@ -7,7 +7,7 @@
 # ----------------------------------------------------------------------
 
 
-import os
+import os, warnings
 
 import json
 import hashlib
@@ -68,6 +68,7 @@ def _build_model_from_cfg(cfg: Dict[str, dict]):
 
 baseline_cfg = [
     {  # 'DEBUG'
+    # "oracle": {1},  # (content is just a place-holder)
     "lr": {"type": "ridge", "alpha": 1.0},
     "rf": {
         "type":            "rf",
@@ -81,6 +82,7 @@ baseline_cfg = [
 },
 
 {  # 'SMALL'
+    # "oracle": {1},  # (content is just a place-holder)
     "lr": {"type": "ridge", "alpha": 1.0},
     "rf": {
         "type":            "rf",
@@ -125,10 +127,11 @@ baseline_cfg = [
 
 
 
-def load_or_compute_rf_predictions(
+def load_or_compute_regression_and_forest(
     compute_kwargs,
     cache_dir,
     cache_id_dict,
+    force_calculation: bool = False,
     verbose: int = 0,
 ):
     """
@@ -152,7 +155,9 @@ def load_or_compute_rf_predictions(
     cache_path = os.path.join(cache_dir, f"rf_preds_{cache_key}.pkl")
 
     # either load...
-    if os.path.exists(cache_path):
+    if os.path.exists(cache_path) and \
+            'rf' in compute_kwargs['models_cfg'] and \
+            not force_calculation:
         if verbose > 0:
             print("Loaded RandomForest predictions from cache")
         with open(cache_path, "rb") as f:
@@ -175,8 +180,7 @@ def load_or_compute_rf_predictions(
 
 
 
-## Version 3 -- simplifying to be sure I understand it
-##      older versions in: archives/utils-old-LR_RF-test_predictions.py
+## Version 3 -- older versions in: archives/utils-old-LR_RF-test_predictions.py
 def regression_and_forest(
     df:          pd.DataFrame,
     target_col:  str,
@@ -187,7 +191,7 @@ def regression_and_forest(
     lambda_cross:float,
     lambda_coverage:float,
     lambda_deriv:float,
-    models_cfg:  Dict[str, dict] = baseline_cfg,
+    models_cfg:  Dict[str, dict],
     verbose:     int = 0
 ) -> Tuple[Dict[str, pd.Series], Ridge, Dict[str, Dict[str, float]]]:
     """
@@ -212,6 +216,7 @@ def regression_and_forest(
         {name -> {"train": mse, "valid": mse}}
     """
 
+    sigma_y_GW = 11.7  # TODO do not do by hand
 
     # -------------------------
     # 1. Extract matrices
@@ -240,38 +245,51 @@ def regression_and_forest(
 
     # def mse(a,b): return float(np.mean((a-b)**2))
 
+    def loss_quantile_GW(pred_GW, y_GW, sigma_y_GW=sigma_y_GW):
+        return losses.loss_wrapper_quantile_numpy(
+            pred_GW/sigma_y_GW, y_GW/sigma_y_GW, quantiles, lambda_cross=0.,
+            lambda_coverage=0., lambda_deriv=lambda_deriv) * sigma_y_GW
+
     models    = dict()
     preds_GW  = dict()
-    losses_GW = dict()
+    losses_quantile_GW = dict()
     series_pred_GW= pd.Series()
 
     for name, cfg in models_cfg.items():  # name = e.g. 'lr', 'rf'
-        preds_GW [name] = pd.Series()
-        losses_GW[name] = dict()
+        preds_GW          [name] = pd.Series()
+        losses_quantile_GW[name] = dict()
 
-        models[name] = _build_model_from_cfg(cfg)
-        models[name].fit(X_train_GW, y_train_GW)
+        if name != 'oracle':
+            models[name] = _build_model_from_cfg(cfg)
+            models[name].fit(X_train_GW, y_train_GW)
 
-        pred_train_GW = models[name].predict(X_train_GW)
-        pred_valid_GW = models[name].predict(X_valid_GW)
-        pred_test_GW  = models[name].predict(X_test_GW )
+            pred_train_GW = models[name].predict(X_train_GW)
+            pred_valid_GW = models[name].predict(X_valid_GW)
+            pred_test_GW  = models[name].predict(X_test_GW )
 
-        # Calculate losses
-        losses_GW[name]['train'] = losses.loss_wrapper_quantile_numpy(
-            pred_train_GW, y_train_GW, quantiles, lambda_cross,
-            lambda_coverage, lambda_deriv)
-        losses_GW[name]['valid'] = losses.loss_wrapper_quantile_numpy(
-            pred_valid_GW, y_valid_GW, quantiles, lambda_cross,
-            lambda_coverage, lambda_deriv)
-        losses_GW[name]['test' ] = losses.loss_wrapper_quantile_numpy(
-            pred_test_GW,  y_test_GW,  quantiles, lambda_cross,
-            lambda_coverage, lambda_deriv)
+        else:
+            warnings.warn("Using the oracle!")
+            models[name] = None # meaningless
+            pred_train_GW = y_train_GW
+            pred_valid_GW = y_valid_GW
+            pred_test_GW  = y_test_GW
 
         series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
                             index = df.index)
 
 
+        # Calculate losses
+        # /!\ Not linear: must work on scaled values
+        losses_quantile_GW[name]['train'] = loss_quantile_GW(pred_train_GW, y_train_GW)
+        losses_quantile_GW[name]['valid'] = loss_quantile_GW(pred_valid_GW, y_valid_GW)
+        losses_quantile_GW[name]['test' ] = loss_quantile_GW(pred_test_GW,  y_test_GW)
+
+    if verbose >= 1:
+        print("quantile losses [GW]:\n", pd.DataFrame(losses_quantile_GW).round(1).T)
+
+
+    # most relevant features
     if verbose >= 2 and {"lr", "rf"} <= models.keys():
 
         ridge = pd.Series(
@@ -309,8 +327,6 @@ def regression_and_forest(
         print(df_imp.round(2))  # .head(20)
 
 
-    print("MSE [GW²]:\n", pd.DataFrame(losses_GW).round(2).T)
-
-    return series_pred_GW, models, losses_GW
+    return series_pred_GW, models, losses_quantile_GW
 
 

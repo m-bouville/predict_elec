@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------------
 
 
-from   typing import Tuple, Dict  #, Sequence, List, Optional
+from   typing import Tuple  #, Dict, Sequence, List, Optional
 
 import torch
 
@@ -11,7 +11,7 @@ import torch
 import numpy  as np
 
 
-import utils
+# import utils
 
 
 
@@ -21,7 +21,7 @@ import utils
 # ----------------------------------------------------------------------
 
 def quantile_loss_with_crossing_torch(
-    y_pred:         torch.Tensor,     # (B, H, 3)
+    y_pred:         torch.Tensor,     # (B, H, Q)
     y_true:         torch.Tensor,     # (B, H) or (B, H, 1)
     quantiles:      Tuple[float, ...],
     lambda_cross:   float,
@@ -65,8 +65,12 @@ def quantile_loss_with_crossing_numpy(
 
     loss = 0.
 
+    # print(f"[quantile_loss_with_crossing_numpy] y_pred.shape = {y_pred.shape}")
+    # print(f"[quantile_loss_with_crossing_numpy] y_true.shape = {y_true.shape}")
+
     for i, tau in enumerate(quantiles):
         diff = y_true - y_pred[..., i]
+        # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}")
         loss += np.mean(np.maximum(tau * diff, -(1-tau) * diff))
 
         # Coverage penalty
@@ -240,33 +244,34 @@ def loss_wrapper_quantile_numpy(
 
 
 
-# Metamodel: losses (predictions are in utils.py)
-# ----------------------------------------------------------------------
+# # Metamodel: losses (predictions are in utils.py)
+# # ----------------------------------------------------------------------
 
-def compute_meta_loss(
-        pred_scaled   : torch.Tensor,   # (B, H)
-        x_scaled      : torch.Tensor,   # (B, L, F)
-        y_scaled      : torch.Tensor,   # (B, H, 1)
-        baseline_idx  : Dict[str, int],
-        weights_meta  : Dict[str, float],
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float
-    ) -> torch.Tensor:
-    """
-    Returns:
-        meta_loss_scaled : torch scalar tensor
-    """
+# def compute_meta_loss(
+#         pred_scaled   : torch.Tensor,   # (B, H)
+#         x_scaled      : torch.Tensor,   # (B, L, F)
+#         y_scaled      : torch.Tensor,   # (B, H, 1)
+#         baseline_idx  : Dict [str, int],
+#         weights_meta  : Dict [str, float],
+#         quantiles     : Tuple[float, ...],
+#         lambda_cross  : float,
+#         lambda_coverage:float,
+#         lambda_deriv  : float
+#     ) -> torch.Tensor:
+#     """
+#     Returns:
+#         meta_loss_scaled : torch scalar tensor
+#     """
 
-    B, _, _ = x_scaled.shape
+#     B, _, _ = x_scaled.shape
 
-    pred_meta_scaled = utils.compute_meta_prediction_torch(
-        pred_scaled, x_scaled, baseline_idx, weights_meta, len(quantiles)//2)
+#     pred_meta_scaled = utils.compute_meta_prediction_torch(
+#         pred_scaled, x_scaled, baseline_idx, weights_meta, len(quantiles)//2)
 
-    # Match target shape
-    y_scaled_1 = y_scaled[:, 0, 0]  # .reshape(B)
+#     # Match target shape
+#     # y_scaled_1 = y_scaled[:, 0, 0]  # .reshape(B)
+#     y_scaled_1 = y_scaled[:, :, 0]
 
-    return loss_wrapper_quantile_torch(pred_meta_scaled, y_scaled_1,
-                    quantiles, lambda_cross, lambda_coverage, lambda_deriv)
+#     return loss_wrapper_quantile_torch(pred_meta_scaled, y_scaled_1,
+#                     quantiles, lambda_cross, lambda_coverage, lambda_deriv)
 

@@ -5,17 +5,17 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LE
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY', 'WEIGHTS_META',
            'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
-           'DAY_AHEAD', 'FORECAST_HOUR']
+           'DAY_AHEAD', 'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY']
 
 
 
 from   typing import Dict  # List
 
 
-import utils, LR_RF
+import LR_RF  # utils
 
-
-NUM_STEPS_PER_DAY = 24*2
+MINUTES_PER_STEP  = 30
+NUM_STEPS_PER_DAY = int(round(24*60/MINUTES_PER_STEP))
 def days_to_steps(num_days: float, num_steps_per_day=NUM_STEPS_PER_DAY) -> int:
     return int(round(num_days*num_steps_per_day))
 
@@ -46,7 +46,7 @@ FFN_SIZE     = [  4,  4,  6,  8] # expansion factor
 NUM_LAYERS   = [  1,  2,  3,  6] # Number of transformer encoder layers
 
 # PatchEmbedding
-PATCH_LEN    = days_to_steps(0.5)              # [half-hours]
+PATCH_LEN    = days_to_steps(0.5)                # [half-hours]
 STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
 
 # losses
@@ -66,7 +66,7 @@ WARMUP_STEPS =[4000,2500,2250,2500]
 # SCHED_PATIENCE=  5
 
 
-PATIENCE     = [  5, 10, 10, 10]  # DEBUG: patience > nb epochas
+PATIENCE     = [  5,  5, 10, 10]  # DEBUG: patience > nb epochas
 MIN_DELTA    =   10 / 1000
 
 VALIDATE_EVERY=  1
@@ -99,6 +99,12 @@ NUM_GEO_BLOCKS=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
 PATIENCE     = PATIENCE     [IDX_SYSTEM_SIZE]
 WARMUP_STEPS = WARMUP_STEPS [IDX_SYSTEM_SIZE]
 BASELINE_CFG = (LR_RF.baseline_cfg)[IDX_SYSTEM_SIZE]
+
+
+
+# BASELINE_CFG = {}
+# WEIGHTS_META = {'nn': 1., 'lr': 0., 'rf': 0.}
+
 
 
 # Checking

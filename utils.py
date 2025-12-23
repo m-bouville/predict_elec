@@ -65,27 +65,22 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     return df
 
 
-def df_features_consumption(consumption: pd.Series,
+def df_features_past_consumption(consumption: pd.Series,
+                lag: int, num_steps_per_day: int,
                 verbose: int = 0) -> pd.DataFrame:
 
     df = consumption.to_frame('consumption_GW')
 
-    LAG = 1   # Base lag (30 min), lest we implicitly leak future information
-    _shifted_conso = df['consumption_GW'].shift(LAG)
+    # lag avoids implicitly leaking future information
+    _shifted_conso = df['consumption_GW'].shift(lag)
 
-    # diff
-    # df["consumption_diff_30min_GW"]=_shifted_conso.diff( 1)
-    for _hours in [1, 3, 6, 12, 24]:  # n hours (2n half-hours)
-        df["consumption_diff_"+str(_hours)+"h_GW"] = \
+    # diff and moving averages
+    for _days in [7, 14]:  # n hours
+        _hours = int(round(num_steps_per_day*_days))
+        df[f"consumption_diff_{_days}days_GW"] = \
             _shifted_conso - _shifted_conso.shift(freq=f"{_hours}h")
-
-    # df["Tavg_diff_24h_degC"] = df['Tavg_degC'] - df['Tavg_degC'].shift(freq="1D")
-
-    # moving average
-    df["consumption_SMA_6h_GW" ] = _shifted_conso.rolling(
-         "6h", min_periods= 5*2).mean()
-    df["consumption_SMA_24h_GW"] = _shifted_conso.rolling(
-        "24h", min_periods=22*2).mean()
+        df[f"consumption_SMA_{_days}days_GW"] = _shifted_conso.rolling(
+            f"{_hours}h", min_periods=int(round(_hours*.8))).mean()
 
     if verbose >= 2:
         print(df.tail().to_string())  # head() would be made of NaNs
@@ -94,16 +89,19 @@ def df_features_consumption(consumption: pd.Series,
 
 
 def df_features(dict_fnames: Dict[str, str], output_fname: str,
-                verbose: int = 0) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df, dates_df = IO.load_data(dict_fnames, output_fname)
+        lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
+            -> Tuple[pd.DataFrame, pd.DataFrame]:
+    df, dates_df = IO.load_data(dict_fnames, output_fname,
+            num_steps_per_day=num_steps_per_day, minutes_per_step=minutes_per_step)
     assert isinstance(df.index, pd.DatetimeIndex)
 
     # Fourier-like sine waves, weekends
     df_calendar    = df_features_calendar(df.index, verbose)
 
-    # # moving averages and offsets based on consumption [/!\ risk of leak]
-    # df_consumption = df_features_consumption(df['consumption_GW'], verbose)
-    df_consumption = pd.DataFrame()
+    # /!\ moving averages and offsets based on consumption may leak
+    df_consumption = df_features_past_consumption(
+            df['consumption_GW'], lag, num_steps_per_day, verbose)
+    # df_consumption = pd.DataFrame()
 
 
     # school holidays (one column per holiday type)
@@ -209,13 +207,15 @@ def compute_meta_prediction_numpy(
 
     # NN: take median only
     if pred_scaled.ndim == 3:
-        # (B, H, Q) → horizon 0, quantile index 1
-        nn_pred = pred_scaled[:, 0, idx_median]   # (B,)
+        # (B, H, Q)
+        nn_pred = pred_scaled[:, :, idx_median]   # (B,)
     elif pred_scaled.ndim == 2:
         # (B, Q)
         nn_pred = pred_scaled[:, idx_median]      # (B,)
     else:
         raise ValueError(f"Unexpected pred_scaled shape {pred_scaled.shape}")
+    print(f"[compute_meta_prediction_numpy] nn_pred.shape = {nn_pred.shape}")
+
 
 
     y_meta = weights_meta.get('nn', 0.) * nn_pred  # (B,)
@@ -227,10 +227,11 @@ def compute_meta_prediction_numpy(
         if _name not in baseline_idx:
             raise ValueError(f"{_name} not in baseline_idx, yet weight={w} != 0")
 
-        baseline = x_scaled[:, -1, baseline_idx[_name]]  # (B,)
+        baseline = x_scaled[:, :, baseline_idx[_name]]  # (B,)
+        print(f"[compute_meta_prediction_numpy] {_name} baseline.shape = {baseline.shape}")
         y_meta  += w * baseline                          # (B,)
 
-    assert y_meta.ndim == 1, y_meta.shape
+    assert y_meta.ndim == 2, y_meta.shape
 
     return y_meta
 
@@ -238,73 +239,116 @@ def compute_meta_prediction_numpy(
 # validate_day_ahead
 # ----------------------------------------------------------------------
 
+# @torch.no_grad()
+# def validate_day_ahead(
+#         model         : nn.Module,
+#         valid_loader  : DataLoader,
+#         valid_dates   : Sequence,
+#         scaler_y      : StandardScaler,
+#         baseline_idx  : Dict[str, int],
+#         device        : torch.device,
+#         input_length  : int,
+#         pred_length   : int,
+#         # incr_steps    : int,
+#         weights_meta  : Dict [str, float],
+#         quantiles     : Tuple[float, ...],
+#         lambda_cross  : float,
+#         lambda_coverage:float,
+#         lambda_deriv  : float
+#     ) -> Tuple[float, float]:
+#     """
+#     Returns:
+#         nn_loss_scaled   : float
+#         meta_loss_scaled : float
+#     """
 
-@torch.no_grad()
-def validate_day_ahead(
-        model         : nn.Module,
-        valid_loader  : DataLoader,
-        valid_dates   : Sequence,
-        scaler_y      : StandardScaler,
-        baseline_idx  : Dict[str, int],
-        device        : torch.device,
-        input_length  : int,
-        pred_length   : int,
-        # incr_steps    : int,
-        weights_meta  : Dict [str, float],
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float
-    ) -> Tuple[float, float]:
-    """
-    Returns:
-        nn_loss_scaled   : float
-        meta_loss_scaled : float
-    """
+#     model.eval()
 
-    model.eval()
+#     Q = len(quantiles)
+#     # T = len(dates)
 
-    Q = len(quantiles)
-    # T = len(dates)
+#     nn_losses_quantile   = []
+#     meta_losses_quantile = []
 
+#     # main loop
+#     for (X_scaled, y_scaled, _, _) in valid_loader:
+#         X_scaled_dev = X_scaled.to(device)
+#         X_scaled_cpu = X_scaled.cpu().numpy()   # (B, INPUT_LENGTH, F)
+#         # idx_np       = idx.cpu().numpy()              # shape (B,)
+#         y_scaled_cpu = y_scaled.cpu().numpy()   # (B, PRED_LENGTH, 1)
 
-    # main loop
-    for (x_scaled, y_scaled, _, _) in valid_loader:
+#         # NN forward
+#         pred_scaled_dev = model(X_scaled_dev)   # (B, PRED_LENGTH, Q)
 
-        x_scaled_dev = x_scaled.to(device)
-        x_scaled_cpu = x_scaled.cpu().numpy()
-        # idx_np       = idx.cpu().numpy()              # shape (B,)
+#         # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
+#         # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
+#         # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
 
-        # NN forward
-        pred_scaled_dev = model(x_scaled_dev)
-        pred_scaled_cpu = pred_scaled_dev[:, 0, :].detach().cpu().numpy()
+#         pred_scaled_cpu = pred_scaled_dev.detach().cpu().numpy()
+#         # pred_scaled_cpu = pred_scaled_dev[:, 0, :].detach().cpu().numpy()
 
-        # inverse scale NN
-        pred_nn = pred_scaled_cpu                # (B, Q), scaled
+#         # for h in range(pred_length):
+#         pred_nn_h = pred_scaled_cpu[:, :, :]      # (B, H, Q)
+#         y_true_h  = y_scaled_cpu   [:, :, 0]      # (B, H)
 
-        # meta prediction
-        pred_meta_scaled = compute_meta_prediction_numpy(
-            pred_scaled_cpu,
-            x_scaled_cpu,
-            baseline_idx,
-            weights_meta,
-            Q // 2,
-        )
+#         nn_losses_quantile.append(
+#             losses.loss_wrapper_quantile_numpy(
+#                 pred_nn_h, y_true_h, quantiles,
+#                 lambda_cross, lambda_coverage, lambda_deriv
+#             )
+#         )
 
-        # true values
-        y_true  = y_scaled[:, 0, 0].cpu().numpy()  # (B,), scaled
+#         # pred_meta_h = compute_meta_prediction_numpy(
+#         #     pred_nn_h,
+#         #     X_scaled_cpu,
+#         #     baseline_idx,
+#         #     weights_meta,
+#         #     Q // 2
+#         # )
+
+#         # meta_losses_quantile.append(
+#         #     losses.loss_wrapper_quantile_numpy(
+#         #         pred_meta_h, y_true_h, quantiles,
+#         #         lambda_cross, lambda_coverage, lambda_deriv
+#         #     )
+#         # )
 
 
-    nn_loss_scaled   = losses.loss_wrapper_quantile_numpy(
-        pred_nn,   y_true, quantiles, lambda_cross,
-        lambda_coverage,lambda_deriv)
-    meta_loss_scaled = losses.loss_wrapper_quantile_numpy(
-        pred_meta_scaled, y_true, quantiles, lambda_cross,
-        lambda_coverage, lambda_deriv)
-    # nn_loss_scaled   = np.mean((y_nn_scaled   - y_true_scaled) ** 2)
-    # meta_loss_scaled = np.mean((y_meta_scaled - y_true_scaled) ** 2) # BUG: by hand
+#         # # inverse scale NN
+#         # pred_nn = pred_scaled_cpu                # (B, Q), scaled
 
-    return nn_loss_scaled, meta_loss_scaled
+#         # # meta prediction
+#         # pred_meta_scaled = compute_meta_prediction_numpy(
+#         #     pred_scaled_cpu,
+#         #     X_scaled_cpu,
+#         #     baseline_idx,
+#         #     weights_meta,
+#         #     Q // 2,
+#         # )
+
+#         # true values
+#         # print(f"y_true.shape:  {y_true.shape}")
+#         # y_true  = y_scaled[:, 0, 0].cpu().numpy()  # (B,), scaled
+
+#     nn_loss_quantile_scaled   = np.mean(nn_losses_quantile)
+#     # meta_loss_quantile_scaled = np.mean(meta_losses_quantile)
+
+#     # print(f"len(nn_losses_quantile) = {len(nn_losses_quantile)}, "
+#     #       f"len(meta_losses_quantile) = {len(meta_losses_quantile)}")
+#     # print(f"nn_losses_quantile = {  [round(e, 2) for e in nn_losses_quantile  [:10]]}, "
+#     #       f"meta_losses_quantile = {[round(e, 2) for e in meta_losses_quantile[:10]]}")
+#     # print(f"nn_loss_quantile_scaled = {nn_loss_quantile_scaled:.3f}")
+
+#     # nn_loss_scaled   = losses.loss_wrapper_quantile_numpy(
+#     #     pred_nn,   y_true, quantiles, lambda_cross,
+#     #     lambda_coverage,lambda_deriv)
+#     # meta_loss_scaled = losses.loss_wrapper_quantile_numpy(
+#     #     pred_meta_scaled, y_true, quantiles, lambda_cross,
+#     #     lambda_coverage, lambda_deriv)
+#     # # nn_loss_scaled   = np.mean((y_nn_scaled   - y_true_scaled) ** 2)
+#     # # meta_loss_scaled = np.mean((y_meta_scaled - y_true_scaled) ** 2) # BUG: by hand
+
+#     return nn_loss_quantile_scaled, 0.  # meta_loss_quantile_scaled
 
 
 # -------------------------------------------------------
@@ -313,22 +357,21 @@ def validate_day_ahead(
 
 
 @torch.no_grad()
-def test_predictions_day_ahead(
+def subset_predictions_day_ahead(
     X_subset_GW, subset_loader, model, scaler_y,
-    feature_cols, test_dates, device,
-    input_length: int, pred_length: int,
+    feature_cols, device,
+    input_length: int, pred_length: int, minutes_per_step: int,
     quantiles: Tuple[float, ...], is_validation: bool = False
-) -> Tuple[pd.Series, Dict[str, pd.Series], Dict[str, pd.Series]]:
+) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
     # subset: train, valid ot test
 
+    # print(f"X_subset_GW.shape = {X_subset_GW.shape}")
 
     model.eval()
 
-    # -------------------------------
     # Baselines available
-    # -------------------------------
     baseline_names = [
-        nm for nm in ("lr", "rf")
+        nm for nm in ('lr', 'rf', 'oracle')
         if f"consumption_{nm}" in feature_cols
     ]
 
@@ -341,7 +384,7 @@ def test_predictions_day_ahead(
 
         # NN prediction
         X_scaled_dev = X_scaled.to(device)
-        pred_scaled  = model(X_scaled_dev).cpu().numpy()  # (B, H, Q)
+        pred_scaled  = model(X_scaled_dev).cpu().numpy()  # (B, [1..H], Q)
 
         B, H, Q = pred_scaled.shape
         # print(B, H, Q)
@@ -349,7 +392,7 @@ def test_predictions_day_ahead(
         assert Q == len(quantiles)
         # assert B <= batch_size
 
-        # Inverse-scale ground truth
+        # Inverse-scale ground truth                 # (B, [1..H])
         y_true_GW = scaler_y.inverse_transform(
             y_scaled[:, :, 0].cpu().numpy().reshape(-1, 1)
         ).reshape(B, H)
@@ -360,35 +403,46 @@ def test_predictions_day_ahead(
         ).reshape(B, H, Q)
 
         # One prediction per target timestamp
-        for b in range(B):
-            forecast_origin_time = pd.Timestamp(forecast_origin_int[b], unit='s')
+        for sample in range(B):
+            forecast_origin_time = pd.Timestamp(
+                forecast_origin_int[sample], unit='s', tz='UTC')
+            # print (f"sample:{sample:3n}, {forecast_origin_time}")
 
-            for h in range(H):
-                idx_subset_current = idx_subset[b] + 1 + h
-                if idx_subset_current >= len(test_dates):
-                    continue
+            for h in range(H): # /!\ after reference: h == 0 <=> 30 min after noon
+                idx_subset_current = idx_subset[sample] + h + 1
+                if idx_subset_current >= X_subset_GW.shape[0]:
+                    continue     # otherwise, would be after end of dataset
 
                 # target_time = test_dates[target_idx]
 
-                time_current = forecast_origin_time + pd.Timedelta(minutes=30 * (h+1))
+                time_current = forecast_origin_time + \
+                    pd.Timedelta(minutes = minutes_per_step * (h + 1))
+                # print (f"sample{sample:4n}, h ={h:3n}: "
+                #        f"idx_subset_current = {idx_subset_current}, "
+                #        f"time_current = {time_current}")
 
                 row = {
                     "time_current": time_current,
-                    "y_true": y_true_GW[b, h],
+                    "y_true"      : y_true_GW[sample, h],  # starts at 12:30
                 }
 
                 for qi, tau in enumerate(quantiles):
-                    row[f"q{int(100*tau)}"] = y_pred_GW[b, h, qi]
+                    row[f"q{int(100*tau)}"] = y_pred_GW[sample, h, qi] # starts at 12:30
 
                 # Baselines at the same target time
                 for nm in baseline_names:
-                    col = feature_cols.index(f"consumption_{nm}")
-                    row[nm] = X_subset_GW[idx_subset_current, col]
+                    col    = feature_cols.index(f"consumption_{nm}")
+                    row[nm]= X_subset_GW[idx_subset_current, col]
+
+                row['h'] = h
+                row['idx_subset_current'] = idx_subset_current
 
                 records.append(row)
 
     # Build DataFrame
     df = pd.DataFrame.from_records(records).set_index("time_current").sort_index()
+
+    # print(df.head(10).astype('float64').round(2))
 
     # Output format
     true_series_GW = df["y_true"]
@@ -418,8 +472,10 @@ def quantile_coverage(y_true: pd.Series,
 
 
 
-def compare_models(true_series, dict_pred_series, dict_baseline_series,
-                   weights_meta : Dict[str, float], unit:str="",
+def compare_models(true_series, dict_pred_series,
+                   dict_baseline_series: Dict[str, List[float]] or None,
+                   weights_meta: Dict[str, float] or None, subset: str="", unit:str="",
+                   max_RMSE: float = 7,
                    verbose: int = 0) -> None:
     if verbose < 1: return  # this function does nothing if it cannot display
 
@@ -428,26 +484,34 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
 
     # print("weights_meta:", weights_meta)
 
-    list_baselines = []
-    for _name in ['lr', 'rf']:
-        if _name in dict_baseline_series:  # keep only those we trained
-            list_baselines.append(_name)
-    # print("list_baselines:", list_baselines)
 
     df_eval = pd.DataFrame({
         "true":true_series,
         "nn":  dict_pred_series.get("q50")
     })
-    for _name in list_baselines:
-        df_eval[_name] = dict_baseline_series.get(_name)
+
+    # baselines (LR, RF)
+    list_baselines = []
+    if dict_baseline_series is not None:
+        for _name in ['lr', 'rf', 'oracle']:
+            if _name in dict_baseline_series:  # keep only those we trained
+                list_baselines.append(_name)
+                df_eval[_name] = dict_baseline_series.get(_name)
+        # print("list_baselines:", list_baselines)
+
     df_eval.dropna(inplace=True)
 
-    _meta = df_eval['nn'] * weights_meta['nn']
-    for _name in list_baselines:
-        _meta += df_eval[_name] * weights_meta[_name]
-    df_eval['meta'] = _meta
+    names_models = ['nn'] + list_baselines
 
-    names_models = ['nn'] + list_baselines + ['meta']
+    if weights_meta is not None and dict_baseline_series is not None:
+            # we need data and weights
+        _meta = df_eval['nn'] * weights_meta['nn']
+        for _name in list_baselines:
+            if _name != 'oracle':
+                _meta += df_eval[_name] * weights_meta[_name]
+        df_eval['meta'] = _meta
+        names_models += ['meta']
+
     y_true = df_eval["true"]
 
     rows = []
@@ -466,7 +530,7 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
     df_metrics = (
         pd.DataFrame(rows)
           .set_index("model")
-          .sort_values("RMSE")
+          # .sort_values("RMSE")
     )
 
     print(df_metrics.round(3))
@@ -474,8 +538,9 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
 
 
     if verbose >= 2:
-        unit_str = "" if unit is None else f" [{unit}]"
-        print("\n[Diagnostics] RMSE by hour of day{unit_str}")
+        subset_str = "" if unit is None else f" {subset}"
+        unit_str   = "" if unit is None else f" [{unit}]"
+        print(f"\n[Diagnostics]{subset_str} RMSE by hour of day{unit_str}")
 
         df_eval['hour'] = df_eval.index.hour
 
@@ -496,16 +561,16 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
             plt.plot(df_rmse_hour.index, df_rmse_hour[col], label=col)
         plt.xlabel( "hour of day")
         plt.ylabel(f"RMSE{unit_str}")
-        plt.title ( "RMSE by hour of day")
+        plt.title (f"{subset_str} RMSE by hour of day")
         plt.xticks(range(0, 24))
-        plt.ylim(bottom=0)
+        plt.ylim(bottom=0, top=max_RMSE)
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
         plt.show()
 
 
-        print("\n[Diagnostics] RMSE by month of year")
+        print(f"\n[Diagnostics]{subset_str} RMSE by month of year{unit_str}")
 
         df_eval["month"] = df_eval.index.month
 
@@ -523,10 +588,10 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
         for col in df_rmse_month.columns:
             plt.plot(df_rmse_month.index, df_rmse_month[col], marker="o", label=col)
         plt.xlabel("Month")
-        plt.ylabel("RMSE [GW]")
-        plt.title("RMSE by month")
+        plt.ylabel(f"RMSE{unit_str}")
+        plt.title (f"{subset_str} RMSE by month")
         plt.xticks(range(1, 13))
-        plt.ylim(bottom=0)
+        plt.ylim(bottom=0, top=max_RMSE)
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
@@ -541,22 +606,25 @@ def compare_models(true_series, dict_pred_series, dict_baseline_series,
 
 def display_evolution(
         epoch: int, t_epoch_start,
-        train_loss_scaled     : float, valid_loss_scaled    : float,
-        min_train_loss_scaled : float, min_valid_loss_scaled: float,
-        min_loss_display_scaled:float,
-        meta_train_loss_scaled: float, meta_min_train_loss_scaled: float,
-        meta_valid_loss_scaled: float, meta_min_valid_loss_scaled: float,
+        train_loss_scaled     : float, valid_loss_scaled     : float,
+        meta_train_loss_scaled: float, meta_valid_loss_scaled: float,
+        list_of_min_losses: List[float],
         # lists
-        list_train_loss_scaled: List[float], list_min_train_loss_scaled: List[float],
-        list_valid_loss_scaled: List[float], list_min_valid_loss_scaled: List[float],
-        list_meta_train_loss_scaled: List[float], list_meta_min_train_loss_scaled: List[float],
-        list_meta_valid_loss_scaled: List[float], list_meta_min_valid_loss_scaled: List[float],
+        list_of_lists: List[List[float]],
         # constants
         num_epochs: int, display_every: int, plot_conv_every: int,
         min_delta: float, verbose:int=0)\
             -> Tuple[float, float, float, float, float, float, float,
                      List[float], List[float], List[float], List[float],
                      List[float], List[float], List[float], List[float]]:
+
+    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled,
+        meta_min_train_loss_scaled, meta_min_valid_loss_scaled) = list_of_min_losses
+
+    (list_train_loss_scaled, list_min_train_loss_scaled,
+    list_valid_loss_scaled, list_min_valid_loss_scaled,
+    list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+    list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled) = list_of_lists
 
     if ((epoch+1) % display_every == 0) | (epoch == 0):
         # comparing latest loss to lowest so far
@@ -607,14 +675,14 @@ def display_evolution(
                           # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
                           partial=True, verbose=verbose)
 
-    return (min_train_loss_scaled,  min_valid_loss_scaled,
-            min_loss_display_scaled,
-            meta_min_train_loss_scaled, meta_min_valid_loss_scaled,
-            # lists
-            list_train_loss_scaled, list_min_train_loss_scaled,
+    return ((min_train_loss_scaled, min_valid_loss_scaled, min_loss_display_scaled,
+            meta_min_train_loss_scaled, meta_min_valid_loss_scaled),
+            # list of lists
+            (list_train_loss_scaled, list_min_train_loss_scaled,
             list_valid_loss_scaled, list_min_valid_loss_scaled,
             list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
             list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled)
+            )
 
 
 
@@ -649,6 +717,7 @@ def worst_days_by_loss(
     y_pred,
     quantiles,
     temperature,
+    num_steps_per_day,
     top_n=10
 ):
     """
@@ -676,7 +745,7 @@ def worst_days_by_loss(
           .sort_values('mean_loss_pc', ascending=False)
     )
 
-    daily = daily[daily['n_points'] == 48]  # incommensurable
+    daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
 
     daily['day_name'] = daily['date'].dt.day_name()
     daily['day'     ] = daily['date'].dt.day

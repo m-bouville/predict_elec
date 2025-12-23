@@ -18,7 +18,7 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INP
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY, WEIGHTS_META,
            VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
-           DAY_AHEAD, FORECAST_HOUR)
+           DAY_AHEAD, FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY)
 # import day_ahead
 import architecture, losses, utils, LR_RF, IO, plots
 
@@ -26,33 +26,20 @@ import architecture, losses, utils, LR_RF, IO, plots
 # system dimensions
 # B = batch size
 # L = input length
-# H = prediction horizon
-# Q = number of quantiles (len(quantiles))
+# H = prediction horizon  = PRED_LENGTH
+# Q = number of quantiles = len(quantiles)
 
-# TODO look at tutorial on transformers in pytorch
+
 # TODO account for known future: sines, WE, T° (as forecast: _add noise_), etc.
-#       (difficulty: medi-high, 2–4 days)
-# TODO  - scenarios, distribution of possible outcomes
+#       (difficulty: medium-high, 2–4 days)
 # TODO? compare per-horizon error vs LR
 # TODO? use a single-contiguous sliding forecast: Only advance by PRED_LENGTH each time
-# [??] random forest
-#  - overfitting? final model on train + validation?
-#  - TODO? OOF/VC
-# TODO metamodel (NN + RF)
-#  - [done] static metamodel
-#  - TODO trained metamodel (difficulty: medium, 1–2 days)
-#    . Linear meta-learner per horizon (fast, interpretable)
-#    . Small MLP or ridge regression trained on validation OOF predictions
-#  - TODO Avoid Using Only the First Horizon
-# BUG? leak future information?
-# TODO move scheduler.step() into the loop
-# validate_with_aggregation: Validation is significantly more expensive than needed
-# [done] remove SMA and diff from LR and RF?
-# Add features:
-#  - public holidays,
-#  - [done] Xmas, sun
+# TODO trained metamodel (NN + RF)  (difficulty: medium, 1–2 days)
+#   - Linear meta-learner per horizon (fast, interpretable)
+#   - Small MLP or ridge regression trained on validation OOF predictions
+# TODO Add public holidays to features
 # [done] Add abilities to spot outliers
-# TODO add constant NUM_STEPS_PER_DAY saying there are 48 data points per day
+# [done] add constant NUM_STEPS_PER_DAY saying there are 48 data points per day
 # TODO make PRED_LENGTH == 36h and validate h+12 to h+36
 
 
@@ -90,8 +77,9 @@ if __name__ == "__main__":
     # 2. LOAD
     # ============================================================
 
-    df, dates_df = utils.df_features(DICT_FNAMES, OUTPUT_FNAME,
-                           verbose = VERBOSE)  # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
+    df, dates_df = utils.df_features(DICT_FNAMES, OUTPUT_FNAME, PRED_LENGTH,
+                            NUM_STEPS_PER_DAY, MINUTES_PER_STEP, VERBOSE)
+        # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
 
 
 
@@ -111,10 +99,19 @@ if __name__ == "__main__":
     # feature_cols = ['timeofday', 'Tavg_degC']
 
 
+    df_len_before = df.shape[0]
+    # df_2021 = df[df.index.year==2021]
+    # print(df[target_col  ][df[target_col  ].isna()])
+    # print(df_2021[feature_cols][df_2021[feature_cols].isna().any(axis=1)].to_string())
 
     # Remove every row containing any NA (no filling)
     df = df[feature_cols + [target_col]].dropna()
     # print(dates[:10])
+
+    drop = df_len_before - df.shape[0]
+    if VERBOSE >= 1:
+        print(f"number of datetimes: {df_len_before} -> {df.shape[0]}, "
+              f"drop by {drop} (= {drop/NUM_STEPS_PER_DAY:.1f} days)")
 
     # Keep date separately for plotting later
     dates = df.index
@@ -125,7 +122,7 @@ if __name__ == "__main__":
 
     # import matplotlib.pyplot as plt
     # plt.figure(figsize=(10,6))
-    # plt.plot(dates, df['consumption_GW'])
+    # plt.plot(dates[dates.year==2021], df['consumption_GW'].loc[dates.year==2021])
     # plt.show()
 
 
@@ -140,29 +137,16 @@ if __name__ == "__main__":
 
     if VERBOSE >= 1:
         IO.print_model_summary(
-            num_time_steps   = num_time_steps,
-            feature_cols     = feature_cols,
-            input_length     = INPUT_LENGTH,
-            pred_length      = PRED_LENGTH,
-            batch_size       = BATCH_SIZE,
-            epochs           = EPOCHS,
-            learning_rate    = LEARNING_RATE,
-            weight_decay     = WEIGHT_DECAY,
-            dropout          = DROPOUT,
-            warmup_steps     = WARMUP_STEPS,
-            patience         = PATIENCE,
-            min_delta        = MIN_DELTA,
-            model_dim        = MODEL_DIM,
-            num_layers       = NUM_LAYERS,
-            num_heads        = NUM_HEADS,
-            ffn_size         = FFN_SIZE,
-            patch_len        = PATCH_LEN,
-            stride           = STRIDE,
-            num_patches      = NUM_PATCHES,
-            quantiles        = QUANTILES,
-            lambda_cross     = LAMBDA_CROSS,
-            lambda_coverage=LAMBDA_COVERAGE,
-            lambda_deriv     = LAMBDA_DERIV
+                MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
+                num_time_steps,  feature_cols,
+                INPUT_LENGTH,  PRED_LENGTH,
+                BATCH_SIZE,  EPOCHS,
+                LEARNING_RATE,  WEIGHT_DECAY,  DROPOUT, WARMUP_STEPS,
+                PATIENCE,  MIN_DELTA,
+                MODEL_DIM,  NUM_LAYERS,  NUM_HEADS, FFN_SIZE,
+                PATCH_LEN,  STRIDE, NUM_PATCHES,
+                QUANTILES,
+                LAMBDA_CROSS,   LAMBDA_COVERAGE, LAMBDA_DERIV
         )
 
 
@@ -171,6 +155,8 @@ if __name__ == "__main__":
 
 if VERBOSE >= 1:
     print("Doing linear regression and random forest...")
+
+
 
 t_start = time.perf_counter()
 rf_params = dict(
@@ -196,15 +182,16 @@ cache_id = {
     # "split": "v1",   # optional: data split identifier
 }
 
-baseline_features_GW, baseline_models, baseline_losses_GW = \
-    LR_RF.load_or_compute_rf_predictions(
-        compute_kwargs = rf_params,
-        cache_dir      = "output",
-        cache_id_dict  = cache_id,
+baseline_features_GW, baseline_models, baseline_losses_quantile_GW = \
+    LR_RF.load_or_compute_regression_and_forest(
+        compute_kwargs  = rf_params,
+        cache_dir       = "output",
+        cache_id_dict   = cache_id,
+        force_calculation=True,
+        verbose         = VERBOSE
     )
 if VERBOSE >= 1:
     print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
-
 
 
 
@@ -213,12 +200,17 @@ np.   random.seed(SEED)
 torch.manual_seed(SEED)
 
 # Add features
+baseline_idx = dict()
 for name, series in baseline_features_GW.items():
     col_name     = f"consumption_{name}"
     df[col_name] = series
     feature_cols.append(col_name)
+    baseline_idx[name] = feature_cols.index(col_name)
 # feature_cols.append('consumption_regression')
 # print(df['consumption_regression'].head(20))
+print(f"baseline_idx: {baseline_idx}")
+
+
 
 # ---- Construct final matrix: target first, then features ----
 
@@ -253,9 +245,9 @@ if VERBOSE >= 1:
 # ============================================================
 
 if VERBOSE >= 1:
-    print(f"{len(series)/24/2/365.25:.1f} years of data, "
-          f"train: {TRAIN_SPLIT/24/2/365.25:.2f} yrs ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
-          f"test: {test_months/24/2/365.25:.2f} yrs"
+    print(f"{len(series)/NUM_STEPS_PER_DAY/365.25:.1f} years of data, "
+          f"train: {TRAIN_SPLIT/NUM_STEPS_PER_DAY/365.25:.2f} yrs ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
+          f"test: {test_months/NUM_STEPS_PER_DAY/365.25:.2f} yrs"
           f" (switching at {dates[TRAIN_SPLIT]})")
     print()
 assert INPUT_LENGTH + 60 < test_months,\
@@ -283,7 +275,7 @@ assert INPUT_LENGTH + 60 < test_months,\
         do_day_ahead=DAY_AHEAD, forecast_hour=FORECAST_HOUR,
         verbose=VERBOSE)
 
-if VERBOSE >= 2:
+if VERBOSE >= -2:
     print(f"Train mean:{scaler_y.mean_ [0]:6.2f} GW")
     print(f"Train std :{scaler_y.scale_[0]:6.2f} GW")
     print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
@@ -293,9 +285,9 @@ if VERBOSE >= 2:
 sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
 if VERBOSE >= 1:
     print(f"sigma_y = {sigma_y:.1f} GW")
-baseline_losses_scaled = {
-    name: {k: v / sigma_y**2 for k, v in d.items()}
-    for name, d in baseline_losses_GW.items()
+baseline_losses_quantile_scaled = {
+    name: {k: v / sigma_y for k, v in d.items()}  # BUG arbitrary? false?
+    for name, d in baseline_losses_quantile_GW.items()
 }
 # lr_losses = {_key: lr_losses[_key] / sigma_y**2 for _key in lr_losses}
 
@@ -367,19 +359,9 @@ early_stopping = architecture.EarlyStopping(patience=PATIENCE, min_delta=MIN_DEL
 if VERBOSE >= 1:
     print("Starting training...")
 
-baseline_idx = dict()
-for _name in BASELINE_CFG:
-    baseline_idx[_name] = feature_cols.index(f"consumption_{_name}")
 
-
-min_train_loss_scaled     = 9.999; min_valid_loss_scaled     = 9.999
-meta_min_train_loss_scaled= 9.999; meta_min_valid_loss_scaled= 9.999
-min_loss_display_scaled   = 9.999
-
-list_train_loss_scaled     = []; list_min_train_loss_scaled     = []
-list_valid_loss_scaled     = []; list_min_valid_loss_scaled     = []
-list_meta_train_loss_scaled= []; list_meta_min_train_loss_scaled= []
-list_meta_valid_loss_scaled= []; list_meta_min_valid_loss_scaled= []
+list_of_min_losses= (9.999, 9.999, 9.999, 9.999, 9.999)
+list_of_lists     = ([], [], [], [], [], [], [], [])
 
 amp_scaler = torch.amp.GradScaler(device=device)
 
@@ -389,116 +371,211 @@ amp_scaler = torch.amp.GradScaler(device=device)
 t_epoch_start = time.perf_counter()
 for epoch in range(EPOCHS):
 
+    # Training
+    #########################################################
+
     model.train()
-    train_loss_scaled     = 0.; valid_loss_scaled     = 0.
-    meta_train_loss_scaled= 0.; meta_valid_loss_scaled= 0.
+    train_loss_quantile_scaled     = 0.; valid_loss_quantile_scaled     = 0.
+    meta_train_loss_quantile_scaled= 0.; meta_valid_loss_quantile_scaled= 0.
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for batch_idx, (x_scaled, y_scaled, idx, origin_unix) in enumerate(train_loader):
-        x_scaled_dev = x_scaled.to(device)
-        y_scaled_dev = y_scaled.to(device)
+    for (X_scaled, y_scaled, _, _) in train_loader:
+        X_scaled_dev = X_scaled.to(device)   # (B, L, F)
+        y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
 
-        origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
         # optimizer.zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
-            pred_scaled_dev = model(x_scaled_dev)
-            loss_scaled_dev = losses.loss_wrapper_quantile_torch(
-                pred_scaled_dev, y_scaled_dev, quantiles=QUANTILES,
-                lambda_cross=LAMBDA_CROSS, lambda_coverage=LAMBDA_COVERAGE,
-                lambda_deriv=LAMBDA_DERIV)
+            pred_scaled_dev = model(X_scaled_dev)
+            loss_quantile_scaled_dev = losses.loss_wrapper_quantile_torch(
+                pred_scaled_dev, y_scaled_dev, QUANTILES,
+                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
 
-        amp_scaler.scale(loss_scaled_dev).backward()       # full precision
+        amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(optimizer)
         amp_scaler.update()
 
-        train_loss_scaled += loss_scaled_dev.item()
+        train_loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
         with torch.no_grad():  # monitoring only
-            loss_meta_scaled = losses.compute_meta_loss(
-                pred_scaled_dev, x_scaled_dev, y_scaled_dev, baseline_idx,
-                WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
-                lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
-        meta_train_loss_scaled += loss_meta_scaled.item()
+
+            pred_meta_scaled = utils.compute_meta_prediction_torch(
+                pred_scaled_dev, X_scaled_dev, baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
+
+            loss_meta_quantile_scaled = losses.loss_wrapper_quantile_torch(
+                pred_meta_scaled, y_scaled_dev[:, :, 0],
+                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
+
+            # loss_meta_quantile_scaled = losses.compute_meta_loss(
+            #     pred_scaled_dev, X_scaled_dev, y_scaled_dev, baseline_idx,
+            #     WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
+            #     lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
+        meta_train_loss_quantile_scaled += loss_meta_quantile_scaled.item()
 
     scheduler.step()
-    train_loss_scaled     /= len(train_loader)
-    meta_train_loss_scaled/= len(train_loader)
+    train_loss_quantile_scaled     /= len(train_loader)
+    meta_train_loss_quantile_scaled/= len(train_loader)
+
 
     # validation
-    model.eval()
+    #########################################################
 
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
-        # results = daf.validate_day_ahead(
-        #     model    = model,
-        #     dataset  = valid_dataset,
-        #     scaler_y = scaler_y,
-        #     device   = device,
-        #     quantiles= QUANTILES,
-        #     verbose  = VERBOSE
-        # )
+        model.eval()
 
-        # valid_loss_scaled = results['overall_metrics']['mae'] / sigma_y
-        # meta_valid_loss_scaled = 0.
+        Q = len(QUANTILES)
+        # T = len(dates)
 
-        valid_loss_scaled, meta_valid_loss_scaled =\
-            utils.validate_day_ahead(
-                model        = model,
-                valid_loader = valid_loader,
-                valid_dates  = valid_dates,
-                scaler_y     = scaler_y,
-                baseline_idx = baseline_idx,
-                device       = device,
-                input_length = INPUT_LENGTH,
-                pred_length  = PRED_LENGTH,
-                # incr_steps   = INCR_STEPS_TEST,
-                weights_meta = WEIGHTS_META,
-                quantiles    = QUANTILES,
-                lambda_cross = LAMBDA_CROSS,
-                lambda_coverage=LAMBDA_COVERAGE,
-                lambda_deriv = LAMBDA_DERIV
-            )
+        nn_losses_quantile   = []
+        meta_losses_quantile = []
+
+
+        with torch.no_grad():  # monitoring only
+            # main loop
+            for (X_scaled, y_scaled, _, _) in valid_loader:
+                X_scaled_dev = X_scaled.to(device)
+                # X_scaled_cpu = X_scaled.cpu().numpy()           # (B, L, F)
+                # idx_np       = idx.cpu().numpy()              # shape (B,)
+                y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()  # (B, H)
+
+                # NN forward
+                # pred_scaled_dev = model(X_scaled_dev)   # (B, H, Q)
+                pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
+
+                # loss
+                # pred_scaled_cpu = pred_scaled_dev.cpu().numpy()
+                loss_quantile_scaled_cpu = losses.loss_wrapper_quantile_numpy(
+                    pred_scaled_cpu, y_scaled_cpu, QUANTILES,
+                    LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
+                valid_loss_quantile_scaled += loss_quantile_scaled_cpu
+
+                # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
+                # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
+                # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
+
+                # # meta-model
+                # pred_meta_scaled = utils.compute_meta_prediction_numpy(
+                #     pred_scaled_cpu, X_scaled_cpu,
+                #     baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
+
+                # loss_meta_quantile_scaled = losses.loss_wrapper_quantile_numpy(
+                #     pred_meta_scaled, y_scaled_cpu,
+                #     QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
+
+                # meta_valid_loss_quantile_scaled += loss_meta_quantile_scaled
+                # BUG meta-model receives predictions for NN after t,
+                #       and LR and RF before t => incompatible
+
+
+        valid_loss_quantile_scaled     /= len(valid_loader)
+        # meta_valid_loss_quantile_scaled/= len(valid_loader)
+        meta_valid_loss_quantile_scaled = 0.
+
+
+
+        # valid_loss_quantile_scaled, meta_valid_loss_quantile_scaled =\
+        #     utils.validate_day_ahead(
+        #         model        = model,
+        #         valid_loader = valid_loader,
+        #         valid_dates  = valid_dates,
+        #         scaler_y     = scaler_y,
+        #         baseline_idx = baseline_idx,
+        #         device       = device,
+        #         input_length = INPUT_LENGTH,
+        #         pred_length  = PRED_LENGTH,
+        #         # incr_steps   = INCR_STEPS_TEST,
+        #         weights_meta = WEIGHTS_META,
+        #         quantiles    = QUANTILES,
+        #         lambda_cross = LAMBDA_CROSS,
+        #         lambda_coverage=LAMBDA_COVERAGE,
+        #         lambda_deriv = LAMBDA_DERIV
+        #     )
     # print("valid_loss_scaled:", valid_loss_scaled,
     #       "meta_valid_loss_scaled:", meta_valid_loss_scaled)
 
 
-    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled,
-            meta_min_train_loss_scaled, meta_min_valid_loss_scaled,
-            list_train_loss_scaled, list_min_train_loss_scaled,
-            list_valid_loss_scaled, list_min_valid_loss_scaled,
-            list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-            list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled) = \
+    def subset_predictions_day_ahead(X_subset_GW, subset_loader):
+        return utils.subset_predictions_day_ahead(
+                X_subset_GW, subset_loader, model, scaler_y,
+                feature_cols = feature_cols,
+                device       = device,
+                input_length = INPUT_LENGTH,
+                pred_length  = PRED_LENGTH,
+                quantiles    = QUANTILES,
+                minutes_per_step=MINUTES_PER_STEP)
+
+    if VERBOSE >= 3:
+        print(f"After {epoch+1} epochs")
+        print(f"\nTraining, starting at {train_dates[0]}:")
+        true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
+            subset_predictions_day_ahead(X_train_GW, train_loader)
+        print("\nTraining metrics [GW]:")
+        utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+                             None,  # WEIGHTS_META,
+                             subset="train", unit="GW", verbose=VERBOSE)
+        plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
+                   dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
+                   name_baseline='rf', title=f"training after {epoch+1} epochs")
+
+        _rf = pd.Series(X_train_GW[:, feature_cols.index('consumption_rf')], index=train_dates)
+        _y  = pd.Series(y_train_GW, index=train_dates)
+        _concat = pd.concat([pd.Series(true_series_GW), pd.Series(dict_baseline_series_GW['rf']), \
+                             pd.Series(dict_pred_series_GW['q50']), _y, _rf],
+                            axis=1).astype('float64').round(2)
+        _concat.columns= ['y_new', 'RF_new', 'pred_q50', 'y_old', 'RF_old']
+        _concat.dropna(inplace=True)
+        print(_concat.head(20))
+
+
+        print(f"\nValidation, starting at {valid_dates[0]}:")
+        true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
+            subset_predictions_day_ahead(X_valid_GW, valid_loader)
+        print("\nValidation metrics [GW]:")
+        utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
+                             None,  # WEIGHTS_META,
+                             subset="valid", unit="GW", verbose=VERBOSE)
+        plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
+                   dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
+                   name_baseline='rf', title=f"validation after {epoch+1} epochs")
+
+
+
+    (list_of_min_losses, list_of_lists) = \
         utils.display_evolution(
-                epoch, t_epoch_start,
-                train_loss_scaled, valid_loss_scaled,
-                min_train_loss_scaled,  min_valid_loss_scaled,
-                min_loss_display_scaled,
-                meta_train_loss_scaled, meta_min_train_loss_scaled,
-                meta_valid_loss_scaled, meta_min_valid_loss_scaled,
-                # lists
-                list_train_loss_scaled, list_min_train_loss_scaled,
-                list_valid_loss_scaled, list_min_valid_loss_scaled,
-                list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-                list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
-                # constants
-                EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY,
-                MIN_DELTA, VERBOSE)
+                epoch, t_epoch_start, train_loss_quantile_scaled, valid_loss_quantile_scaled,
+                meta_train_loss_quantile_scaled, meta_valid_loss_quantile_scaled,
+                list_of_min_losses, list_of_lists,
+                EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY, MIN_DELTA, VERBOSE)
+
+    (list_train_loss_scaled, list_min_train_loss_scaled,
+    list_valid_loss_quantile_scaled,  list_min_valid_loss_quantile_scaled,
+    list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+    list_meta_valid_loss_quantile_scaled, list_meta_min_valid_loss_quantile_scaled) = list_of_lists
+
+    if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
+            & (epoch < EPOCHS-2):
+        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
+                          list_valid_loss_quantile_scaled, list_min_valid_loss_quantile_scaled,
+                          baseline_losses_quantile_scaled,
+                          None, None, None, None,
+                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+                          partial=True, verbose=VERBOSE)
 
     # Check for early stopping
-    if early_stopping(valid_loss_scaled):
+    if early_stopping(valid_loss_quantile_scaled):
         print(f"Early stopping triggered at epoch {epoch+1}.")
         break
 
-
     torch.cuda.empty_cache()
 
-
 plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-                  list_valid_loss_scaled, list_min_valid_loss_scaled,
-                  None,  #baseline_losses_scaled,
+                  list_valid_loss_quantile_scaled, list_min_valid_loss_quantile_scaled,
+                  baseline_losses_quantile_scaled,
                   None, None, None, None,
                   # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
                   # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
@@ -507,95 +584,78 @@ plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
 
 if VERBOSE >= 1:
     true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
-        utils.test_predictions_day_ahead(
-            X_train_GW, train_loader, model, scaler_y,
-            # num_test_windows=len(train_dataset_scaled),
-            feature_cols = feature_cols,
-            test_dates   = train_dates,
-            device       = device,
-            input_length = INPUT_LENGTH,
-            pred_length  = PRED_LENGTH,
-            # incr_steps   = INCR_STEPS_TEST,
-            quantiles    = QUANTILES)
+        subset_predictions_day_ahead(X_train_GW, train_loader)
     print("\nTraining metrics [GW]:")
     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
+                         WEIGHTS_META, subset="train", unit="GW", verbose=VERBOSE)
 
     true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
-        utils.test_predictions_day_ahead(
-            X_valid_GW, valid_loader, model, scaler_y,
-            # num_test_windows=len(valid_dataset_scaled),
-            feature_cols = feature_cols,
-            test_dates   = valid_dates,
-            device       = device,
-            input_length = INPUT_LENGTH,
-            pred_length  = PRED_LENGTH,
-            # incr_steps   = INCR_STEPS_TEST,
-            quantiles    = QUANTILES)
+        subset_predictions_day_ahead(X_valid_GW, valid_loader)
     print("\nvalidation metrics [GW]:")
     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
+                         WEIGHTS_META, subset="valid", unit="GW", verbose=VERBOSE)
 
 
-if VERBOSE >= 2:
-    y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
-        utils.aggregate_day_ahead(
-            model        = model,
-            loader       = valid_loader,
-            dates        = valid_dates,
-            scaler_y     = scaler_y,
-            baseline_idx = baseline_idx,
-            device       = device,
-            input_length = INPUT_LENGTH,
-            weights_meta = WEIGHTS_META,
-            quantiles    = QUANTILES,
-        )
-    assert has_pred.dtype == bool, has_pred.dtype
-    assert has_pred.shape[0] == len(valid_dates), \
-        f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
+# if VERBOSE >= 2:
+#     y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
+#         utils.aggregate_day_ahead(
+#             model        = model,
+#             loader       = valid_loader,
+#             dates        = valid_dates,
+#             scaler_y     = scaler_y,
+#             baseline_idx = baseline_idx,
+#             device       = device,
+#             input_length = INPUT_LENGTH,
+#             weights_meta = WEIGHTS_META,
+#             quantiles    = QUANTILES,
+#         )
+#     assert has_pred.dtype == bool, has_pred.dtype
+#     assert has_pred.shape[0] == len(valid_dates), \
+#         f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
 
-    # window-aligned dates (prediction at t = i + input_length)
-    valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
+#     # window-aligned dates (prediction at t = i + input_length)
+#     valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
 
-    dates_masked  = valid_dates_win        [has_pred]
-    y_true_masked = y_valid_agg_scaled     [has_pred]
-    y_pred_masked = y_valid_pred_agg_scaled[has_pred]
+#     dates_masked  = valid_dates_win        [has_pred]
+#     y_true_masked = y_valid_agg_scaled     [has_pred]
+#     y_pred_masked = y_valid_pred_agg_scaled[has_pred]
 
-    top_bad_days = utils.worst_days_by_loss(
-        dates     = dates_masked,
-        y_true    = y_true_masked,
-        y_pred    = y_pred_masked,
-        quantiles = QUANTILES,
-        temperature=Tavg_full[TRAIN_SPLIT-n_valid : TRAIN_SPLIT][has_pred],
-        top_n     = 25,
-    )
+#     top_bad_days = utils.worst_days_by_loss(
+#         dates     = dates_masked,
+#         y_true    = y_true_masked,
+#         y_pred    = y_pred_masked,
+#         quantiles = QUANTILES,
+#         temperature=Tavg_full[TRAIN_SPLIT-n_valid : TRAIN_SPLIT][has_pred],
+#         num_steps_per_day=NUM_STEPS_PER_DAY,
+#         top_n     = 25,
+#     )
 
-    print(top_bad_days.to_string())
+#     print(top_bad_days.to_string())
 
 
-    # import matplotlib.pyplot as plt
-    # day = top_bad_days.iloc[0]["date"]
+#     # import matplotlib.pyplot as plt
+#     # day = top_bad_days.iloc[0]["date"]
 
-    # q50_idx = QUANTILES.index(0.5)
+#     # q50_idx = QUANTILES.index(0.5)
 
-    # day = top_bad_days.iloc[0]["date"]
-    # mask_day = dates_masked.normalize() == day
+#     # day = top_bad_days.iloc[0]["date"]
+#     # mask_day = dates_masked.normalize() == day
 
-    # # inverse-scale for plotting
-    # y_true_day_GW = scaler_y.inverse_transform(
-    #     y_true_masked.reshape(-1, 1)
-    # ).ravel()
+#     # # inverse-scale for plotting
+#     # y_true_day_GW = scaler_y.inverse_transform(
+#     #     y_true_masked.reshape(-1, 1)
+#     # ).ravel()
 
-    # y_pred_day_GW = scaler_y.inverse_transform(
-    #     y_pred_masked[:, q50_idx].reshape(-1, 1)
-    # ).ravel()
+#     # y_pred_day_GW = scaler_y.inverse_transform(
+#     #     y_pred_masked[:, q50_idx].reshape(-1, 1)
+#     # ).ravel()
 
-    # plt.figure(figsize=(10, 4))
-    # plt.plot(dates_masked, y_true_day_GW, label="true")
-    # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
-    # plt.legend()
-    # plt.title(f"Worst training day: {day}")
-    # plt.show()
+#     # plt.figure(figsize=(10, 4))
+#     # plt.plot(dates_masked, y_true_day_GW, label="true")
+#     # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
+#     # plt.legend()
+#     # plt.title(f"Worst training day: {day}")
+#     # plt.show()
 
 
 # ============================================================
@@ -607,16 +667,7 @@ if VERBOSE >= 1:
 
 
 true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
-    utils.test_predictions_day_ahead(
-        X_test_GW, test_loader, model, scaler_y,
-        # num_test_windows=len(test_dataset_scaled),
-        feature_cols = feature_cols,
-        test_dates   = test_dates,
-        device       = device,
-        input_length = INPUT_LENGTH,
-        pred_length  = PRED_LENGTH,
-        # incr_steps   = INCR_STEPS_TEST,
-        quantiles    = QUANTILES)
+    subset_predictions_day_ahead(X_test_GW, test_loader)
 
 # print("true_series_GW:\n",      true_series_GW.head())
 # print("dict_pred_series_GW:\n", {_name: _series.head() \
@@ -625,7 +676,8 @@ true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
 #                     for (_name, _series) in dict_baseline_series_GW.items()})
 
 
-name_baseline = 'rf' if 'rf' in dict_baseline_series_GW else 'lr'
+name_baseline =  'rf' if 'rf' in dict_baseline_series_GW else \
+                ('lr' if 'lr' in dict_baseline_series_GW else None)
 
 common_idx = true_series_GW.index.intersection(dict_pred_series_GW['q50'].index)
 
@@ -669,9 +721,9 @@ for k in dict_baseline_series_GW:
 # future dates: add months to last observed date
 last_date = true_series_GW.index[-1]
 future_dates = pd.date_range(
-    start=last_date + pd.Timedelta(minutes=30),
+    start=last_date + pd.Timedelta(minutes=MINUTES_PER_STEP),
     periods=PRED_LENGTH,
-    freq="30min"
+    freq=f"{MINUTES_PER_STEP}min"
 )
 
 with torch.no_grad():
@@ -716,7 +768,7 @@ with torch.no_grad():
 if VERBOSE >= 1:
     print("\nTesting metrics [GW]:")
     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                         WEIGHTS_META, unit="GW", verbose=VERBOSE)
+                         WEIGHTS_META, subset="test", unit="GW", verbose=VERBOSE)
 
 if VERBOSE >= 1:
     print("Plotting test results...")
@@ -741,7 +793,7 @@ plots.all_tests(true_series_GW, {'q50': dict_pred_series_GW['q50']},
 try:
     del valid_loader, test_loader, test_dataset_scaled
     # del train_dataset, valid_dataset
-    del true_series_GW, dict_pred_series_GW, baseline_losses_scaled, future_series
+    del true_series_GW, dict_pred_series_GW, baseline_losses_quantile_scaled, future_series
 except NameError:
     pass
 

@@ -18,36 +18,45 @@ The focus is currently on the half-hourly national French consumption (average: 
   - requires: interpretability of exogenous variables as causes.
 
 
+### Choice of application
+In Europe, prices are set daily at noon for the next day (day-ahead price). Producers and consumers must let the market know what their 48 half-hourly consumptions will be, from _h_ + 12 to _h_ + 36. 
+
+Gearing the model toward this specific case has two advantages:
+- the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no issue of aggregation);
+- the consumption at _t_ is predicted only once: the day before at noon, not _H_ times.
+
+
+### A note on the system size
+- The number of samples drops by nearly a factor of 50, but this number is artificially high:
+  - noon-only: 3 650 _non-overlapping_ training samples in ten years;
+  - all origins: 175 000 _overlapping_ training samples.
+- Training only from _h_ + 12 to _h_ + 36 lets the model rely on the fact that time step number 24 is always midnight. No need for a decoder or extra degrees of freedom to get this pattern right.
+
+
+---
 
 ## Current State
 
 ### Model overview
-The current consumption forecasting system revolves around a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ), with direct multi-horizon prediction. Forecasts are produced using direct multi-horizon prediction.
+The current consumption forecasting system revolves around a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ), with direct multi-horizon prediction.
 
-The model outputs multiple quantiles (e.g. `q10`, `q50`, `q90`) for each forecast horizon. The loss includes:
+The loss includes:
 - pinball (quantile) loss,
 - quantile crossing constraints applied sequentially (so that `q10` <= `q50` <= `q90`),
 - sharpness (derivatives).
 
 The NN is trained using:
-- exogenous features (temperature, solar, school holidays),
+- exogenous features (temperature, school holidays),
 - week-ends plus Fourier-like sine waves at different scales (day, year),
+- moving averages of recent consumption (but not so recent as to cause leaks),
 - predictions from baseline models used as features: **linear regression (LR)** and **random forest (RF)**
   - LR and RF are *not* ensembled directly: they are treated as informative input features.
 
 
 ### Issues in the current model
 - **Systematic bias in predictions**
-  - Bias is visible across horizons and regimes, even when overall RMSE / MAE are reasonable.
-  - The bias differs between LR, RF and NN, and is not explicitly corrected anywhere in the pipeline.
-  - Interpretability of bias sources is limited, and the current architecture does not isolate these mechanisms clearly.
-  
-- **Training–validation mismatch due to aggregation**
-  - Training optimizes window-level forecasts, while validation and testing evaluate aggregated, time-aligned predictions.
-  - Validation is more expensive and semantically different from training (`aggregate_over_windows` used only in validation/testing).
-  - In fact, electricity forecasting errors differ dramatically by horizon; in the model, most decisions are global across horizons.
-  - A general risk is that short-horizon accuracy can dominate gradients, whereas it is long-horizon errors that are operationally critical.
-  - Moreover, this is slow: validation runs full aggregation every time and recomputes inverse scaling and window merging repeatedly.
+  - Bias is visible in LR, RF and NN in validation and testing (but not training).
+  - Adding moving averages as features (see above) halved the bias.
 
 - **Median vs mean ambiguity**
   - The neural network is trained with a quantile loss, so `q50` is a conditional median.
@@ -56,25 +65,12 @@ The NN is trained using:
   - The Transformer is simultaneously responsible for learning uncertainty structure (quantiles) and producing a usable point forecast; any change improving point RMSE can degrade quantile calibration (and vice versa).
 
 - **No learned combination of predictors**
-  - The meta-model is less powerful than it could be: LR, RF, and NN outputs are statically combined.
+  - The meta-model is less powerful than it could be: LR, RF and NN outputs are statically combined, weights are set by hand.
   - A learned meta-learner would allow nonlinear bias correction, make weights regime-dependent and improve robustness across seasons and extreme events.
 
-- **Temperature predictions**
-  - Currently, the only temperature used is the actual one, even though at the time of predicting consumption only a forecast can be available, not the true measured value.
-  - The severity of this artificial reduction of the variance depends on the length of the horizon _H_.
-
-
-### Choice of application
-One further issue is that some questions could not have a clear, unambiguous answer:
-- for validation: should one check all predictions at _t_ individually or aggregate over _H_ horizons?
-- for the meta-model: LR and RF intrinsically make only one prediction for _t_, how to square this with _H_ predictions from the NN?
-
-This arose from the lack of a specific use case. Focusing on one application would allow an univocal answer.
-
-In Europe, prices are set daily at noon for the next day (day-ahead price). Producers and consumers must let the market know what their 48 half-hourly consumptions will be, from _h_ + 12 to _h_ + 36. Gearing the model toward this specific case has two advantages:
-- the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no aggregation);
-- the consumption at _t_ is predicted only once: the day before at noon, not _H_ times.
-
+- **Remote prdiction**
+  - The code does not currently predict _h_ + 12 to _h_ + 36, but rather _h_ to _h_ + 24
+  - The model must be allowed to skip the first 12 hours in validation: run from _h_ to _h_ + 36 but use only _h_ + 12 to _h_ + 36.
 
 
 ---
@@ -101,6 +97,7 @@ There is **no feedback loop** between the two stages.
 **Training**
 - Pinball loss with sequential crossing constraints
 - Direct multi-horizon prediction
+  - Possible later extension: a light (partial) decoder
 
 **Role**
 - Learn the conditional distribution of electricity demand to produce
@@ -110,55 +107,11 @@ There is **no feedback loop** between the two stages.
 This stage is **self-contained** and remains unchanged by downstream models.
 
 
-#### Validation protocol
-- **Quantile model**
-  - Validated independently using: pinball loss + coverage + calibration + sharpness (derivatives)
-
-- **Meta-model**
-  - Validated using:
-    - RMSE
-    - MAE
-    - bias
-  - Evaluated per horizon, without aggregation across origins
-
-- **Reporting**
-  - Probabilistic and point-forecast metrics reported separately
-  - No metric mixing between stages
-
-
-#### Implementation plan for output strategy
-The implementation will proceed incrementally, keeping the current system as a stable reference.
-
-- **Initial**
-  - Direct multi-horizon prediction for all horizons
-  - Strict horizon alignment between all predictors
-
-- **Possible later extension**
-  - Light (partial) decoder
-    - Parallel decoding
-    - No autoregression
-    - Explicit horizon conditioning if needed
-
-Any decoder-based extension must remain compatible with:
-- direct validation,
-- stable feature semantics,
-- and the absence of feedback to the quantile model.
-
-
-#### Working entirely on predicting [_h_ + 12, _h_ + 36]?
-The model should be validated and tested on relevant periods. But should it also be the case for training?
-
-- The number of samples is off by nearly a factor of 50, but this number is artificially high:
-  - noon-only: 3 650 _non-overlapping_ training samples in ten years;
-  - all origins: 175 000 _overlapping_ training samples.
-- Training only from _h_ + 12 to _h_ + 36 lets the model rely on the fact that time step number 24 is always midnight. No need for a decoder or extra degrees of freedom to get this pattern right.
-
-
 ### Stage 2 — Mean-Based Meta-Model (deterministic layer)
 
 **Input**
 - LR and RF predictions
-- Median (`q50`) output from the Neural Network using Transformers for Quantiles (NNTQ)
+- Median (`q50`) output from stage 1
 - Potentially: raw features similar to those used in the quantile NN
 
 **Output**
@@ -176,7 +129,7 @@ The model should be validated and tested on relevant periods. But should it also
 
 #### Implementation plan
 - currently:
-  - meta-model based on 3 predictions: median (`q50`) from the Neural Network using Transformers for Quantiles (NNTQ), LR, RF;
+  - meta-model based on 3 predictions: LR, RF and the median (`q50`) from the NNTQ;
   - constant weights set by hand.
 - next: 
   - linear regression with the same 3 predictions as input (initially MAE, possibly MSE later);
