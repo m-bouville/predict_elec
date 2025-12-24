@@ -71,12 +71,16 @@ def df_features_past_consumption(consumption: pd.Series,
     # lag avoids implicitly leaking future information
     _shifted_conso = df['consumption_GW'].shift(lag)
 
-    # diff and moving averages
-    for _days in [7, 14]:  # n hours
-        _hours = int(round(num_steps_per_day*_days))
-        df[f"consumption_diff_{_days}days_GW"] = \
+    # diff
+    for _weeks in [1, 2]:
+        _hours = int(round(num_steps_per_day * 7 * _weeks))
+        df[f"consumption_diff_{_weeks}wk_GW"] = \
             _shifted_conso - _shifted_conso.shift(freq=f"{_hours}h")
-        df[f"consumption_SMA_{_days}days_GW"] = _shifted_conso.rolling(
+
+    # moving averages
+    for _weeks in [1, 2, 4, 52]:
+        _hours = int(round(num_steps_per_day * 7 * _weeks))
+        df[f"consumption_SMA_{_weeks}wk_GW"] = _shifted_conso.rolling(
             f"{_hours}h", min_periods=int(round(_hours*.8))).mean()
 
     if verbose >= 2:
@@ -119,7 +123,7 @@ def df_features(dict_fnames: Dict[str, str], output_fname: str,
     dates_df.loc["df"]= [df.index.min(), df.index.max()]
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
     dates_df["start"] = (dates_df["start"] + pd.Timedelta(hours=2)).dt.floor("D").dt.date
-    dates_df["end"]   = dates_df["end"  ].dt.date
+    dates_df["end"]   =  dates_df["end"  ].dt.date
 
     # df['date'] = df.index.year - 2000 + df.index.dayofyear / 365  # for long-term drift
 
@@ -136,7 +140,8 @@ def df_features(dict_fnames: Dict[str, str], output_fname: str,
 
         # no time modification
         plt.figure(figsize=(10,6))
-        (df[['Tavg_degC', 'solar_kW_per_m2', 'wind_m_per_s']]).plot()
+        (df[['Tmax_degC', 'Tavg_degC']]).plot()
+        # (df[['Tavg_degC', 'solar_kW_per_m2', 'wind_m_per_s']]).plot()
         plt.show()
 
     return df, dates_df
@@ -402,10 +407,10 @@ def compare_models(true_series, dict_pred_series,
 
         rows.append({
             "model": name,
-            "RMSE":  rmse(y_pred, y_true),
-            "MAE":   mae (y_pred, y_true),
             "bias":  res.mean(),
             "std":   res.std(),
+            "RMSE":  rmse(y_pred, y_true),
+            "MAE":   mae (y_pred, y_true),
         })
 
     df_metrics = (
@@ -418,7 +423,7 @@ def compare_models(true_series, dict_pred_series,
 
 
 
-    if verbose >= 2:
+    if verbose >= 3:
         subset_str = "" if unit is None else f" {subset}"
         unit_str   = "" if unit is None else f" [{unit}]"
         print(f"\n[Diagnostics]{subset_str} RMSE by hour of day{unit_str}")
@@ -431,7 +436,7 @@ def compare_models(true_series, dict_pred_series,
                 .groupby("hour")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in ["nn"] + list_baselines + ["meta"]
+            for name in names_models
         })
         print(df_rmse_hour.round(2))
 
@@ -461,7 +466,7 @@ def compare_models(true_series, dict_pred_series,
                 .groupby("month")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in ["nn"] + list_baselines + ["meta"]
+            for name in names_models
         })
         print(df_rmse_month.round(2))
 
@@ -546,15 +551,15 @@ def display_evolution(
     list_meta_min_valid_loss_scaled.append(meta_min_valid_loss_scaled)
 
 
-    if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
-            & (epoch < num_epochs-2):
-        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-                          list_valid_loss_scaled, list_min_valid_loss_scaled,
-                          None,  # baseline_losses_scaled,
-                          None, None, None, None,
-                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
-                          partial=True, verbose=verbose)
+    # if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
+    #         & (epoch < num_epochs-2):
+    #     plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
+    #                       list_valid_loss_scaled, list_min_valid_loss_scaled,
+    #                       baseline_losses_scaled,
+    #                       None, None, None, None,
+    #                       # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+    #                       # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+    #                       partial=True, verbose=verbose)
 
     return ((min_train_loss_scaled, min_valid_loss_scaled, min_loss_display_scaled,
             meta_min_train_loss_scaled, meta_min_valid_loss_scaled),

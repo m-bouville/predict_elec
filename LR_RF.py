@@ -183,6 +183,7 @@ def load_or_compute_regression_and_forest(
 ## Version 3 -- older versions in: archives/utils-old-LR_RF-test_predictions.py
 def regression_and_forest(
     df:          pd.DataFrame,
+    # dates:       pd.DatetimeIndex,
     target_col:  str,
     feature_cols:List[str],
     train_end:   int,   # end of training set (exclusive)
@@ -246,14 +247,15 @@ def regression_and_forest(
     # def mse(a,b): return float(np.mean((a-b)**2))
 
     def loss_quantile_GW(pred_GW, y_GW, sigma_y_GW=sigma_y_GW):
+        # /!\ Not linear: must work on scaled values
         return losses.loss_wrapper_quantile_numpy(
             pred_GW/sigma_y_GW, y_GW/sigma_y_GW, quantiles, lambda_cross=0.,
             lambda_coverage=0., lambda_deriv=lambda_deriv) * sigma_y_GW
 
-    models    = dict()
-    preds_GW  = dict()
-    losses_quantile_GW = dict()
-    series_pred_GW= pd.Series()
+    models            = dict()
+    preds_GW          = dict()
+    losses_quantile_GW= dict()
+    series_pred_GW    = pd.Series()
 
     for name, cfg in models_cfg.items():  # name = e.g. 'lr', 'rf'
         preds_GW          [name] = pd.Series()
@@ -274,13 +276,19 @@ def regression_and_forest(
             pred_valid_GW = y_valid_GW
             pred_test_GW  = y_test_GW
 
+        # series_pred_GW[name] = {
+        #     'train': pd.Series(pred_train_GW, index=df.index[train_idx]),
+        #     'valid': pd.Series(pred_valid_GW, index=df.index[valid_idx]),
+        #     'test':  pd.Series(pred_test_GW,  index=df.index[test_idx ]),
+        # }
         series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
                             index = df.index)
+        # print(series_pred_GW[name])
+
 
 
         # Calculate losses
-        # /!\ Not linear: must work on scaled values
         losses_quantile_GW[name]['train'] = loss_quantile_GW(pred_train_GW, y_train_GW)
         losses_quantile_GW[name]['valid'] = loss_quantile_GW(pred_valid_GW, y_valid_GW)
         losses_quantile_GW[name]['test' ] = loss_quantile_GW(pred_test_GW,  y_test_GW)
@@ -330,3 +338,68 @@ def regression_and_forest(
     return series_pred_GW, models, losses_quantile_GW
 
 
+
+# ----------------------------------------------------------------------
+# linear regression for meta-model
+# ----------------------------------------------------------------------
+
+def weights_metamodel(X, y, alpha=1., verbose: int = 0):
+
+    # X: (N, 3), y: (N,)
+    XtX = X.T @ X
+    XtX.flat[::4] += alpha  # add alpha to diagonal
+    coef = np.linalg.solve(XtX, X.T @ y)
+
+    # drop most negative coefficient (if any)
+    if coef.min() < 0:
+        idx = coef.argmin()
+        mask = np.ones(len(coef), dtype=bool)
+        mask[idx] = False
+        Xr = X[:, mask]
+
+        XtX = Xr.T @ Xr
+        XtX.flat[:: XtX.shape[0] + 1] += alpha
+        coef_r = np.linalg.solve(XtX, Xr.T @ y)
+
+        coef = np.zeros(3)
+        coef[mask] = coef_r
+
+    return {
+        'nn': round(float(coef[0]), 3),
+        'lr': round(float(coef[1]), 3),
+        'rf': round(float(coef[2]), 3),
+    }
+
+    # _input = pd.concat([pred_nn, pred_baselines], axis=1, join='inner')
+    # _input.columns=['nn', 'lr', 'rf']
+
+    # common_idx = y_true.index.intersection(_input.index)
+    # # print(common_idx)
+
+    # model_meta = Ridge(alpha = 1.)
+    # model_meta.fit(_input.loc[common_idx], y_true.loc[common_idx])
+    # pred_train_GW = model_meta.predict(_input.loc[common_idx])
+
+    # if verbose >= 3:
+    #     _output = pd.concat([
+    #          y_true, _input,
+    #          pd.Series(pred_train_GW, name='meta', index=common_idx)], axis=1)
+    #     _output.columns=['true', 'nn', 'lr', 'rf', 'meta']
+    #     print(_output.astype('float64').round(2))
+
+    # weights_meta = {name: round(float(coeff), 3) for name, coeff in \
+    #        zip(['nn', 'lr', 'rf'], model_meta.coef_)}
+
+    # # getting rid of a negative coefficient
+    # min_coeff = min(weights_meta.values())
+    # if min_coeff < 0:
+    #     idx = list(weights_meta.keys())[list(weights_meta.values()).index(min_coeff)]
+    #     if verbose >= 2:
+    #         print(f"removing `{idx}` with coefficient {min_coeff} < 0")
+    #     _input.drop(columns=[idx], inplace=True)
+    #     model_meta.fit(_input.loc[common_idx], y_true.loc[common_idx])
+    #     pred_train_GW = model_meta.predict(_input.loc[common_idx])
+    # weights_meta = {name: round(float(coeff), 3) for name, coeff in \
+    #        zip(['nn', 'lr', 'rf'], model_meta.coef_)}
+
+    # return weights_meta

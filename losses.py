@@ -344,7 +344,6 @@ def subset_losses_torch(
         loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
         with torch.no_grad():  # monitoring only
-
             pred_meta_scaled = utils.compute_meta_prediction_torch(
                 pred_scaled_dev, X_scaled_dev, baseline_idx, weights_meta, len(quantiles)//2)
 

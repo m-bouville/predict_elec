@@ -1,4 +1,4 @@
-import gc
+import gc, sys
 # from datetime import datetime
 import time
 # from   typing import Dict  # List
@@ -41,7 +41,7 @@ import architecture, losses, utils, LR_RF, IO, plots
 # [done] Add abilities to spot outliers
 # [done] add constant NUM_STEPS_PER_DAY saying there are 48 data points per day
 # TODO make PRED_LENGTH == 36h and validate h+12 to h+36
-
+# TODO time training: what is too expensive?
 
 
 
@@ -187,7 +187,7 @@ baseline_features_GW, baseline_models, baseline_losses_quantile_GW = \
         compute_kwargs  = rf_params,
         cache_dir       = "output",
         cache_id_dict   = cache_id,
-        force_calculation=True,
+        force_calculation=VERBOSE >= 2,  #SYSTEM_SIZE == 'DEBUG',
         verbose         = VERBOSE
     )
 if VERBOSE >= 1:
@@ -246,7 +246,8 @@ if VERBOSE >= 1:
 
 if VERBOSE >= 1:
     print(f"{len(series)/NUM_STEPS_PER_DAY/365.25:.1f} years of data, "
-          f"train: {TRAIN_SPLIT/NUM_STEPS_PER_DAY/365.25:.2f} yrs ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
+          f"train: {TRAIN_SPLIT/NUM_STEPS_PER_DAY/365.25:.2f} yrs"
+          f" ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
           f"test: {test_months/NUM_STEPS_PER_DAY/365.25:.2f} yrs"
           f" (switching at {dates[TRAIN_SPLIT]})")
     print()
@@ -263,7 +264,7 @@ assert INPUT_LENGTH + 60 < test_months,\
 # ============================================================
 
 
-[train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates ],\
+[train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates],\
         scaler_y, [X_GW, y_GW], \
         [X_train_GW, y_train_GW, train_dataset_scaled], \
         [X_valid_GW, y_valid_GW, valid_dataset_scaled], \
@@ -275,7 +276,7 @@ assert INPUT_LENGTH + 60 < test_months,\
         do_day_ahead=DAY_AHEAD, forecast_hour=FORECAST_HOUR,
         verbose=VERBOSE)
 
-if VERBOSE >= -2:
+if VERBOSE >= 2:
     print(f"Train mean:{scaler_y.mean_ [0]:6.2f} GW")
     print(f"Train std :{scaler_y.scale_[0]:6.2f} GW")
     print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
@@ -286,7 +287,7 @@ sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
 if VERBOSE >= 1:
     print(f"sigma_y = {sigma_y:.1f} GW")
 baseline_losses_quantile_scaled = {
-    name: {k: v / sigma_y for k, v in d.items()}  # BUG arbitrary? false?
+    name: {k: v / sigma_y / 2 for k, v in d.items()}  # BUG hack!
     for name, d in baseline_losses_quantile_GW.items()
 }
 # lr_losses = {_key: lr_losses[_key] / sigma_y**2 for _key in lr_losses}
@@ -368,12 +369,31 @@ amp_scaler = torch.amp.GradScaler(device=device)
 # first_step = True
 
 
-t_epoch_start = time.perf_counter()
+_baselines_preds_df = pd.concat([
+         baseline_features_GW['lr'],
+         baseline_features_GW['rf']], axis=1)
+_baselines_preds_df.index   = dates
+_baselines_preds_df.columns = ['lr', 'rf']
+_baselines_train = _baselines_preds_df[:TRAIN_SPLIT][:-n_valid]
+# print(_baselines_train)
+y_true_aligned = pd.Series(y_train_GW, name='y', index=_baselines_train.index)
+
+
+def subset_predictions_day_ahead(X_subset_GW, subset_loader):
+    return utils.subset_predictions_day_ahead(
+            X_subset_GW, subset_loader, model, scaler_y,
+            feature_cols = feature_cols,
+            device       = device,
+            input_length = INPUT_LENGTH,
+            pred_length  = PRED_LENGTH,
+            quantiles    = QUANTILES,
+            minutes_per_step=MINUTES_PER_STEP)
+
+t_epoch_loop_start = time.perf_counter()
 for epoch in range(EPOCHS):
 
     # Training
-    #########################################################
-
+    t_train_start = time.perf_counter()
 
     train_loss_quantile_scaled, meta_train_loss_quantile_scaled =\
         losses.subset_losses_torch(
@@ -384,59 +404,111 @@ for epoch in range(EPOCHS):
             INPUT_LENGTH, PRED_LENGTH, WEIGHTS_META, QUANTILES,
             LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
         )
+    # print(f"train_loss_quantile_scaled = {train_loss_quantile_scaled} "
+    #       f"meta_train_loss_quantile_scaled = {meta_train_loss_quantile_scaled}")
+
+
+    if VERBOSE >= 2:
+        print(f"training took:   {time.perf_counter() - t_train_start:.2f} s")
 
 
     # validation
-    #########################################################
-
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
+        t_valid_start = time.perf_counter()
 
-        # nn_losses_quantile   = []
-        # meta_losses_quantile = []
+
+        t_metamodel_start = time.perf_counter()
+        # small LR for meta-model weights
+        true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
+            subset_predictions_day_ahead(X_train_GW, train_loader)
+
+        # if epoch == 0:  # align the indices
+        #     # print(pd.Series(y_train_GW, name='y', index=_baselines_train.index))
+        #     # print(_baselines_train)
+        #     print("dict_pred_series_GW['q50']:", dict_pred_series_GW['q50'].shape)
+        #     print(dict_pred_series_GW['q50'])
+        #     df_static = pd.concat([
+        #             pd.Series(y_train_GW, name='y', index=_baselines_train.index),
+        #             _baselines_train,
+        #             dict_pred_series_GW['q50']
+        #         ], axis=1, join="inner").astype('float64')
+        #     # df_static.columns = ['y', 'lr', 'rf']
+        #     print("df_static:", df_static.shape)
+        #     print(df_static)
+        #     X_baselines= df_static[['lr', 'rf']] #.to_numpy()
+        #     y_static   = df_static[['y'       ]].squeeze().to_numpy()
+        #     common_idx = df_static.index
+        #     print("X_baselines:", X_baselines.shape)
+        #     print(X_baselines)
+        #     print("y_static:", y_static.shape)
+        #     print(y_static)
+
+        # print("dict_pred_series_GW['q50'].loc[common_idx]:",
+        #       dict_pred_series_GW['q50'].loc[common_idx].shape)
+        # print(dict_pred_series_GW['q50'].loc[common_idx])
+        # X = np.column_stack([dict_pred_series_GW['q50'].loc[common_idx], X_baselines])
+        # print("X:", X.shape)
+        # print(X)
+
+        df = pd.concat([
+                y_true_aligned,
+                _baselines_train,
+                dict_pred_series_GW['q50']
+            ], axis=1, join="inner").astype('float64')
+        df.columns = ['y', 'lr', 'rf', 'nn']
+        X = df[['nn', 'lr', 'rf']].to_numpy()
+        y = df[['y']].squeeze().to_numpy()
+        weights_meta = LR_RF.weights_metamodel(X, y, VERBOSE)
+        # weights_meta = LR_RF.weights_metamodel(
+        #     dict_pred_series_GW['q50'], _baselines_train, true_series_GW, VERBOSE)
+        if VERBOSE >= 2:
+            print(f"weights_meta: {weights_meta}")
+        t_metamodel_end = time.perf_counter()
+        # TODO very slow b/c of pandas, concat, etc. for alignment
+
 
         valid_loss_quantile_scaled, meta_valid_loss_quantile_scaled =\
             losses.subset_losses_numpy(
                 model, valid_loader, valid_dates, scaler_y,
                 # constants
                 baseline_idx, device,
-                INPUT_LENGTH, PRED_LENGTH, WEIGHTS_META, QUANTILES,
+                INPUT_LENGTH, PRED_LENGTH, weights_meta, QUANTILES,
                 LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
             )
-    # print("valid_loss_scaled:", valid_loss_scaled,
-    #       "meta_valid_loss_scaled:", meta_valid_loss_scaled)
+        # print("valid_loss_quantile_scaled:", valid_loss_quantile_scaled,
+        #       "meta_valid_loss_quantile_scaled:", meta_valid_loss_quantile_scaled)
+
+        if VERBOSE >= 2:
+            print(f"validation took: {time.perf_counter() - t_valid_start:.2f} s, "
+                  f"including {t_metamodel_end-t_metamodel_start:.2f} s for metamodel")
 
 
-    def subset_predictions_day_ahead(X_subset_GW, subset_loader):
-        return utils.subset_predictions_day_ahead(
-                X_subset_GW, subset_loader, model, scaler_y,
-                feature_cols = feature_cols,
-                device       = device,
-                input_length = INPUT_LENGTH,
-                pred_length  = PRED_LENGTH,
-                quantiles    = QUANTILES,
-                minutes_per_step=MINUTES_PER_STEP)
 
-    if VERBOSE >= 3:
+    if VERBOSE >= 2:
+        t_display_start = time.perf_counter()
         print(f"After {epoch+1} epochs")
         print(f"\nTraining, starting at {train_dates[0]}:")
         true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
             subset_predictions_day_ahead(X_train_GW, train_loader)
         print("\nTraining metrics [GW]:")
         utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                             None,  # WEIGHTS_META,
+                             weights_meta,
                              subset="train", unit="GW", verbose=VERBOSE)
-        plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
-                   dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
-                   name_baseline='rf', title=f"training after {epoch+1} epochs")
+        if VERBOSE >= 3 or ((epoch+1) % PLOT_CONV_EVERY == 0):
+            plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
+                    dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
+                    name_baseline='rf', title=f"training after {epoch+1} epochs")
 
-        _rf = pd.Series(X_train_GW[:, feature_cols.index('consumption_rf')], index=train_dates)
+        _rf = pd.Series(X_train_GW[:, feature_cols.index('consumption_rf')],
+                        index=train_dates)
         _y  = pd.Series(y_train_GW, index=train_dates)
-        _concat = pd.concat([pd.Series(true_series_GW), pd.Series(dict_baseline_series_GW['rf']), \
-                             pd.Series(dict_pred_series_GW['q50']), _y, _rf],
-                            axis=1).astype('float64').round(2)
-        _concat.columns= ['y_new', 'RF_new', 'pred_q50', 'y_old', 'RF_old']
-        _concat.dropna(inplace=True)
-        print(_concat.head(20))
+        # _concat = pd.concat([pd.Series(true_series_GW), \
+        #                      pd.Series(dict_baseline_series_GW['rf']), \
+        #                      pd.Series(dict_pred_series_GW['q50']), _y, _rf],
+        #                     axis=1).astype('float64').round(2)
+        # _concat.columns= ['y_new', 'RF_new', 'pred_q50', 'y_old', 'RF_old']
+        # _concat.dropna(inplace=True)
+        # print(_concat.head(20))
 
 
         print(f"\nValidation, starting at {valid_dates[0]}:")
@@ -444,49 +516,58 @@ for epoch in range(EPOCHS):
             subset_predictions_day_ahead(X_valid_GW, valid_loader)
         print("\nValidation metrics [GW]:")
         utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-                             None,  # WEIGHTS_META,
+                             weights_meta,
                              subset="valid", unit="GW", verbose=VERBOSE)
-        plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
-                   dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
-                   name_baseline='rf', title=f"validation after {epoch+1} epochs")
+        if VERBOSE >= 3 or ((epoch+1) % PLOT_CONV_EVERY == 0):
+            plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
+                       dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
+                       name_baseline='rf', title=f"validation after {epoch+1} epochs")
+
+        print(f"display after {epoch+1} epochs took: "
+              f"{time.perf_counter() - t_display_start:.2f} s")
 
 
-
+    # display evoltion of losses
     (list_of_min_losses, list_of_lists) = \
         utils.display_evolution(
-                epoch, t_epoch_start, train_loss_quantile_scaled, valid_loss_quantile_scaled,
-                meta_train_loss_quantile_scaled, meta_valid_loss_quantile_scaled,
-                list_of_min_losses, list_of_lists,
-                EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY, MIN_DELTA, VERBOSE)
+            epoch, t_epoch_loop_start, train_loss_quantile_scaled, valid_loss_quantile_scaled,
+            meta_train_loss_quantile_scaled, meta_valid_loss_quantile_scaled,
+            list_of_min_losses, list_of_lists,
+            EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY, MIN_DELTA, VERBOSE)
 
-    (list_train_loss_scaled, list_min_train_loss_scaled,
-    list_valid_loss_quantile_scaled,  list_min_valid_loss_quantile_scaled,
-    list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-    list_meta_valid_loss_quantile_scaled, list_meta_min_valid_loss_quantile_scaled) = list_of_lists
-
+    # plotting convergence
     if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
             & (epoch < EPOCHS-2):
-        plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-                          list_valid_loss_quantile_scaled, list_min_valid_loss_quantile_scaled,
+        (list_train_loss_scaled, list_min_train_loss_scaled,
+        list_valid_loss_quantile_scaled,  list_min_valid_loss_quantile_scaled,
+        list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
+        list_meta_valid_loss_quantile_scaled, list_meta_min_valid_loss_quantile_scaled) =\
+            list_of_lists
+
+        plots.convergence(list_of_lists[0], list_of_lists[1],
+                          list_of_lists[2], list_of_lists[3],
                           baseline_losses_quantile_scaled,
                           None, None, None, None,
-                          # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-                          # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+                          # list_of_lists[4], list_of_lists[5],
+                          # list_of_lists[6], list_of_lists[7],
                           partial=True, verbose=VERBOSE)
 
     # Check for early stopping
     if early_stopping(valid_loss_quantile_scaled):
-        print(f"Early stopping triggered at epoch {epoch+1}.")
+        if VERBOSE >= 1:
+            print(f"Early stopping triggered at epoch {epoch+1}.")
         break
 
     torch.cuda.empty_cache()
 
-plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-                  list_valid_loss_quantile_scaled, list_min_valid_loss_quantile_scaled,
+if VERBOSE >= 1:
+    print(f"weights_meta: {weights_meta}")
+
+# plotting convergence for entire training
+plots.convergence(list_of_lists[0], list_of_lists[1], list_of_lists[2], list_of_lists[3],
                   baseline_losses_quantile_scaled,
                   None, None, None, None,
-                  # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-                  # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+                  # list_of_lists[4], list_of_lists[5], list_of_lists[6], list_of_lists[7],
                   partial=False, verbose=VERBOSE)
 
 
