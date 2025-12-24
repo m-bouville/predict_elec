@@ -8,22 +8,19 @@
 # import os
 import time
 
-from   typing import List, Sequence, Tuple, Dict  #, Optional
+from   typing import List, Tuple, Dict  #, Sequence, Optional
 
 import torch
-import torch.nn as nn
-from   torch.utils.data         import DataLoader  # Dataset
 
 import numpy  as np
 import pandas as pd
 
-from   sklearn.preprocessing   import StandardScaler
 # from   sklearn.model_selection import TimeSeriesSplit
 
 import matplotlib.pyplot as plt
 
 
-import losses, IO, plots  # architecture
+import IO, plots  # losses, architecture
 
 
 
@@ -235,122 +232,6 @@ def compute_meta_prediction_numpy(
 
     return y_meta
 
-# ----------------------------------------------------------------------
-# validate_day_ahead
-# ----------------------------------------------------------------------
-
-# @torch.no_grad()
-# def validate_day_ahead(
-#         model         : nn.Module,
-#         valid_loader  : DataLoader,
-#         valid_dates   : Sequence,
-#         scaler_y      : StandardScaler,
-#         baseline_idx  : Dict[str, int],
-#         device        : torch.device,
-#         input_length  : int,
-#         pred_length   : int,
-#         # incr_steps    : int,
-#         weights_meta  : Dict [str, float],
-#         quantiles     : Tuple[float, ...],
-#         lambda_cross  : float,
-#         lambda_coverage:float,
-#         lambda_deriv  : float
-#     ) -> Tuple[float, float]:
-#     """
-#     Returns:
-#         nn_loss_scaled   : float
-#         meta_loss_scaled : float
-#     """
-
-#     model.eval()
-
-#     Q = len(quantiles)
-#     # T = len(dates)
-
-#     nn_losses_quantile   = []
-#     meta_losses_quantile = []
-
-#     # main loop
-#     for (X_scaled, y_scaled, _, _) in valid_loader:
-#         X_scaled_dev = X_scaled.to(device)
-#         X_scaled_cpu = X_scaled.cpu().numpy()   # (B, INPUT_LENGTH, F)
-#         # idx_np       = idx.cpu().numpy()              # shape (B,)
-#         y_scaled_cpu = y_scaled.cpu().numpy()   # (B, PRED_LENGTH, 1)
-
-#         # NN forward
-#         pred_scaled_dev = model(X_scaled_dev)   # (B, PRED_LENGTH, Q)
-
-#         # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
-#         # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
-#         # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
-
-#         pred_scaled_cpu = pred_scaled_dev.detach().cpu().numpy()
-#         # pred_scaled_cpu = pred_scaled_dev[:, 0, :].detach().cpu().numpy()
-
-#         # for h in range(pred_length):
-#         pred_nn_h = pred_scaled_cpu[:, :, :]      # (B, H, Q)
-#         y_true_h  = y_scaled_cpu   [:, :, 0]      # (B, H)
-
-#         nn_losses_quantile.append(
-#             losses.loss_wrapper_quantile_numpy(
-#                 pred_nn_h, y_true_h, quantiles,
-#                 lambda_cross, lambda_coverage, lambda_deriv
-#             )
-#         )
-
-#         # pred_meta_h = compute_meta_prediction_numpy(
-#         #     pred_nn_h,
-#         #     X_scaled_cpu,
-#         #     baseline_idx,
-#         #     weights_meta,
-#         #     Q // 2
-#         # )
-
-#         # meta_losses_quantile.append(
-#         #     losses.loss_wrapper_quantile_numpy(
-#         #         pred_meta_h, y_true_h, quantiles,
-#         #         lambda_cross, lambda_coverage, lambda_deriv
-#         #     )
-#         # )
-
-
-#         # # inverse scale NN
-#         # pred_nn = pred_scaled_cpu                # (B, Q), scaled
-
-#         # # meta prediction
-#         # pred_meta_scaled = compute_meta_prediction_numpy(
-#         #     pred_scaled_cpu,
-#         #     X_scaled_cpu,
-#         #     baseline_idx,
-#         #     weights_meta,
-#         #     Q // 2,
-#         # )
-
-#         # true values
-#         # print(f"y_true.shape:  {y_true.shape}")
-#         # y_true  = y_scaled[:, 0, 0].cpu().numpy()  # (B,), scaled
-
-#     nn_loss_quantile_scaled   = np.mean(nn_losses_quantile)
-#     # meta_loss_quantile_scaled = np.mean(meta_losses_quantile)
-
-#     # print(f"len(nn_losses_quantile) = {len(nn_losses_quantile)}, "
-#     #       f"len(meta_losses_quantile) = {len(meta_losses_quantile)}")
-#     # print(f"nn_losses_quantile = {  [round(e, 2) for e in nn_losses_quantile  [:10]]}, "
-#     #       f"meta_losses_quantile = {[round(e, 2) for e in meta_losses_quantile[:10]]}")
-#     # print(f"nn_loss_quantile_scaled = {nn_loss_quantile_scaled:.3f}")
-
-#     # nn_loss_scaled   = losses.loss_wrapper_quantile_numpy(
-#     #     pred_nn,   y_true, quantiles, lambda_cross,
-#     #     lambda_coverage,lambda_deriv)
-#     # meta_loss_scaled = losses.loss_wrapper_quantile_numpy(
-#     #     pred_meta_scaled, y_true, quantiles, lambda_cross,
-#     #     lambda_coverage, lambda_deriv)
-#     # # nn_loss_scaled   = np.mean((y_nn_scaled   - y_true_scaled) ** 2)
-#     # # meta_loss_scaled = np.mean((y_meta_scaled - y_true_scaled) ** 2) # BUG: by hand
-
-#     return nn_loss_quantile_scaled, 0.  # meta_loss_quantile_scaled
-
-
 # -------------------------------------------------------
 # Testing
 # -------------------------------------------------------
@@ -361,7 +242,7 @@ def subset_predictions_day_ahead(
     X_subset_GW, subset_loader, model, scaler_y,
     feature_cols, device,
     input_length: int, pred_length: int, minutes_per_step: int,
-    quantiles: Tuple[float, ...], is_validation: bool = False
+    quantiles: Tuple[float, ...]
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
     # subset: train, valid ot test
 

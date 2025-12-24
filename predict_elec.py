@@ -374,126 +374,34 @@ for epoch in range(EPOCHS):
     # Training
     #########################################################
 
-    model.train()
-    train_loss_quantile_scaled     = 0.; valid_loss_quantile_scaled     = 0.
-    meta_train_loss_quantile_scaled= 0.; meta_valid_loss_quantile_scaled= 0.
 
-    # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for (X_scaled, y_scaled, _, _) in train_loader:
-        X_scaled_dev = X_scaled.to(device)   # (B, L, F)
-        y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
-
-        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
-        # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
-
-        # optimizer.zero_grad(set_to_none=True)
-
-        with torch.amp.autocast(device_type=device.type): # mixed precision
-            pred_scaled_dev = model(X_scaled_dev)
-            loss_quantile_scaled_dev = losses.loss_wrapper_quantile_torch(
-                pred_scaled_dev, y_scaled_dev, QUANTILES,
-                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
-
-        amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
-        amp_scaler.step(optimizer)
-        amp_scaler.update()
-
-        train_loss_quantile_scaled += loss_quantile_scaled_dev.item()
-
-        with torch.no_grad():  # monitoring only
-
-            pred_meta_scaled = utils.compute_meta_prediction_torch(
-                pred_scaled_dev, X_scaled_dev, baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
-
-            loss_meta_quantile_scaled = losses.loss_wrapper_quantile_torch(
-                pred_meta_scaled, y_scaled_dev[:, :, 0],
-                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
-
-            # loss_meta_quantile_scaled = losses.compute_meta_loss(
-            #     pred_scaled_dev, X_scaled_dev, y_scaled_dev, baseline_idx,
-            #     WEIGHTS_META, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
-            #     lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
-        meta_train_loss_quantile_scaled += loss_meta_quantile_scaled.item()
-
-    scheduler.step()
-    train_loss_quantile_scaled     /= len(train_loader)
-    meta_train_loss_quantile_scaled/= len(train_loader)
+    train_loss_quantile_scaled, meta_train_loss_quantile_scaled =\
+        losses.subset_losses_torch(
+            model, amp_scaler, optimizer, scheduler,
+            train_loader, train_dates, scaler_y,
+            # constants
+            baseline_idx, device,
+            INPUT_LENGTH, PRED_LENGTH, WEIGHTS_META, QUANTILES,
+            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
+        )
 
 
     # validation
     #########################################################
 
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
-        model.eval()
 
-        Q = len(QUANTILES)
-        # T = len(dates)
+        # nn_losses_quantile   = []
+        # meta_losses_quantile = []
 
-        nn_losses_quantile   = []
-        meta_losses_quantile = []
-
-
-        with torch.no_grad():  # monitoring only
-            # main loop
-            for (X_scaled, y_scaled, _, _) in valid_loader:
-                X_scaled_dev = X_scaled.to(device)
-                # X_scaled_cpu = X_scaled.cpu().numpy()           # (B, L, F)
-                # idx_np       = idx.cpu().numpy()              # shape (B,)
-                y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()  # (B, H)
-
-                # NN forward
-                # pred_scaled_dev = model(X_scaled_dev)   # (B, H, Q)
-                pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
-
-                # loss
-                # pred_scaled_cpu = pred_scaled_dev.cpu().numpy()
-                loss_quantile_scaled_cpu = losses.loss_wrapper_quantile_numpy(
-                    pred_scaled_cpu, y_scaled_cpu, QUANTILES,
-                    LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
-                valid_loss_quantile_scaled += loss_quantile_scaled_cpu
-
-                # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
-                # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
-                # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
-
-                # # meta-model
-                # pred_meta_scaled = utils.compute_meta_prediction_numpy(
-                #     pred_scaled_cpu, X_scaled_cpu,
-                #     baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
-
-                # loss_meta_quantile_scaled = losses.loss_wrapper_quantile_numpy(
-                #     pred_meta_scaled, y_scaled_cpu,
-                #     QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
-
-                # meta_valid_loss_quantile_scaled += loss_meta_quantile_scaled
-                # BUG meta-model receives predictions for NN after t,
-                #       and LR and RF before t => incompatible
-
-
-        valid_loss_quantile_scaled     /= len(valid_loader)
-        # meta_valid_loss_quantile_scaled/= len(valid_loader)
-        meta_valid_loss_quantile_scaled = 0.
-
-
-
-        # valid_loss_quantile_scaled, meta_valid_loss_quantile_scaled =\
-        #     utils.validate_day_ahead(
-        #         model        = model,
-        #         valid_loader = valid_loader,
-        #         valid_dates  = valid_dates,
-        #         scaler_y     = scaler_y,
-        #         baseline_idx = baseline_idx,
-        #         device       = device,
-        #         input_length = INPUT_LENGTH,
-        #         pred_length  = PRED_LENGTH,
-        #         # incr_steps   = INCR_STEPS_TEST,
-        #         weights_meta = WEIGHTS_META,
-        #         quantiles    = QUANTILES,
-        #         lambda_cross = LAMBDA_CROSS,
-        #         lambda_coverage=LAMBDA_COVERAGE,
-        #         lambda_deriv = LAMBDA_DERIV
-        #     )
+        valid_loss_quantile_scaled, meta_valid_loss_quantile_scaled =\
+            losses.subset_losses_numpy(
+                model, valid_loader, valid_dates, scaler_y,
+                # constants
+                baseline_idx, device,
+                INPUT_LENGTH, PRED_LENGTH, WEIGHTS_META, QUANTILES,
+                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
+            )
     # print("valid_loss_scaled:", valid_loss_scaled,
     #       "meta_valid_loss_scaled:", meta_valid_loss_scaled)
 

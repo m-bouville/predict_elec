@@ -3,15 +3,18 @@
 # ----------------------------------------------------------------------
 
 
-from   typing import Tuple  #, Dict, Sequence, List, Optional
+from   typing import Dict, Tuple, Sequence  #, List, Optional
 
 import torch
+import torch.nn as nn
+from   torch.utils.data         import DataLoader  # Dataset
 
+from   sklearn.preprocessing   import StandardScaler
 
 import numpy  as np
 
 
-# import utils
+import utils
 
 
 
@@ -274,4 +277,159 @@ def loss_wrapper_quantile_numpy(
 
 #     return loss_wrapper_quantile_torch(pred_meta_scaled, y_scaled_1,
 #                     quantiles, lambda_cross, lambda_coverage, lambda_deriv)
+
+
+
+
+
+# ----------------------------------------------------------------------
+# calculate losses for:
+#    - training (torch)
+#    - validation and testing (numpy)
+# ----------------------------------------------------------------------
+
+
+def subset_losses_torch(
+        model         : nn.Module,
+        amp_scaler,
+        optimizer,
+        scheduler,
+        subset_loader : DataLoader,
+        subset_dates  : Sequence,
+        scaler_y      : StandardScaler,
+        # constants
+        baseline_idx  : Dict[str, int],
+        device        : torch.device,
+        input_length  : int,
+        pred_length   : int,
+        # incr_steps    : int,
+        weights_meta  : Dict [str, float],
+        quantiles     : Tuple[float, ...],
+        lambda_cross  : float,
+        lambda_coverage:float,
+        lambda_deriv  : float
+    ) -> Tuple[float, float]:
+    """
+    Returns:
+        nn_loss_scaled   : float
+        meta_loss_scaled : float
+    """
+
+    model.train()
+
+    loss_quantile_scaled     = 0.
+    meta_loss_quantile_scaled= 0.
+
+    # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
+    for (X_scaled, y_scaled, _, _) in subset_loader:
+        X_scaled_dev = X_scaled.to(device)   # (B, L, F)
+        y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
+
+        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
+
+        # optimizer.zero_grad(set_to_none=True)
+
+        with torch.amp.autocast(device_type=device.type): # mixed precision
+            pred_scaled_dev = model(X_scaled_dev)
+            loss_quantile_scaled_dev = loss_wrapper_quantile_torch(
+                pred_scaled_dev, y_scaled_dev, quantiles,
+                lambda_cross, lambda_coverage, lambda_deriv)
+
+        amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
+        amp_scaler.step(optimizer)
+        amp_scaler.update()
+
+        loss_quantile_scaled += loss_quantile_scaled_dev.item()
+
+        with torch.no_grad():  # monitoring only
+
+            pred_meta_scaled = utils.compute_meta_prediction_torch(
+                pred_scaled_dev, X_scaled_dev, baseline_idx, weights_meta, len(quantiles)//2)
+
+            loss_meta_quantile_scaled = loss_wrapper_quantile_torch(
+                pred_meta_scaled, y_scaled_dev[:, :, 0],
+                quantiles, lambda_cross, lambda_coverage, lambda_deriv)
+
+            # loss_meta_quantile_scaled = losses.compute_meta_loss(
+            #     pred_scaled_dev, X_scaled_dev, y_scaled_dev, baseline_idx,
+            #     weights_meta, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
+            #     lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
+        meta_loss_quantile_scaled += loss_meta_quantile_scaled.item()
+
+    scheduler.step()
+    loss_quantile_scaled     /= len(subset_loader)
+    meta_loss_quantile_scaled/= len(subset_loader)
+
+    return loss_quantile_scaled, meta_loss_quantile_scaled
+
+
+@torch.no_grad()
+def subset_losses_numpy(
+        model         : nn.Module,
+        subset_loader : DataLoader,
+        subset_dates  : Sequence,
+        scaler_y      : StandardScaler,
+        # constants
+        baseline_idx  : Dict[str, int],
+        device        : torch.device,
+        input_length  : int,
+        pred_length   : int,
+        # incr_steps    : int,
+        weights_meta  : Dict [str, float],
+        quantiles     : Tuple[float, ...],
+        lambda_cross  : float,
+        lambda_coverage:float,
+        lambda_deriv  : float
+    ) -> Tuple[float, float]:
+    """
+    Returns:
+        nn_loss_scaled   : float
+        meta_loss_scaled : float
+    """
+    model.eval()
+
+    # Q = len(quantiles)
+    # T = len(dates)
+
+    loss_quantile_scaled     = 0.
+    meta_loss_quantile_scaled= 0.
+
+
+    # main loop
+    for (X_scaled, y_scaled, _, _) in subset_loader:
+        X_scaled_dev = X_scaled.to(device)
+        y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()  # (B, H)
+
+        # NN forward
+        pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
+
+        # loss
+        loss_quantile_scaled_cpu = loss_wrapper_quantile_numpy(
+            pred_scaled_cpu, y_scaled_cpu, quantiles,
+            lambda_cross, lambda_coverage, lambda_deriv)
+        loss_quantile_scaled += loss_quantile_scaled_cpu
+
+        # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
+        # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
+        # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
+
+        # # meta-model
+        # pred_meta_scaled = utils.compute_meta_prediction_numpy(
+        #     pred_scaled_cpu, X_scaled_cpu,
+        #     baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
+
+        # loss_meta_quantile_scaled = loss_wrapper_quantile_numpy(
+        #     pred_meta_scaled, y_scaled_cpu,
+        #     QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
+
+        # meta_loss_quantile_scaled += loss_meta_quantile_scaled
+        # BUG meta-model receives predictions for NN after t,
+            #       and LR and RF before t => incompatible
+
+    loss_quantile_scaled     /= len(subset_loader)
+    # meta_loss_quantile_scaled/= len(valid_loader)
+
+    return loss_quantile_scaled, 0.  # meta_loss_quantile_scaled
 
