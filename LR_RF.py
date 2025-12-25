@@ -359,7 +359,7 @@ def weights_metamodel(X_train: np.ndarray,
     X_train = X_train.to_numpy()
     y_train = y_train.to_numpy()
 
-    model_meta = LinearRegression()
+    model_meta = LinearRegression(fit_intercept=False, positive=True)
     model_meta.fit(X_train, y_train)
 
     if verbose >= 3:
@@ -373,32 +373,9 @@ def weights_metamodel(X_train: np.ndarray,
     weights_meta = {name: round(float(coeff), 3) for name, coeff in \
            zip(names, model_meta.coef_)}
 
-    # getting rid of a negative coefficient
-    min_coeff = min(weights_meta.values())
-    if min_coeff < -0.05:
-        # idx = list(weights_meta.keys())[list(weights_meta.values()).index(min_coeff)]
-        idx = list(weights_meta.values()).index(min_coeff)
-        if verbose >= 2:
-            print(f"removing `{names[idx]}` with coefficient {min_coeff} < 0")
-        _X_train = np.delete(X_train, idx, axis=1)
-        names.pop(idx)
-        model_meta.fit(_X_train, y_train)
-        weights_meta = {name: round(float(coeff), 3) for name, coeff in \
-               zip(names, model_meta.coef_)}
+    pred_train = model_meta.predict(X_train)
+    pred_valid = model_meta.predict(X_valid) if X_valid is not None else None
+    pred_test  = model_meta.predict(X_test)  if X_test  is not None else None
 
-        pred_train = model_meta.predict(_X_train)
-        pred_valid = model_meta.predict(np.delete(X_valid, idx, axis=1)) \
-            if X_valid is not None else None
-        pred_test  = model_meta.predict(np.delete(X_test,  idx, axis=1)) \
-            if X_test  is not None else None
-    else:
-        pred_train = model_meta.predict(X_train)
-        pred_valid = model_meta.predict(X_valid) if X_valid is not None else None
-        pred_test  = model_meta.predict(X_test)  if X_test  is not None else None
-
-        weights_meta = {name: round(float(coeff), 3) for name, coeff in \
-               zip(names, model_meta.coef_)}
-
-
-    return weights_meta, pd.Series(pred_train, index=dates_train), \
-                pred_valid, pred_test
+    return (weights_meta,
+            pd.Series(pred_train, index=dates_train), pred_valid, pred_test)
