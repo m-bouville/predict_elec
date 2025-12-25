@@ -1,7 +1,9 @@
-import gc, sys
+import gc
+# import sys
+# from   typing import Dict  # List
+
 # from datetime import datetime
 import time
-# from   typing import Dict  # List
 
 import torch
 # import torch.nn as nn
@@ -14,13 +16,12 @@ import pandas as pd
 from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INPUT_LENGTH,
            PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
            NUM_LAYERS, PATCH_LEN, STRIDE, LAMBDA_CROSS, LAMBDA_COVERAGE,
-           LAMBDA_DERIV, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
+           LAMBDA_DERIV, SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
            VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
-           DAY_AHEAD, FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY)
-# import day_ahead
-import architecture, losses, utils, LR_RF, IO, plots
+           FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY)
+import architecture, utils, LR_RF, IO, plots  # losses,
 
 
 # system dimensions
@@ -31,18 +32,13 @@ import architecture, losses, utils, LR_RF, IO, plots
 
 
 # TODO account for known future: sines, WE, T° (as forecast: _add noise_), etc.
-#       (difficulty: medium-high, 2–4 days)
-# TODO? compare per-horizon error vs LR
-# TODO? use a single-contiguous sliding forecast: Only advance by PRED_LENGTH each time
-# TODO trained metamodel (NN + RF)  (difficulty: medium, 1–2 days)
-#   - Linear meta-learner per horizon (fast, interpretable)
+# TODO trained metamodel (NN + RF)
+#   - [done] Linear meta-learner per horizon (fast, interpretable)
 #   - Small MLP or ridge regression trained on validation OOF predictions
 # TODO Add public holidays to features
-# [done] Add abilities to spot outliers
-# [done] add constant NUM_STEPS_PER_DAY saying there are 48 data points per day
 # TODO make PRED_LENGTH == 36h and validate h+12 to h+36
-# TODO time training: what is too expensive?
-
+# BUG NNTQ misses whole days for no apparent reason
+# BUG bias => bad coverage of qunitiles.
 
 
 
@@ -117,7 +113,7 @@ if __name__ == "__main__":
         print(dates_df)
 
     drop = df_len_before - df.shape[0]
-    if VERBOSE >= 1:
+    if VERBOSE >= 2:
         print(f"number of datetimes: {df_len_before} -> {df.shape[0]}, "
               f"drop by {drop} (= {drop/NUM_STEPS_PER_DAY:.1f} days)")
     if VERBOSE >= 3:
@@ -172,17 +168,18 @@ if VERBOSE >= 1:
 
 t_start = time.perf_counter()
 rf_params = dict(
-        df          = df,
-        target_col  = target_col,
-        feature_cols= feature_cols,
-        train_end   = TRAIN_SPLIT-n_valid,
-        val_end     = TRAIN_SPLIT,
-        models_cfg  = BASELINE_CFG,
-        quantiles   = QUANTILES,
-        lambda_cross= LAMBDA_CROSS,
+        df            = df,
+        target_col    = target_col,
+        feature_cols  = feature_cols,
+        train_end     = TRAIN_SPLIT-n_valid,
+        val_end       = TRAIN_SPLIT,
+        models_cfg    = BASELINE_CFG,
+        quantiles     = QUANTILES,
+        lambda_cross  = LAMBDA_CROSS,
         lambda_coverage=LAMBDA_COVERAGE,
-        lambda_deriv= LAMBDA_DERIV,
-        verbose     = VERBOSE
+        lambda_deriv  = LAMBDA_DERIV,
+        smoothing_cross=SMOOTHING_CROSS,
+        verbose       = VERBOSE
     )
 
 cache_id = {
@@ -308,7 +305,7 @@ assert INPUT_LENGTH + 60 < test_months,\
         series, dates, TRAIN_SPLIT, n_valid,
         feature_cols, target_col,
         input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
-        do_day_ahead=DAY_AHEAD, forecast_hour=FORECAST_HOUR,
+        forecast_hour=FORECAST_HOUR,
         verbose=VERBOSE)
 
 if VERBOSE >= 2:
@@ -427,7 +424,7 @@ for epoch in range(EPOCHS):
             # constants
             device, # INPUT_LENGTH, PRED_LENGTH,
             QUANTILES,
-            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
+            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, SMOOTHING_CROSS
         )
     # print(f"train_loss_quantile_scaled = {train_loss_quantile_scaled} "
     #       f"meta_train_loss_quantile_scaled = {meta_train_loss_quantile_scaled}")
@@ -445,7 +442,7 @@ for epoch in range(EPOCHS):
                 model, valid_loader, valid_dates,  # scaler_y,
                 # constants
                 device, # INPUT_LENGTH, PRED_LENGTH,
-                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV
+                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, SMOOTHING_CROSS
             )
         # print("valid_loss_quantile_scaled:", valid_loss_quantile_scaled,
         #       "meta_valid_loss_quantile_scaled:", meta_valid_loss_quantile_scaled)
@@ -504,7 +501,7 @@ df_train = pd.concat([
         y_true_train,
         _baselines_train,
         dict_pred_train_GW['q50']
-    ], axis=1, join="inner").astype('float64')
+    ], axis=1, join="inner").astype(np.float32)
 # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
 df_train.columns = ['y', 'lr', 'rf', 'nn']
 X_train = df_train[['nn', 'lr', 'rf']]  #.to_numpy()

@@ -1,15 +1,15 @@
 __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LENGTH',
            'PRED_LENGTH', 'BATCH_SIZE', 'EPOCHS', 'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
            'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'LAMBDA_CROSS', 'LAMBDA_COVERAGE',
-           'LAMBDA_DERIV', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
+           'LAMBDA_DERIV', 'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
-           'DAY_AHEAD', 'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY']
+           'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY']
 
 
 
-from   typing import Dict  # List
+# from   typing import Dict  # List
 
 
 import LR_RF  # utils
@@ -31,14 +31,13 @@ SEED         =   0              # For reproducibility
 TRAIN_SPLIT_FRACTION=0.8
 VAL_RATIO    =   0.25           # validation from training set
 
-DAY_AHEAD:bool = True
 FORECAST_HOUR:int = 12          # 12: noon
 
 INPUT_LENGTH = days_to_steps(14)       # How many half-hours the model sees
 PRED_LENGTH  = days_to_steps( 1)       # BUG should be 36h  How many future half-hours to predict
 
 BATCH_SIZE   =  64              # Training batch size
-EPOCHS       = [  2, 40, 60, 80] # Number of training epochs
+EPOCHS       = [  2, 30, 60, 80] # Number of training epochs
 
 MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
 NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
@@ -51,8 +50,9 @@ STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
 
 # losses
 LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles
-LAMBDA_COVERAGE= 0.05
+LAMBDA_COVERAGE= 0.5
 LAMBDA_DERIV   = 0.1            # derivative weight in loss function
+SMOOTHING_CROSS= 0.02
 QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
 
 NUM_GEO_BLOCKS=[  1,  3,  4,  6]
@@ -74,7 +74,7 @@ DISPLAY_EVERY=   2
 PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
-VERBOSE: int   = 1  # 2 if SYSTEM_SIZE == 'DEBUG' else 1
+VERBOSE: int   = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 
 DICT_FNAMES = {

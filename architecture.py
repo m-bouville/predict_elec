@@ -13,7 +13,7 @@ import numpy  as np
 import pandas as pd
 
 
-import losses  # utils, day_ahead
+import losses  # utils
 
 
 
@@ -126,7 +126,7 @@ def make_X_and_y(series, dates,
                  train_split, n_valid,
                  feature_cols, target_col,
                  input_length:int, pred_length:int, batch_size:int,
-                 do_day_ahead:bool=False, forecast_hour:int=12,
+                 forecast_hour:int=12,
                  verbose: int = 0):
 
     assert series.shape[0] == len(dates), \
@@ -208,80 +208,72 @@ def make_X_and_y(series, dates,
 
 
     # DAY-AHEAD PATH (SCALED, DELEGATED)
+    assert pred_length == 48,\
+        f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
 
-    if do_day_ahead:
+    def build_day_ahead(data_subset, date_slice):
+        return DayAheadDataset(
+            data_subset  = data_subset,
+            dates_subset = date_slice,
+            input_length = input_length,
+            pred_length  = pred_length,
+            forecast_hour= forecast_hour,
+            target_index = target_idx
+        ) # X_list, y_list, origin_list, target_dates_list
 
-        assert pred_length == 48,\
-            f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
+    train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
+    valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
+    test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
 
-        def build_day_ahead(data_subset, date_slice):
-            return DayAheadDataset(
-                data_subset  = data_subset,
-                dates_subset = date_slice,
-                input_length = input_length,
-                pred_length  = pred_length,
-                forecast_hour= forecast_hour,
-                target_index = target_idx
-            ) # X_list, y_list, origin_list, target_dates_list
+    # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
+    #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
 
-        train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
-        valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
-        test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
-
-        # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
-        #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
-
-        # print("DATASET TYPE:", type   (train_dataset_scaled))
-        # print("DATASET LEN :", len    (train_dataset_scaled))
-        # print("HAS __len__ :",   hasattr(train_dataset_scaled, "__len__"))
-        # print("HAS __getitem__:",hasattr(train_dataset_scaled, "__getitem__"))
+    # print("DATASET TYPE:", type   (train_dataset_scaled))
+    # print("DATASET LEN :", len    (train_dataset_scaled))
+    # print("HAS __len__ :",   hasattr(train_dataset_scaled, "__len__"))
+    # print("HAS __getitem__:",hasattr(train_dataset_scaled, "__getitem__"))
 
 
-        # if verbose >= 1:
-        #     print("\n[make_X_and_y] Day-ahead mode (scaled)")
-            # print(f"  Train samples: {len(train_dataset_scaled)}")
-            # print(f"  Valid samples: {len(valid_dataset_scaled)}")
-            # print(f"  Test samples:  {len(test_dataset_scaled )}")
+    # if verbose >= 1:
+    #     print("\n[make_X_and_y] Day-ahead mode (scaled)")
+        # print(f"  Train samples: {len(train_dataset_scaled)}")
+        # print(f"  Valid samples: {len(valid_dataset_scaled)}")
+        # print(f"  Test samples:  {len(test_dataset_scaled )}")
 
-        # print(train_dataset_scaled[0][0][:5])
+    # print(train_dataset_scaled[0][0][:5])
 
-        def build_loader(dataset, shuffle, drop_last):
-            return DataLoader(
-                dataset,
-                batch_size = batch_size if shuffle else batch_size * 2,
-                shuffle    = shuffle,
-                drop_last  = drop_last,
-                # num_workers= num_workers,
-                # pin_memory = pin_memory,
-            )
-
-        train_loader = build_loader(train_dataset_scaled, shuffle=True, drop_last=True )
-        valid_loader = build_loader(valid_dataset_scaled, shuffle=False,drop_last=False)
-        test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
-
-        # print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
-
-        # print(); print("valid_loader:")
-        # for batch_idx, (x_scaled, y_scaled, origin_unix) in enumerate(valid_loader):
-            # # Convert back to timestamps if needed
-            # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
-            # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
-
-        return (
-            [train_loader,valid_loader,test_loader], \
-            [train_dates, valid_dates, test_dates ],\
-             scaler_y, [X_GW, y_GW],
-             [X_train_GW, y_train_GW, train_dataset_scaled],
-             [X_GW[:train_split][-n_valid:], y_GW[:train_split][-n_valid:], valid_dataset_scaled],
-             [X_test_GW, y_test_GW, test_dataset_scaled],
-             test_scaled[:, feature_idx]
+    def build_loader(dataset, shuffle, drop_last):
+        return DataLoader(
+            dataset,
+            batch_size = batch_size if shuffle else batch_size * 2,
+            shuffle    = shuffle,
+            drop_last  = drop_last,
+            # num_workers= num_workers,
+            # pin_memory = pin_memory,
         )
 
+    train_loader = build_loader(train_dataset_scaled, shuffle=True, drop_last=True )
+    valid_loader = build_loader(valid_dataset_scaled, shuffle=False,drop_last=False)
+    test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
 
-    # SLIDING-WINDOW PATH (UNCHANGED, uses *_scaled)
-    raise NotImplementedError(
-        "Original sliding-window implementation is obsolete."
+    # print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
+
+    # print(); print("valid_loader:")
+    # for batch_idx, (x_scaled, y_scaled, origin_unix) in enumerate(valid_loader):
+        # # Convert back to timestamps if needed
+        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
+
+    return (
+        [train_loader,valid_loader,test_loader], \
+        [train_dates, valid_dates, test_dates ],\
+         scaler_y, [X_GW, y_GW],
+         [X_train_GW, y_train_GW, train_dataset_scaled],
+         [X_GW[:train_split][-n_valid:], y_GW[:train_split][-n_valid:], valid_dataset_scaled],
+         [X_test_GW, y_test_GW, test_dataset_scaled],
+         test_scaled[:, feature_idx]
     )
+
 
 
 
@@ -629,7 +621,8 @@ def subset_evolution_torch(
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
-        lambda_deriv  : float
+        lambda_deriv  : float,
+        smoothing_cross:float
     ) -> Tuple[float, float]:
     """
     Returns:
@@ -653,9 +646,9 @@ def subset_evolution_torch(
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(X_scaled_dev)
-            loss_quantile_scaled_dev = losses.loss_wrapper_quantile_torch(
+            loss_quantile_scaled_dev = losses.wrapper_quantile_torch(
                 pred_scaled_dev, y_scaled_dev, quantiles,
-                lambda_cross, lambda_coverage, lambda_deriv)
+                lambda_cross, lambda_coverage, lambda_deriv, smoothing_cross)
 
         amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -683,7 +676,8 @@ def subset_evolution_numpy(
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
-        lambda_deriv  : float
+        lambda_deriv  : float,
+        smoothing_cross:float
     ) -> Tuple[float, float]:
     """
     Returns:
@@ -706,9 +700,9 @@ def subset_evolution_numpy(
         pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
 
         # loss
-        loss_quantile_scaled_cpu = losses.loss_wrapper_quantile_numpy(
+        loss_quantile_scaled_cpu = losses.wrapper_quantile_numpy(
             pred_scaled_cpu, y_scaled_cpu, quantiles,
-            lambda_cross, lambda_coverage, lambda_deriv)
+            lambda_cross, lambda_coverage, lambda_deriv, smoothing_cross)
         loss_quantile_scaled += loss_quantile_scaled_cpu
 
         # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")

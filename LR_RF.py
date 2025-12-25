@@ -192,6 +192,7 @@ def regression_and_forest(
     lambda_cross:float,
     lambda_coverage:float,
     lambda_deriv:float,
+    smoothing_cross:float,
     models_cfg:  Dict[str, dict],
     verbose:     int = 0
 ) -> Tuple[Dict[str, pd.Series], Ridge, Dict[str, Dict[str, float]]]:
@@ -248,9 +249,10 @@ def regression_and_forest(
 
     def loss_quantile_GW(pred_GW, y_GW, sigma_y_GW=sigma_y_GW):
         # /!\ Not linear: must work on scaled values
-        return losses.loss_wrapper_quantile_numpy(
+        return losses.wrapper_quantile_numpy(
             pred_GW/sigma_y_GW, y_GW/sigma_y_GW, quantiles, lambda_cross=0.,
-            lambda_coverage=0., lambda_deriv=lambda_deriv) * sigma_y_GW
+            lambda_coverage=0., lambda_deriv=lambda_deriv,
+            smoothing_cross=smoothing_cross) * sigma_y_GW
 
     models            = dict()
     preds_GW          = dict()
