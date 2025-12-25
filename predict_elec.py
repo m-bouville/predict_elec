@@ -421,7 +421,7 @@ for epoch in range(EPOCHS):
     # Training
     t_train_start = time.perf_counter()
 
-    train_loss_quantile_scaled = losses.subset_losses_torch(
+    train_loss_quantile_scaled = architecture.subset_evolution_torch(
             model, amp_scaler, optimizer, scheduler,
             train_loader, train_dates, # scaler_y,
             # constants
@@ -441,7 +441,7 @@ for epoch in range(EPOCHS):
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
 
         t_valid_start     = time.perf_counter()
-        valid_loss_quantile_scaled = losses.subset_losses_numpy(
+        valid_loss_quantile_scaled = architecture.subset_evolution_numpy(
                 model, valid_loader, valid_dates,  # scaler_y,
                 # constants
                 device, # INPUT_LENGTH, PRED_LENGTH,
@@ -454,50 +454,6 @@ for epoch in range(EPOCHS):
             print(f"validation took: {time.perf_counter() - t_valid_start:.2f} s")
 
 
-
-    # if VERBOSE >= 2:
-    #     t_display_start = time.perf_counter()
-    #     print(f"After {epoch+1} epochs")
-    #     print(f"\nTraining, starting at {train_dates[0]}:")
-    #     true_series_GW, dict_pred_series_GW, dict_baseline_series_GW = \
-    #         subset_predictions_day_ahead(X_train_GW, train_loader)
-    #     print("\nTraining metrics [GW]:")
-    #     utils.compare_models(true_series_GW, dict_pred_series_GW, dict_baseline_series_GW,
-    #                          None,
-    #                          subset="train", unit="GW", verbose=VERBOSE)
-    #     if VERBOSE >= 3 or ((epoch+1) % PLOT_CONV_EVERY == 0):
-    #         plots.test(true_series_GW, {'q50': dict_pred_series_GW['q50']},
-    #                 dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
-    #                 name_baseline='rf', title=f"training after {epoch+1} epochs")
-
-    #     _rf = pd.Series(X_train_GW[:, feature_cols.index('consumption_rf')],
-    #                     index=train_dates)
-    #     _y  = pd.Series(y_train_GW, index=train_dates)
-    #     # _concat = pd.concat([pd.Series(true_series_GW), \
-    #     #                      pd.Series(dict_baseline_series_GW['rf']), \
-    #     #                      pd.Series(dict_pred_series_GW['q50']), _y, _rf],
-    #     #                     axis=1).astype('float64').round(2)
-    #     # _concat.columns= ['y_new', 'RF_new', 'pred_q50', 'y_old', 'RF_old']
-    #     # _concat.dropna(inplace=True)
-    #     # print(_concat.head(20))
-
-
-    #     print(f"\nValidation, starting at {valid_dates[0]}:")
-    #     true_series_GW, dict_pred_valid_series_GW, dict_baseline_series_GW = \
-    #         subset_predictions_day_ahead(X_valid_GW, valid_loader)
-    #     print("\nValidation metrics [GW]:")
-    #     utils.compare_models(true_series_GW, dict_pred_valid_series_GW, dict_baseline_series_GW,
-    #                          None,
-    #                          subset="valid", unit="GW", verbose=VERBOSE)
-    #     if VERBOSE >= 3 or ((epoch+1) % PLOT_CONV_EVERY == 0):
-    #         plots.test(true_series_GW, {'q50': dict_pred_valid_series_GW['q50']},
-    #                 dict_baseline_series_GW['rf'], None, moving_average=7*NUM_STEPS_PER_DAY,
-    #                 name_baseline='rf', title=f"validation after {epoch+1} epochs")
-
-    #     print(f"display after {epoch+1} epochs took: "
-    #           f"{time.perf_counter() - t_display_start:.2f} s")
-
-
     # display evoltion of losses
     (list_of_min_losses, list_of_lists) = \
         utils.display_evolution(
@@ -508,26 +464,9 @@ for epoch in range(EPOCHS):
     # plotting convergence
     if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
             & (epoch < EPOCHS-2):
-        # (list_train_loss_scaled, list_min_train_loss_scaled,
-        # list_valid_loss_quantile_scaled,  list_min_valid_loss_quantile_scaled,
-        # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-        # list_meta_valid_loss_quantile_scaled, list_meta_min_valid_loss_quantile_scaled) =\
-        #     list_of_lists
-
         plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                           list_of_lists[2], list_of_lists[3],
                           partial=True, verbose=VERBOSE)
-
-        # metrics_valid = utils.compare_models(
-        #     true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
-        #     None, subset="valid", unit="GW", verbose=0)
-
-        # plots.convergence_mean(list_of_lists[0], list_of_lists[1],
-        #                   list_of_lists[2], list_of_lists[3],
-        #                   baseline_losses_quantile_scaled,
-        #                   list_of_lists[4], list_of_lists[5],
-        #                   list_of_lists[6], list_of_lists[7],
-        #                   partial=True, verbose=VERBOSE)
 
     # Check for early stopping
     if early_stopping(valid_loss_quantile_scaled):
@@ -542,46 +481,9 @@ plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                             list_of_lists[2], list_of_lists[3],
                             partial=False, verbose=VERBOSE)
 
-# plots.convergence_mean(list_of_lists[0], list_of_lists[1], list_of_lists[2], list_of_lists[3],
-#                   baseline_losses_quantile_scaled,
-#                   list_of_lists[4], list_of_lists[5], list_of_lists[6], list_of_lists[7],
-#                   partial=False, verbose=VERBOSE)
-
-
 
 t_metamodel_start = time.perf_counter()
 # small LR for meta-model weights
-# true_train_GW, dict_pred_train_GW, dict_baseline_train_GW = \
-#     subset_predictions_day_ahead(X_train_GW, train_loader)
-
-# if epoch == 0:  # align the indices
-#     # print(pd.Series(y_train_GW, name='y', index=_baselines_train.index))
-#     # print(_baselines_train)
-#     print("dict_pred_series_GW['q50']:", dict_pred_series_GW['q50'].shape)
-#     print(dict_pred_series_GW['q50'])
-#     df_static = pd.concat([
-#             pd.Series(y_train_GW, name='y', index=_baselines_train.index),
-#             _baselines_train,
-#             dict_pred_series_GW['q50']
-#         ], axis=1, join="inner").astype('float64')
-#     # df_static.columns = ['y', 'lr', 'rf']
-#     print("df_static:", df_static.shape)
-#     print(df_static)
-#     X_baselines= df_static[['lr', 'rf']] #.to_numpy()
-#     y_static   = df_static[['y'       ]].squeeze().to_numpy()
-#     common_idx = df_static.index
-#     print("X_baselines:", X_baselines.shape)
-#     print(X_baselines)
-#     print("y_static:", y_static.shape)
-#     print(y_static)
-
-# print("dict_pred_series_GW['q50'].loc[common_idx]:",
-#       dict_pred_series_GW['q50'].loc[common_idx].shape)
-# print(dict_pred_series_GW['q50'].loc[common_idx])
-# X = np.column_stack([dict_pred_series_GW['q50'].loc[common_idx], X_baselines])
-# print("X:", X.shape)
-# print(X)
-
 
 _baselines = pd.concat([
          baseline_features_GW['lr'],
@@ -589,48 +491,6 @@ _baselines = pd.concat([
 _baselines.columns = ['lr', 'rf']
 _baselines_train = _baselines[:TRAIN_SPLIT][:-n_valid]
 _baselines_train.index   = train_dates
-
-# if VERBOSE >= 3:
-#     print("shapes:")
-#     print(f"dates:{dates.shape}   ({dates.min()} -> {dates.max()})")
-#     print(f" train{train_dates.shape}   ({train_dates.min()} -> {train_dates.max()})")
-
-#     print(f"true:  {y_train_GW.shape}")
-#         #" ({y_train_GW.index.min()} -> {y_train_GW.index.max()})")
-#     print("  NA:", np.where(np.isnan(y_train_GW))[0])
-
-#     print(f"base:  {_baselines_train.shape} "
-#           f"({_baselines_train.index.min()} -> {_baselines_train.index.max()})")
-#     print("  NA:", _baselines_train.index[_baselines_train.isna().any(axis=1)].tolist())
-
-#     median = dict_pred_train_GW.get('q50')
-#     print(f"nn:    {median.shape}   ({median.index.min()} -> {median.index.max()})")
-#     print("  NA:", median.index[median.isna()].tolist())
-#     missing_indices = train_dates.difference(median.index).tolist()
-#     print(f"  {len(missing_indices)} missing indices "
-#           f"({len(missing_indices)/NUM_STEPS_PER_DAY:.1f} days)")
-#           # f"{[e.strftime('%Y-%m-%d %H:%M') for e in missing_indices[14*48:]]}")
-
-#     date_str = [dt.strftime('%Y-%m-%d') for dt in missing_indices]
-#     # Count occurrences per date
-#     from collections import Counter
-#     date_counts = Counter(date_str)
-#     print(date_counts)
-
-#     # Is the previous day at noon missing data?
-#     # from datetime import datetime, timedelta
-#     # import pytz
-#     # unique_dates = sorted(set(ts.date() for ts in missing_indices))
-#     # # Generate timestamps for the day before at noon UTC
-#     # for date in unique_dates:
-#     #     previous_day_noon_timestamp = (datetime.combine(date, datetime.min.time())
-#     #         .replace(tzinfo=pytz.UTC)  # Make it timezone-aware (UTC)
-#     #         - timedelta(days=1) + timedelta(hours=12) )
-#     #     print(date, previous_day_noon_timestamp,
-#     #           previous_day_noon_timestamp in train_dates)
-
-
-
 
 
 # preparating training
@@ -675,15 +535,7 @@ X_test.columns = ['lr', 'rf', 'nn']
 weights_meta, pred_meta_train, pred_meta_valid, pred_meta_test = \
     LR_RF.weights_metamodel(X_train, y_train, X_valid, X_test,
                             verbose=VERBOSE)
-# weights_meta = LR_RF.weights_metamodel(
-#     dict_pred_series_GW['q50'], _baselines_train, true_series_GW, VERBOSE)
-
-# print(f"meta:   {pred_meta_train.shape}")
-#     #" ({pred_meta_train.index.min()} -> {pred_meta_train.index.max()})")
-# print("  NA:", np.where(np.isnan(pred_meta_train))[0])
-
 if VERBOSE >= 1:
-    # print(f"weights_meta: {weights_meta}")
     print(f"weights_meta [%]: "
           f"{ {name: round(value*100, 1) for name, value in weights_meta.items()}}")
 t_metamodel_end = time.perf_counter()
@@ -875,8 +727,9 @@ with torch.no_grad():
 # assert true_series.index.equals(pred_series.index)
 # assert true_series.index.equals(lr_series.index)
 
+meta_test_GW = pd.Series(pred_meta_test, index=X_test.index)
+
 if VERBOSE >= 1:
-    meta_test_GW = pd.Series(pred_meta_test, index=X_test.index)
 
     print("\nTesting metrics [GW]:")
     utils.compare_models(true_test_GW, dict_pred_test_GW,

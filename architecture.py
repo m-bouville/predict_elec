@@ -1,5 +1,5 @@
 
-# from   typing import Tuple, Dict  #, Sequence, List, Optional
+from   typing import Tuple, Sequence  #, List, Dict, Optional
 # from   collections import defaultdict
 
 import torch
@@ -13,7 +13,7 @@ import numpy  as np
 import pandas as pd
 
 
-# import losses  # utils, day_ahead
+import losses  # utils, day_ahead
 
 
 
@@ -602,4 +602,120 @@ class BlockWeighting(nn.Module):
         #     return out, concat
 
         return out
+
+
+
+
+
+# ----------------------------------------------------------------------
+# calculate losses for:
+#    - training (torch)
+#    - validation and testing (numpy)
+# ----------------------------------------------------------------------
+
+
+def subset_evolution_torch(
+        model         : nn.Module,
+        amp_scaler,
+        optimizer,
+        scheduler,
+        subset_loader : DataLoader,
+        subset_dates  : Sequence,
+        # scaler_y      : StandardScaler,
+        # constants
+        device        : torch.device,
+        # input_length  : int,
+        # pred_length   : int,
+        quantiles     : Tuple[float, ...],
+        lambda_cross  : float,
+        lambda_coverage:float,
+        lambda_deriv  : float
+    ) -> Tuple[float, float]:
+    """
+    Returns:
+        nn_loss_scaled   : float
+        meta_loss_scaled : float
+    """
+
+    model.train()
+
+    loss_quantile_scaled     = 0.
+
+    # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
+    for (X_scaled, y_scaled, _, _) in subset_loader:
+        X_scaled_dev = X_scaled.to(device)   # (B, L, F)
+        y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
+
+        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
+
+        # optimizer.zero_grad(set_to_none=True)
+
+        with torch.amp.autocast(device_type=device.type): # mixed precision
+            pred_scaled_dev = model(X_scaled_dev)
+            loss_quantile_scaled_dev = losses.loss_wrapper_quantile_torch(
+                pred_scaled_dev, y_scaled_dev, quantiles,
+                lambda_cross, lambda_coverage, lambda_deriv)
+
+        amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
+        amp_scaler.step(optimizer)
+        amp_scaler.update()
+
+        loss_quantile_scaled += loss_quantile_scaled_dev.item()
+
+    scheduler.step()
+    loss_quantile_scaled     /= len(subset_loader)
+
+    return loss_quantile_scaled
+
+
+@torch.no_grad()
+def subset_evolution_numpy(
+        model         : nn.Module,
+        subset_loader : DataLoader,
+        subset_dates  : Sequence,
+        # scaler_y      : StandardScaler,
+        # constants
+        device        : torch.device,
+        # input_length  : int,
+        # pred_length   : int,
+        quantiles     : Tuple[float, ...],
+        lambda_cross  : float,
+        lambda_coverage:float,
+        lambda_deriv  : float
+    ) -> Tuple[float, float]:
+    """
+    Returns:
+        nn_loss_scaled   : float
+        meta_loss_scaled : float
+    """
+    model.eval()
+
+    # Q = len(quantiles)
+    # T = len(dates)
+
+    loss_quantile_scaled     = 0.
+
+    # main loop
+    for (X_scaled, y_scaled, _, _) in subset_loader:
+        X_scaled_dev = X_scaled.to(device)
+        y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()  # (B, H)
+
+        # NN forward
+        pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
+
+        # loss
+        loss_quantile_scaled_cpu = losses.loss_wrapper_quantile_numpy(
+            pred_scaled_cpu, y_scaled_cpu, quantiles,
+            lambda_cross, lambda_coverage, lambda_deriv)
+        loss_quantile_scaled += loss_quantile_scaled_cpu
+
+        # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
+        # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
+        # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}-- theory: (B, H, Q)")
+
+    loss_quantile_scaled     /= len(subset_loader)
+
+    return loss_quantile_scaled
 
