@@ -13,14 +13,14 @@ import json
 import hashlib
 import pickle
 
-from   typing import List, Tuple, Dict  # Sequence, Optional
+from   typing import List, Tuple, Dict, Optional  # Sequence
 # from   collections import defaultdict
 
 
 import numpy  as np
 import pandas as pd
 
-from   sklearn.linear_model    import Ridge
+from   sklearn.linear_model    import LinearRegression, Ridge
 from   sklearn.ensemble        import RandomForestRegressor
 # from   sklearn.model_selection import TimeSeriesSplit
 
@@ -343,32 +343,37 @@ def regression_and_forest(
 # linear regression for meta-model
 # ----------------------------------------------------------------------
 
-def weights_metamodel(X, y, alpha=1., verbose: int = 0):
-
+def weights_metamodel(X_train: np.ndarray,
+                      y_train: np.ndarray,
+                      X_valid: Optional[np.ndarray] = None,
+                      X_test : Optional[np.ndarray] = None,
+                      verbose: int = 0) \
+        -> Tuple[Dict[str, float], pd.Series, np.ndarray or None, np.ndarray or None]:
     # X: (N, 3), y: (N,)
-    XtX = X.T @ X
-    XtX.flat[::4] += alpha  # add alpha to diagonal
-    coef = np.linalg.solve(XtX, X.T @ y)
 
-    # drop most negative coefficient (if any)
-    if coef.min() < 0:
-        idx = coef.argmin()
-        mask = np.ones(len(coef), dtype=bool)
-        mask[idx] = False
-        Xr = X[:, mask]
+    # XtX = X.T @ X
+    # XtX.flat[::4] += alpha  # add alpha to diagonal
+    # coef = np.linalg.solve(XtX, X.T @ y)
 
-        XtX = Xr.T @ Xr
-        XtX.flat[:: XtX.shape[0] + 1] += alpha
-        coef_r = np.linalg.solve(XtX, Xr.T @ y)
+    # # drop most negative coefficient (if any)
+    # if coef.min() < 0:
+    #     idx = coef.argmin()
+    #     mask = np.ones(len(coef), dtype=bool)
+    #     mask[idx] = False
+    #     Xr = X[:, mask]
 
-        coef = np.zeros(3)
-        coef[mask] = coef_r
+    #     XtX = Xr.T @ Xr
+    #     XtX.flat[:: XtX.shape[0] + 1] += alpha
+    #     coef_r = np.linalg.solve(XtX, Xr.T @ y)
 
-    return {
-        'nn': round(float(coef[0]), 3),
-        'lr': round(float(coef[1]), 3),
-        'rf': round(float(coef[2]), 3),
-    }
+    #     coef = np.zeros(3)
+    #     coef[mask] = coef_r
+
+    # return {
+    #     'nn': round(float(coef[0]), 3),
+    #     'lr': round(float(coef[1]), 3),
+    #     'rf': round(float(coef[2]), 3),
+    # }
 
     # _input = pd.concat([pred_nn, pred_baselines], axis=1, join='inner')
     # _input.columns=['nn', 'lr', 'rf']
@@ -376,30 +381,56 @@ def weights_metamodel(X, y, alpha=1., verbose: int = 0):
     # common_idx = y_true.index.intersection(_input.index)
     # # print(common_idx)
 
-    # model_meta = Ridge(alpha = 1.)
+    # model_meta = LinearRegression()
     # model_meta.fit(_input.loc[common_idx], y_true.loc[common_idx])
     # pred_train_GW = model_meta.predict(_input.loc[common_idx])
 
-    # if verbose >= 3:
-    #     _output = pd.concat([
-    #          y_true, _input,
-    #          pd.Series(pred_train_GW, name='meta', index=common_idx)], axis=1)
-    #     _output.columns=['true', 'nn', 'lr', 'rf', 'meta']
-    #     print(_output.astype('float64').round(2))
+    names = (['nn', 'lr', 'rf'])
 
-    # weights_meta = {name: round(float(coeff), 3) for name, coeff in \
-    #        zip(['nn', 'lr', 'rf'], model_meta.coef_)}
+    dates_train  = y_train.index
+    X_train = X_train.to_numpy()
+    y_train = y_train.to_numpy()
 
-    # # getting rid of a negative coefficient
-    # min_coeff = min(weights_meta.values())
-    # if min_coeff < 0:
-    #     idx = list(weights_meta.keys())[list(weights_meta.values()).index(min_coeff)]
-    #     if verbose >= 2:
-    #         print(f"removing `{idx}` with coefficient {min_coeff} < 0")
-    #     _input.drop(columns=[idx], inplace=True)
-    #     model_meta.fit(_input.loc[common_idx], y_true.loc[common_idx])
-    #     pred_train_GW = model_meta.predict(_input.loc[common_idx])
-    # weights_meta = {name: round(float(coeff), 3) for name, coeff in \
-    #        zip(['nn', 'lr', 'rf'], model_meta.coef_)}
+    model_meta = LinearRegression()
+    model_meta.fit(X_train, y_train)
 
-    # return weights_meta
+    if verbose >= 3:
+        pred_train = model_meta.predict(X_train)
+        _output = pd.concat([
+             y_train, X_train,
+             pd.Series(pred_train, name='meta', index=y_train.index)], axis=1)
+        _output.columns=['true'] + names + ['meta']
+        print(_output.astype('float64').round(2))
+
+    weights_meta = {name: round(float(coeff), 3) for name, coeff in \
+           zip(names, model_meta.coef_)}
+
+    # getting rid of a negative coefficient
+    min_coeff = min(weights_meta.values())
+    if min_coeff < -0.05:
+        # idx = list(weights_meta.keys())[list(weights_meta.values()).index(min_coeff)]
+        idx = list(weights_meta.values()).index(min_coeff)
+        if verbose >= 2:
+            print(f"removing `{names[idx]}` with coefficient {min_coeff} < 0")
+        _X_train = np.delete(X_train, idx, axis=1)
+        names.pop(idx)
+        model_meta.fit(_X_train, y_train)
+        weights_meta = {name: round(float(coeff), 3) for name, coeff in \
+               zip(names, model_meta.coef_)}
+
+        pred_train = model_meta.predict(_X_train)
+        pred_valid = model_meta.predict(np.delete(X_valid, idx, axis=1)) \
+            if X_valid is not None else None
+        pred_test  = model_meta.predict(np.delete(X_test,  idx, axis=1)) \
+            if X_test  is not None else None
+    else:
+        pred_train = model_meta.predict(X_train)
+        pred_valid = model_meta.predict(X_valid) if X_valid is not None else None
+        pred_test  = model_meta.predict(X_test)  if X_test  is not None else None
+
+        weights_meta = {name: round(float(coeff), 3) for name, coeff in \
+               zip(names, model_meta.coef_)}
+
+
+    return weights_meta, pd.Series(pred_train, index=dates_train), \
+                pred_valid, pred_test

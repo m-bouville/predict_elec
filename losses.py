@@ -296,14 +296,11 @@ def subset_losses_torch(
         scheduler,
         subset_loader : DataLoader,
         subset_dates  : Sequence,
-        scaler_y      : StandardScaler,
+        # scaler_y      : StandardScaler,
         # constants
-        baseline_idx  : Dict[str, int],
         device        : torch.device,
-        input_length  : int,
-        pred_length   : int,
-        # incr_steps    : int,
-        weights_meta  : Dict [str, float],
+        # input_length  : int,
+        # pred_length   : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -318,7 +315,6 @@ def subset_losses_torch(
     model.train()
 
     loss_quantile_scaled     = 0.
-    meta_loss_quantile_scaled= 0.
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
     for (X_scaled, y_scaled, _, _) in subset_loader:
@@ -343,25 +339,10 @@ def subset_losses_torch(
 
         loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
-        with torch.no_grad():  # monitoring only
-            pred_meta_scaled = utils.compute_meta_prediction_torch(
-                pred_scaled_dev, X_scaled_dev, baseline_idx, weights_meta, len(quantiles)//2)
-
-            loss_meta_quantile_scaled = loss_wrapper_quantile_torch(
-                pred_meta_scaled, y_scaled_dev[:, :, 0],
-                quantiles, lambda_cross, lambda_coverage, lambda_deriv)
-
-            # loss_meta_quantile_scaled = losses.compute_meta_loss(
-            #     pred_scaled_dev, X_scaled_dev, y_scaled_dev, baseline_idx,
-            #     weights_meta, quantiles=QUANTILES, lambda_cross=LAMBDA_CROSS,
-            #     lambda_coverage=LAMBDA_COVERAGE, lambda_deriv=LAMBDA_DERIV)
-        meta_loss_quantile_scaled += loss_meta_quantile_scaled.item()
-
     scheduler.step()
     loss_quantile_scaled     /= len(subset_loader)
-    meta_loss_quantile_scaled/= len(subset_loader)
 
-    return loss_quantile_scaled, meta_loss_quantile_scaled
+    return loss_quantile_scaled
 
 
 @torch.no_grad()
@@ -369,14 +350,11 @@ def subset_losses_numpy(
         model         : nn.Module,
         subset_loader : DataLoader,
         subset_dates  : Sequence,
-        scaler_y      : StandardScaler,
+        # scaler_y      : StandardScaler,
         # constants
-        baseline_idx  : Dict[str, int],
         device        : torch.device,
-        input_length  : int,
-        pred_length   : int,
-        # incr_steps    : int,
-        weights_meta  : Dict [str, float],
+        # input_length  : int,
+        # pred_length   : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -393,8 +371,6 @@ def subset_losses_numpy(
     # T = len(dates)
 
     loss_quantile_scaled     = 0.
-    meta_loss_quantile_scaled= 0.
-
 
     # main loop
     for (X_scaled, y_scaled, _, _) in subset_loader:
@@ -412,23 +388,9 @@ def subset_losses_numpy(
 
         # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
         # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
-        # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}   -- theory: (B, H, Q)")
-
-        # # meta-model
-        # pred_meta_scaled = utils.compute_meta_prediction_numpy(
-        #     pred_scaled_cpu, X_scaled_cpu,
-        #     baseline_idx, WEIGHTS_META, len(QUANTILES)//2)
-
-        # loss_meta_quantile_scaled = loss_wrapper_quantile_numpy(
-        #     pred_meta_scaled, y_scaled_cpu,
-        #     QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV)
-
-        # meta_loss_quantile_scaled += loss_meta_quantile_scaled
-        # BUG meta-model receives predictions for NN after t,
-            #       and LR and RF before t => incompatible
+        # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}-- theory: (B, H, Q)")
 
     loss_quantile_scaled     /= len(subset_loader)
-    # meta_loss_quantile_scaled/= len(valid_loader)
 
-    return loss_quantile_scaled, 0.  # meta_loss_quantile_scaled
+    return loss_quantile_scaled
 

@@ -71,11 +71,11 @@ def df_features_past_consumption(consumption: pd.Series,
     # lag avoids implicitly leaking future information
     _shifted_conso = df['consumption_GW'].shift(lag)
 
-    # diff
-    for _weeks in [1, 2]:
-        _hours = int(round(num_steps_per_day * 7 * _weeks))
-        df[f"consumption_diff_{_weeks}wk_GW"] = \
-            _shifted_conso - _shifted_conso.shift(freq=f"{_hours}h")
+    # # diff
+    # for _weeks in [1, 2]:
+    #     _hours = int(round(num_steps_per_day * 7 * _weeks))
+    #     df[f"consumption_diff_{_weeks}wk_GW"] = \
+    #         _shifted_conso - _shifted_conso.shift(freq=f"{_hours}h")
 
     # moving averages
     for _weeks in [1, 2, 4, 52]:
@@ -120,18 +120,13 @@ def df_features(dict_fnames: Dict[str, str], output_fname: str,
                     df_calendar, df_consumption], axis=1)
 
 
-    dates_df.loc["df"]= [df.index.min(), df.index.max()]
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
     dates_df["start"] = (dates_df["start"] + pd.Timedelta(hours=2)).dt.floor("D").dt.date
     dates_df["end"]   =  dates_df["end"  ].dt.date
 
     # df['date'] = df.index.year - 2000 + df.index.dayofyear / 365  # for long-term drift
 
-
-    if verbose >= 1:
-        print(dates_df)
-
-    if verbose >= 2:
+    if verbose >= 3:
         # print(df.head().to_string())
 
         plt.figure(figsize=(10,6))
@@ -360,20 +355,29 @@ def quantile_coverage(y_true: pd.Series,
 
 def compare_models(true_series, dict_pred_series,
                    dict_baseline_series: Dict[str, List[float]] or None,
-                   weights_meta: Dict[str, float] or None, subset: str="", unit:str="",
+                   pred_meta, subset: str="", unit:str="",
                    max_RMSE: float = 7,
-                   verbose: int = 0) -> None:
-    if verbose < 1: return  # this function does nothing if it cannot display
+                   verbose: int = 0) -> pd.DataFrame:
+    # if verbose < 1: return  # this function does nothing if it cannot display
 
     def rmse(a,b): return round(np.sqrt(np.mean((a-b)**2)),2)
     def mae (a,b): return round(np.mean(np.abs  (a-b)),    2)
 
     # print("weights_meta:", weights_meta)
 
+    if verbose >= 3:
+        print("shapes:")
+        print(f"true: {true_series.shape} ({true_series.index.min()} -> {true_series.index.max()})")
+        print(f"nn:   {dict_pred_series.get('q50').shape} "
+              f"({dict_pred_series.get('q50').index.min()} -> "
+              f"{dict_pred_series.get('q50').index.max()})")
+        if pred_meta is not None:
+            print(f"meta: {pred_meta.shape}")
+            #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
 
     df_eval = pd.DataFrame({
-        "true":true_series,
-        "nn":  dict_pred_series.get("q50")
+        "true": true_series,
+        "nn"  : dict_pred_series.get("q50")
     })
 
     # baselines (LR, RF)
@@ -381,6 +385,10 @@ def compare_models(true_series, dict_pred_series,
     if dict_baseline_series is not None:
         for _name in ['lr', 'rf', 'oracle']:
             if _name in dict_baseline_series:  # keep only those we trained
+                if verbose >= 3:
+                    print(f"{_name}:   {dict_baseline_series.get(_name).shape} "
+                          f"({dict_baseline_series.get(_name).index.min()} -> "
+                          f"{dict_baseline_series.get(_name).index.max()})")
                 list_baselines.append(_name)
                 df_eval[_name] = dict_baseline_series.get(_name)
         # print("list_baselines:", list_baselines)
@@ -389,13 +397,9 @@ def compare_models(true_series, dict_pred_series,
 
     names_models = ['nn'] + list_baselines
 
-    if weights_meta is not None and dict_baseline_series is not None:
-            # we need data and weights
-        _meta = df_eval['nn'] * weights_meta['nn']
-        for _name in list_baselines:
-            if _name != 'oracle':
-                _meta += df_eval[_name] * weights_meta[_name]
-        df_eval['meta'] = _meta
+    # print("pred_meta:", pred_meta)
+    if pred_meta is not None:
+        df_eval['meta'] = pred_meta.reindex(df_eval.index)
         names_models += ['meta']
 
     y_true = df_eval["true"]
@@ -419,7 +423,8 @@ def compare_models(true_series, dict_pred_series,
           # .sort_values("RMSE")
     )
 
-    print(df_metrics.round(3))
+    if verbose >= 1:
+        print(df_metrics.round(3))
 
 
 
@@ -483,6 +488,7 @@ def compare_models(true_series, dict_pred_series,
         plt.tight_layout()
         plt.show()
 
+    return df_metrics
 
 
 
@@ -492,25 +498,19 @@ def compare_models(true_series, dict_pred_series,
 
 def display_evolution(
         epoch: int, t_epoch_start,
-        train_loss_scaled     : float, valid_loss_scaled     : float,
-        meta_train_loss_scaled: float, meta_valid_loss_scaled: float,
-        list_of_min_losses: List[float],
-        # lists
-        list_of_lists: List[List[float]],
+        train_loss_scaled: float, valid_loss_scaled: float,
+        list_of_min_losses: List[float], list_of_lists: List[List[float]],
         # constants
         num_epochs: int, display_every: int, plot_conv_every: int,
         min_delta: float, verbose:int=0)\
-            -> Tuple[float, float, float, float, float, float, float,
-                     List[float], List[float], List[float], List[float],
-                     List[float], List[float], List[float], List[float]]:
+            -> [[float, float, float],
+                [List[float], List[float], List[float], List[float]]]:
 
-    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled,
-        meta_min_train_loss_scaled, meta_min_valid_loss_scaled) = list_of_min_losses
+    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled) = \
+        list_of_min_losses
 
     (list_train_loss_scaled, list_min_train_loss_scaled,
-    list_valid_loss_scaled, list_min_valid_loss_scaled,
-    list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-    list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled) = list_of_lists
+    list_valid_loss_scaled, list_min_valid_loss_scaled) = list_of_lists
 
     if ((epoch+1) % display_every == 0) | (epoch == 0):
         # comparing latest loss to lowest so far
@@ -541,15 +541,6 @@ def display_evolution(
     list_valid_loss_scaled    .append(valid_loss_scaled)
     list_min_valid_loss_scaled.append(min_valid_loss_scaled)
 
-    # metamodel
-    meta_min_train_loss_scaled = min(meta_min_train_loss_scaled, meta_train_loss_scaled)
-    list_meta_train_loss_scaled    .append(meta_train_loss_scaled)
-    list_meta_min_train_loss_scaled.append(meta_min_train_loss_scaled)
-
-    meta_min_valid_loss_scaled = min(meta_min_valid_loss_scaled, meta_valid_loss_scaled)
-    list_meta_valid_loss_scaled    .append(meta_valid_loss_scaled)
-    list_meta_min_valid_loss_scaled.append(meta_min_valid_loss_scaled)
-
 
     # if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
     #         & (epoch < num_epochs-2):
@@ -561,13 +552,10 @@ def display_evolution(
     #                       # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
     #                       partial=True, verbose=verbose)
 
-    return ((min_train_loss_scaled, min_valid_loss_scaled, min_loss_display_scaled,
-            meta_min_train_loss_scaled, meta_min_valid_loss_scaled),
+    return ((min_train_loss_scaled, min_valid_loss_scaled, min_loss_display_scaled),
             # list of lists
             (list_train_loss_scaled, list_min_train_loss_scaled,
-            list_valid_loss_scaled, list_min_valid_loss_scaled,
-            list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-            list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled)
+            list_valid_loss_scaled, list_min_valid_loss_scaled)
             )
 
 

@@ -65,12 +65,11 @@ The NN is trained using:
   - The Transformer is simultaneously responsible for learning uncertainty structure (quantiles) and producing a usable point forecast; any change improving point RMSE can degrade quantile calibration (and vice versa).
 
 - **No learned combination of predictors**
-  - The meta-model is less powerful than it could be: LR, RF and NN outputs are statically combined, weights are set by hand.
+  - The meta-model is less powerful than it could be: LR, RF and NN outputs are statically with a simple linear regression.
   - A learned meta-learner would allow nonlinear bias correction, make weights regime-dependent and improve robustness across seasons and extreme events.
 
 - **Remote prdiction**
-  - The code does not currently predict _h_ + 12 to _h_ + 36, but rather _h_ to _h_ + 24
-  - The model must be allowed to skip the first 12 hours in validation: run from _h_ to _h_ + 36 but use only _h_ + 12 to _h_ + 36.
+  - The model currently predicts _h_ to _h_ + 24: it must be allowed to skip the first 12 hours in validation -- run from _h_ to _h_ + 36 but vaidate on _h_ + 12 to _h_ + 36 only.
 
 
 ---
@@ -128,13 +127,10 @@ This stage is **self-contained** and remains unchanged by downstream models.
 
 
 #### Implementation plan
-- currently:
-  - meta-model based on 3 predictions: LR, RF and the median (`q50`) from the NNTQ;
-  - constant weights set by hand.
-- next: 
-  - linear regression with the same 3 predictions as input (initially MAE, possibly MSE later);
-  - weights are still constant, but trained.
-- finally: 
+- current meta-model:
+  - linear regression based on 3 predictions: LR, RF and the median (`q50`) from the NNTQ;
+  - weights are constant (3/4 NN, 1/4 RF).
+- soon: 
   - small dense neural network;
   - extra features beyond the three predictions (similar to those to train the NNTQ);
   - still no influence on quantile training.

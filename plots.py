@@ -27,11 +27,8 @@ def data(df, xlabel=None, ylabel=None, title=None) -> None:
 # Convergence
 # --------------------------------------------------------
 
-def convergence(list_train_loss: list, list_min_train_loss: list,
+def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
                 list_valid_loss: list, list_min_valid_loss: list,
-                baseline_losses: Dict[str, Dict[str, float]],
-                list_meta_train_loss: list, list_meta_min_train_loss: list,
-                list_meta_valid_loss: list, list_meta_min_valid_loss: list,
                 partial: bool = False, verbose:int = 0) -> None:
     assert len(list_train_loss) == len(list_min_train_loss) ==\
            len(list_valid_loss) == len(list_min_valid_loss), \
@@ -56,29 +53,10 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
     plt.plot(range(1, length+1), list_valid_loss    [:], label="valid",    color="red")
     plt.plot(range(1, length+1), list_min_valid_loss[:], label="valid min",color="red", alpha=0.4)
 
-    # LR, RF
-    if baseline_losses is not None:
-        shape = {'lr': ',',     'rf': 'o'}
-        for name, d in baseline_losses.items():
-            plt.scatter(1, d['train'], label=f"train {name}", color="green",
-                        marker=shape[name], alpha=0.6)
-            plt.scatter(1, d['valid'], label=f"valid {name}", color="green", marker=shape[name])
-
-    # metamodel
-    if list_meta_train_loss is not None:
-        plt.plot(range(1, length+1), list_meta_train_loss    [:], label="train meta",    color="blue")
-    if list_meta_min_train_loss is not None:
-        plt.plot(range(1, length+1), list_meta_min_train_loss[:], label="train meta min",color="blue", alpha=0.4)
-    if list_meta_valid_loss is not None:
-        plt.plot(range(1, length+1), list_meta_valid_loss    [:], label="valid meta",    color="magenta")
-    if list_meta_min_valid_loss is not None:
-        plt.plot(range(1, length+1), list_meta_min_valid_loss[:], label="valid meta min",color="magenta", alpha=0.4)
-
-
     # plt.xscale('log')
     plt.yscale('log')
     plt.xlabel("epoch")
-    plt.ylabel(("(partial) " if partial else "") + "training loss (log)")
+    plt.ylabel(("(partial) " if partial else "") + "training quantile loss (log)")
 
     # legend (two columns)
     handles, labels = plt.gca().get_legend_handles_labels()
@@ -91,6 +69,76 @@ def convergence(list_train_loss: list, list_min_train_loss: list,
     plt.legend(handles2, labels2, ncol=2)
 
     plt.show()
+
+
+
+# def convergence_mean(list_train_loss: list, list_min_train_loss: list,
+#                 list_valid_loss: list, list_min_valid_loss: list,
+#                 baseline_losses: Dict[str, Dict[str, float]],
+#                 list_meta_train_loss: list, list_meta_min_train_loss: list,
+#                 list_meta_valid_loss: list, list_meta_min_valid_loss: list,
+#                 partial: bool = False, verbose:int = 0) -> None:
+#     assert len(list_train_loss) == len(list_min_train_loss) ==\
+#            len(list_valid_loss) == len(list_min_valid_loss), \
+#         f"len(list_train_loss) ({len(list_train_loss)}), "\
+#         f"len(list_min_train_loss) ({len(list_min_train_loss)})"\
+#         f"len(list_valid_loss) ({len(list_valid_loss)}), "\
+#         f"len(list_min_valid_loss) ({len(list_min_valid_loss)}) must be equal)"
+#     length = len(list_train_loss)
+
+#     if verbose >= 1:
+#         if not partial:
+#             print("Training done. Plotting convergence...")
+#         else:
+#             print("Plotting convergence for training so far...")
+
+
+#     plt.figure(figsize=(10,6))
+
+#     # neural net
+#     plt.plot(range(1, length+1), list_train_loss    [:], label="train",    color="black")
+#     plt.plot(range(1, length+1), list_min_train_loss[:], label="train min",color="black",alpha=0.4)
+#     plt.plot(range(1, length+1), list_valid_loss    [:], label="valid",    color="red")
+#     plt.plot(range(1, length+1), list_min_valid_loss[:], label="valid min",color="red", alpha=0.4)
+
+#     # LR, RF
+#     if baseline_losses is not None:
+#         shape = {'lr': ',',     'rf': 'o'}
+#         for name, d in baseline_losses.items():
+#             plt.scatter(1, d['train'], label=f"train {name}", color="green",
+#                         marker=shape[name], alpha=0.6)
+#             plt.scatter(1, d['valid'], label=f"valid {name}", color="green", marker=shape[name])
+
+#     # metamodel
+#     if list_meta_train_loss is not None:
+#         plt.plot(range(1, length+1), list_meta_train_loss    [:], label="train meta",    color="blue")
+#     if list_meta_min_train_loss is not None:
+#         plt.plot(range(1, length+1), list_meta_min_train_loss[:], label="train meta min",color="blue", alpha=0.4)
+#     if list_meta_valid_loss is not None:
+#         plt.plot(range(1, length+1), list_meta_valid_loss    [:], label="valid meta",    color="magenta")
+#     if list_meta_min_valid_loss is not None:
+#         plt.plot(range(1, length+1), list_meta_min_valid_loss[:], label="valid meta min",color="magenta", alpha=0.4)
+
+
+#     # plt.xscale('log')
+#     plt.yscale('log')
+#     plt.xlabel("epoch")
+#     plt.ylabel(("(partial) " if partial else "") + "training loss (log)")
+
+#     # legend (two columns)
+#     handles, labels = plt.gca().get_legend_handles_labels()
+#         # Split into train vs valid groups by label name
+#     train_items = [(h, l) for h, l in zip(handles, labels) if "train" in l]
+#     valid_items = [(h, l) for h, l in zip(handles, labels) if "valid" in l]
+#         # Interleave into two columns: left=train, right=valid
+#     ordered = train_items + valid_items
+#     handles2, labels2 = zip(*ordered)
+#     plt.legend(handles2, labels2, ncol=2)
+
+#     plt.show()
+
+
+
 
 
 
@@ -126,8 +174,10 @@ def _apply_groupby(series: pd.Series, col: Optional[str]):
 
 
 
-def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
-         baseline_series: pd.Series or None, future_series: pd.Series,
+def test(true_series     : pd.Series,
+         dict_pred_series: Dict[str, pd.Series],
+         baseline_series : pd.Series or None,
+         meta_series     : pd.Series,
          name_baseline: str or None,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
          ylim: [float, float] or None = None,
@@ -141,6 +191,9 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
     _baseline_series = _apply_groupby(_apply_range(_apply_moving_average(
         baseline_series, moving_average), date_range), groupby) \
             if name_baseline is not None else None
+    _meta_series = _apply_groupby(_apply_range(_apply_moving_average(
+        meta_series, moving_average), date_range), groupby) \
+            if meta_series is not None else None
 
     _dict_pred_series = {}
     for name, series in dict_pred_series.items():
@@ -148,12 +201,6 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
         s = _apply_range  (s, date_range)
         s = _apply_groupby(s, groupby)
         _dict_pred_series[name] = s
-
-    _future_series = future_series # SMA would make little sense
-    # if future_series is not None:
-    #     _future_series = _apply_moving_average(future_series, moving_average)
-    # else:
-    #     _future_series = None
 
 
     plt.figure(figsize=(10,6))
@@ -172,8 +219,8 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
         plt.plot(_baseline_series.index, _baseline_series.values,
                  label=f"forecast {name_baseline}", color="green")
 
-    if _future_series is not None:
-        plt.plot(_future_series.index,_future_series.values, label="future", color="blue")
+    if _meta_series is not None:
+        plt.plot(_meta_series.index, _meta_series.values, label="meta", color="blue")
 
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
@@ -187,7 +234,7 @@ def test(true_series: pd.Series, dict_pred_series: Dict[str, pd.Series],
 def all_tests(true_series:         pd.Series,
               dict_pred_series:    Dict[str, pd.Series],
               dict_baseline_series:Dict[str, pd.Series],
-              future_series:       pd.Series,
+              meta_series:         pd.Series,
               name_baseline:       str,
               days_zoom:           int | Tuple[int] = [8, 61],
               ylim:  Tuple[Tuple[float, float], Tuple[float, float]] = [[35, 55], [-4, 4]]
@@ -214,7 +261,7 @@ def all_tests(true_series:         pd.Series,
         # plot consumption
         _SMA    = SMA_consumption[_idx]
         _SMA_str = f" (SMA {_SMA/2} hrs)" if _SMA is not None else ""
-        test(true_series, dict_pred_series, baseline_series, None,
+        test(true_series, dict_pred_series, baseline_series, meta_series,
              name_baseline, ylabel=f"consumption{_SMA_str} [GW]",
              ylim=ylim[0], date_range=[zoom_start, zoom_end], moving_average=_SMA)
 
@@ -225,10 +272,13 @@ def all_tests(true_series:         pd.Series,
         residual_true_series     = true_series    - true_series
         residual_baseline_series = baseline_series- true_series \
             if name_baseline is not None else None
+        residual_meta_series = meta_series- true_series \
+            if meta_series is not None else None
         dict_residual_pred_series= {name: series - true_series\
             for name, series in dict_pred_series.items()}
 
-        test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
+        test(residual_true_series, dict_residual_pred_series,
+             residual_baseline_series, residual_meta_series,
              name_baseline, ylabel=f"consumption difference{_SMA_str} [GW]",
              ylim=ylim[1], date_range=[zoom_start, zoom_end], moving_average=_SMA)
 
@@ -239,19 +289,21 @@ def all_tests(true_series:         pd.Series,
     zoom_end    = true_series.index[-1]
     zoom_start  = zoom_end - zoom_horizon
 
-    test(true_series, dict_pred_series, baseline_series, None,
+    test(true_series, dict_pred_series, baseline_series, meta_series,
          name_baseline, xlabel="time of day", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=[zoom_start, zoom_end], groupby='timeofday')
-    test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
+    test(residual_true_series, dict_residual_pred_series,
+         residual_baseline_series, residual_meta_series,
          name_baseline, xlabel="time of day", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=[zoom_start, zoom_end], groupby='timeofday')
 
 
     # plot consumption over a week
-    test(true_series, dict_pred_series, baseline_series, None,
+    test(true_series, dict_pred_series, baseline_series, meta_series,
          name_baseline, xlabel="day of week", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=[zoom_start, zoom_end], groupby='dayofweek')
-    test(residual_true_series, dict_residual_pred_series, residual_baseline_series, None,
+    test(residual_true_series, dict_residual_pred_series,
+         residual_baseline_series, residual_meta_series,
          name_baseline, xlabel="day of week", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=[zoom_start, zoom_end], groupby='dayofweek',
          moving_average=SMA_residual[0])  # smoothing a little

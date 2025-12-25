@@ -3,7 +3,7 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LE
            'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'LAMBDA_CROSS', 'LAMBDA_COVERAGE',
            'LAMBDA_DERIV', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
-           'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY', 'WEIGHTS_META',
+           'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
            'DAY_AHEAD', 'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY']
 
@@ -38,7 +38,7 @@ INPUT_LENGTH = days_to_steps(14)       # How many half-hours the model sees
 PRED_LENGTH  = days_to_steps( 1)       # BUG should be 36h  How many future half-hours to predict
 
 BATCH_SIZE   =  64              # Training batch size
-EPOCHS       = [  5, 40, 60, 80] # Number of training epochs
+EPOCHS       = [  2, 40, 60, 80] # Number of training epochs
 
 MODEL_DIM    = [ 48,128,192,256] # Transformer embedding dimension
 NUM_HEADS    = [  2,  4,  6,  8] # Number of attention heads
@@ -67,16 +67,14 @@ WARMUP_STEPS =[4000,2500,2250,2500]
 
 
 PATIENCE     = [  5,  5, 10, 10]  # DEBUG: patience > nb epochas
-MIN_DELTA    =   10 / 1000
+MIN_DELTA    =   20 / 1000
 
 VALIDATE_EVERY=  1
 DISPLAY_EVERY=   2
 PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
-WEIGHTS_META: Dict[str, float] = {'nn': 0.7, 'lr':0.1, 'rf': 0.2}
-
-VERBOSE: int   = 1
+VERBOSE: int   = 1  # 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 
 DICT_FNAMES = {
@@ -103,15 +101,13 @@ BASELINE_CFG = (LR_RF.baseline_cfg)[IDX_SYSTEM_SIZE]
 
 
 # BASELINE_CFG = {}
-# WEIGHTS_META = {'nn': 1., 'lr': 0., 'rf': 0.}
 
 
 
 # Checking
 assert MODEL_DIM % NUM_HEADS == 0, \
     f"MODEL_DIM ({MODEL_DIM}) must be divisible by NUM_HEADS ({NUM_HEADS})."
-assert sum(WEIGHTS_META.values()) == 1.
-assert set(WEIGHTS_META.keys()) == {'nn', 'lr', 'rf'}
+
 assert 1 <= VALIDATE_EVERY <= min(EPOCHS, PATIENCE), \
     (VALIDATE_EVERY, EPOCHS, PATIENCE)
 

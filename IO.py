@@ -50,7 +50,7 @@ def load_consumption(path, verbose: int = 0):
     df['timeofday']= df.index.hour + df.index.minute/60
 
 
-    if verbose >= 2:
+    if verbose >= 3:
         print(df.head())
 
         plots.data(df.drop(columns=['year', 'month', 'timeofday'])\
@@ -72,7 +72,7 @@ def load_consumption(path, verbose: int = 0):
 
 # weights: https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
 
-def load_weights(path, verbose: int = 2) -> pd.Series:
+def load_weights(path, verbose: int = 0) -> pd.Series:
     # weights (electricity consumption per region)
     df_weigths = pd.read_csv(path, sep=';')
     # print(df_weigths.columns)
@@ -85,7 +85,7 @@ def load_weights(path, verbose: int = 2) -> pd.Series:
 
     weights.index = [_normalize_name(r) for r in weights.index]
 
-    if not np.isclose(weights.sum(), 1.0):
+    if not np.isclose(weights.sum(), 1.):
         raise ValueError(f"Temperature weights do not sum to 100% ({weights.sum()}%)")
 
     if verbose >= 2:  print(weights)
@@ -208,6 +208,7 @@ def load_temperature(path, weights,
 
     #     plots.data(df, xlabel="date", ylabel="temperature (°C)")
 
+    if verbose >= 3:
         plots.data(out.groupby('dateofyear').mean().sort_index()\
                     .drop(columns=['year','month']),
                   xlabel="date of year", ylabel="temperature (°C)",
@@ -344,16 +345,18 @@ def load_data(dict_fnames: dict, output_fname: str,
     # starts = [df.index.min() for df in dfs.values()]
     # ends   = [df.index.max() for df in dfs.values()]
 
-    common_start = max(starts.values())
-    common_end   = min(ends  .values())
+    common_start  = max(starts.values()); common_end = min(ends  .values())
+    earliest_start= min(starts.values()); latest_end = max(ends  .values())
 
-    if verbose >= 1:
-        print(f"Common start: {common_start}")
-        print(f"Common end:   {common_end}")
+    if verbose >= 2:
+        print(f"intersection start: {common_start  }, end: {common_end}")
+        print(f"union        start: {earliest_start}, end: {latest_end}")
 
-    # Half‑hour index (padding will generate NAs which will be trimmed later)
-    idx = pd.date_range(start= common_start,
-                        end  = common_end + pd.Timedelta(days=1), freq="30min")
+    # # Half‑hour index (padding will generate NAs which will be trimmed later)
+    idx = pd.date_range(start= earliest_start,
+                        end  = latest_end + pd.Timedelta(days=1), freq="30min")
+    # idx = pd.date_range(start= common_start,
+    #                     end  = common_end + pd.Timedelta(days=1), freq="30min")
 
     META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
 
@@ -399,6 +402,7 @@ def load_data(dict_fnames: dict, output_fname: str,
         print(f"Saved merged dataset to {output_fname}")
         print(merged.head())
 
+    if verbose >= 3:
         plots.data(merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
