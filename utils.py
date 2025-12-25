@@ -56,7 +56,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
     df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
 
-    if verbose >= 2:
+    if verbose >= 3:
         print(df.head().to_string())
 
     return df
@@ -83,7 +83,7 @@ def df_features_past_consumption(consumption: pd.Series,
         df[f"consumption_SMA_{_weeks}wk_GW"] = _shifted_conso.rolling(
             f"{_hours}h", min_periods=int(round(_hours*.8))).mean()
 
-    if verbose >= 2:
+    if verbose >= 3:
         print(df.tail().to_string())  # head() would be made of NaNs
 
     return df.drop(columns=['consumption_GW'])
@@ -189,48 +189,48 @@ def compute_meta_prediction_torch(
     return pred_meta_scaled
 
 
-def compute_meta_prediction_numpy(
-        pred_scaled   : np.ndarray,   # (B, Q) or (B, H, Q)
-        x_scaled      : np.ndarray,   # (B, L, F)
-        baseline_idx  : Dict[str, int],
-        weights_meta  : Dict[str, float],
-        idx_median    : int
-    ) -> np.ndarray:                  # (B,)
-    """
-    NumPy-only meta prediction for validation.
-    """
+# def compute_meta_prediction_numpy(
+#         pred_scaled   : np.ndarray,   # (B, Q) or (B, H, Q)
+#         x_scaled      : np.ndarray,   # (B, L, F)
+#         baseline_idx  : Dict[str, int],
+#         weights_meta  : Dict[str, float],
+#         idx_median    : int
+#     ) -> np.ndarray:                  # (B,)
+#     """
+#     NumPy-only meta prediction for validation.
+#     """
 
-    # B, Q = pred_scaled.shape
+#     # B, Q = pred_scaled.shape
 
-    # NN: take median only
-    if pred_scaled.ndim == 3:
-        # (B, H, Q)
-        nn_pred = pred_scaled[:, :, idx_median]   # (B,)
-    elif pred_scaled.ndim == 2:
-        # (B, Q)
-        nn_pred = pred_scaled[:, idx_median]      # (B,)
-    else:
-        raise ValueError(f"Unexpected pred_scaled shape {pred_scaled.shape}")
-    print(f"[compute_meta_prediction_numpy] nn_pred.shape = {nn_pred.shape}")
+#     # NN: take median only
+#     if pred_scaled.ndim == 3:
+#         # (B, H, Q)
+#         nn_pred = pred_scaled[:, :, idx_median]   # (B,)
+#     elif pred_scaled.ndim == 2:
+#         # (B, Q)
+#         nn_pred = pred_scaled[:, idx_median]      # (B,)
+#     else:
+#         raise ValueError(f"Unexpected pred_scaled shape {pred_scaled.shape}")
+#     print(f"[compute_meta_prediction_numpy] nn_pred.shape = {nn_pred.shape}")
 
 
 
-    y_meta = weights_meta.get('nn', 0.) * nn_pred  # (B,)
+#     y_meta = weights_meta.get('nn', 0.) * nn_pred  # (B,)
 
-    for _name in ['lr', 'rf']:
-        w = weights_meta.get(_name, 0.)
-        if w == 0.:
-            continue
-        if _name not in baseline_idx:
-            raise ValueError(f"{_name} not in baseline_idx, yet weight={w} != 0")
+#     for _name in ['lr', 'rf']:
+#         w = weights_meta.get(_name, 0.)
+#         if w == 0.:
+#             continue
+#         if _name not in baseline_idx:
+#             raise ValueError(f"{_name} not in baseline_idx, yet weight={w} != 0")
 
-        baseline = x_scaled[:, :, baseline_idx[_name]]  # (B,)
-        print(f"[compute_meta_prediction_numpy] {_name} baseline.shape = {baseline.shape}")
-        y_meta  += w * baseline                          # (B,)
+#         baseline = x_scaled[:, :, baseline_idx[_name]]  # (B,)
+#         print(f"[compute_meta_prediction_numpy] {_name} baseline.shape = {baseline.shape}")
+#         y_meta  += w * baseline                          # (B,)
 
-    assert y_meta.ndim == 2, y_meta.shape
+#     assert y_meta.ndim == 2, y_meta.shape
 
-    return y_meta
+#     return y_meta
 
 # -------------------------------------------------------
 # Testing
@@ -323,7 +323,7 @@ def subset_predictions_day_ahead(
     # Build DataFrame
     df = pd.DataFrame.from_records(records).set_index("time_current").sort_index()
 
-    # print(df.head(10).astype('float64').round(2))
+    # print(df.head(10).astype(np.float32).round(2))
 
     # Output format
     true_series_GW = df["y_true"]

@@ -298,7 +298,7 @@ def regression_and_forest(
 
 
     # most relevant features
-    if verbose >= 2 and {"lr", "rf"} <= models.keys():
+    if verbose >= 3 and {"lr", "rf"} <= models.keys():
 
         ridge = pd.Series(
             models["lr"].coef_ * 100.,
@@ -332,7 +332,7 @@ def regression_and_forest(
         )
 
         print("\n[Model diagnostics] Top features (Ridge + RF):")
-        print(df_imp.round(2))  # .head(20)
+        print(df_imp.astype(np.float32).round(2))  # .head(20)
 
 
     return series_pred_GW, models, losses_quantile_GW
@@ -351,40 +351,6 @@ def weights_metamodel(X_train: np.ndarray,
         -> Tuple[Dict[str, float], pd.Series, np.ndarray or None, np.ndarray or None]:
     # X: (N, 3), y: (N,)
 
-    # XtX = X.T @ X
-    # XtX.flat[::4] += alpha  # add alpha to diagonal
-    # coef = np.linalg.solve(XtX, X.T @ y)
-
-    # # drop most negative coefficient (if any)
-    # if coef.min() < 0:
-    #     idx = coef.argmin()
-    #     mask = np.ones(len(coef), dtype=bool)
-    #     mask[idx] = False
-    #     Xr = X[:, mask]
-
-    #     XtX = Xr.T @ Xr
-    #     XtX.flat[:: XtX.shape[0] + 1] += alpha
-    #     coef_r = np.linalg.solve(XtX, Xr.T @ y)
-
-    #     coef = np.zeros(3)
-    #     coef[mask] = coef_r
-
-    # return {
-    #     'nn': round(float(coef[0]), 3),
-    #     'lr': round(float(coef[1]), 3),
-    #     'rf': round(float(coef[2]), 3),
-    # }
-
-    # _input = pd.concat([pred_nn, pred_baselines], axis=1, join='inner')
-    # _input.columns=['nn', 'lr', 'rf']
-
-    # common_idx = y_true.index.intersection(_input.index)
-    # # print(common_idx)
-
-    # model_meta = LinearRegression()
-    # model_meta.fit(_input.loc[common_idx], y_true.loc[common_idx])
-    # pred_train_GW = model_meta.predict(_input.loc[common_idx])
-
     names = (['nn', 'lr', 'rf'])
 
     dates_train  = y_train.index
@@ -400,7 +366,7 @@ def weights_metamodel(X_train: np.ndarray,
              y_train, X_train,
              pd.Series(pred_train, name='meta', index=y_train.index)], axis=1)
         _output.columns=['true'] + names + ['meta']
-        print(_output.astype('float64').round(2))
+        print(_output.astype(np.float32).round(2))
 
     weights_meta = {name: round(float(coeff), 3) for name, coeff in \
            zip(names, model_meta.coef_)}
