@@ -16,7 +16,7 @@ import pandas as pd
 from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
            INPUT_LENGTH,PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
            NUM_LAYERS, PATCH_LEN, STRIDE, FEATURES_IN_FUTURE,
-           LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
+           LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN,
            SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
@@ -148,15 +148,15 @@ if __name__ == "__main__":
     if VERBOSE >= 1:
         IO.print_model_summary(
                 MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
-                num_time_steps,  feature_cols,
-                INPUT_LENGTH,  PRED_LENGTH, FEATURES_IN_FUTURE,
-                BATCH_SIZE,  EPOCHS,
-                LEARNING_RATE,  WEIGHT_DECAY,  DROPOUT, WARMUP_STEPS,
-                PATIENCE,  MIN_DELTA,
-                MODEL_DIM,  NUM_LAYERS,  NUM_HEADS, FFN_SIZE,
-                PATCH_LEN,  STRIDE, NUM_PATCHES,
+                num_time_steps, feature_cols,
+                INPUT_LENGTH, PRED_LENGTH, FEATURES_IN_FUTURE,
+                BATCH_SIZE, EPOCHS,
+                LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS,
+                PATIENCE, MIN_DELTA,
+                MODEL_DIM, NUM_LAYERS, NUM_HEADS, FFN_SIZE,
+                PATCH_LEN, STRIDE, NUM_PATCHES,
                 QUANTILES,
-                LAMBDA_CROSS,   LAMBDA_COVERAGE, LAMBDA_DERIV
+                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN
         )
 
 
@@ -429,7 +429,7 @@ for epoch in range(EPOCHS):
             # constants
             device, # INPUT_LENGTH, PRED_LENGTH,
             QUANTILES,
-            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, SMOOTHING_CROSS
+            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN, SMOOTHING_CROSS
         )
     # print(f"train_loss_quantile_scaled = {train_loss_quantile_scaled} "
     #       f"meta_train_loss_quantile_scaled = {meta_train_loss_quantile_scaled}")
@@ -447,7 +447,8 @@ for epoch in range(EPOCHS):
                 model, valid_loader, valid_dates,  # scaler_y,
                 # constants
                 device, # INPUT_LENGTH, PRED_LENGTH,
-                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, SMOOTHING_CROSS
+                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
+                LAMBDA_MEDIAN, SMOOTHING_CROSS
             )
         # print("valid_loss_quantile_scaled:", valid_loss_quantile_scaled,
         #       "meta_valid_loss_quantile_scaled:", meta_valid_loss_quantile_scaled)
@@ -557,7 +558,7 @@ if VERBOSE >= 1:
 
     print("\nvalidation metrics [GW]:")
     utils.compare_models(true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
-                         pd.Series(pred_meta_valid, index=X_valid.index),
+                         pred_meta_valid,
                          subset="valid", unit="GW", verbose=VERBOSE)
 
 

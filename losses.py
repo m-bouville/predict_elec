@@ -31,9 +31,6 @@ def quantile_with_crossing_torch(
     Joint quantile loss with crossing penalty.
     """
 
-    if y_true.ndim == 3:
-        y_true = y_true.squeeze(-1)
-
     loss = 0.
 
     for i, tau in enumerate(quantiles):
@@ -222,18 +219,21 @@ def derivative_numpy(
 # wrappers (add together all components to the loss)
 # ----------------------------------------------------------------------
 
-def wrapper_quantile_torch(
+def quantile_torch(
         y_pred        : torch.Tensor,   # (B, H, Q)
         y_true        : torch.Tensor,   # (B, H) or (B, H, 1)
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
         lambda_deriv  : float,
+        lambda_median : float,
         smoothing_cross:float
     ) -> torch.Tensor:
     """
     Torch loss wrapper for quantile forecasts.
     """
+    if y_true.ndim == 3:
+        y_true = y_true.squeeze(-1)
 
     # Base quantile + crossing loss
     loss = quantile_with_crossing_torch(
@@ -247,25 +247,33 @@ def wrapper_quantile_torch(
 
     # Optional derivative loss (per quantile)
     if lambda_deriv > 0.:
-        _y_true = y_true.squeeze(-1) if y_true.ndim == 3 else y_true
-        loss += lambda_deriv * derivative_torch(y_pred, _y_true)
+        # _y_true = y_true.squeeze(-1) if y_true.ndim == 3 else y_true
+        loss += lambda_deriv * derivative_torch(y_pred, y_true)
+
+    q50_pred = y_pred[..., len(quantiles)//2]
+    # print(f"shapes: {y_pred.shape} -> {q50_pred.shape}, {y_true.shape}")
+    loss += lambda_median * ((q50_pred - y_true).mean(dim=0)**2).mean()
 
     return loss
 
 
-def wrapper_quantile_numpy(
+def quantile_numpy(
         y_pred        : np.ndarray,     # (B, H, Q)
         y_true        : np.ndarray,     # (B, H)
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
         lambda_deriv  : float,
+        lambda_median : float,
         smoothing_cross:float
     ) -> float:
     """
     NumPy loss wrapper for quantile forecasts.
     MUST match torch version exactly.
     """
+
+    if y_true.ndim == 3:
+        y_true = y_true.squeeze(-1)
 
     loss = quantile_with_crossing_numpy(
         y_pred       = y_pred,
@@ -278,6 +286,9 @@ def wrapper_quantile_numpy(
 
     if lambda_deriv > 0.:
         loss += lambda_deriv * derivative_numpy(y_pred, y_true)
+
+    q50_pred = y_pred[..., len(quantiles)//2]
+    loss += lambda_median * ((q50_pred - y_true).mean(axis=0)**2).mean()
 
     return float(loss)
 

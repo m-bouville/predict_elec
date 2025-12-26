@@ -628,6 +628,7 @@ def subset_evolution_torch(
         lambda_cross  : float,
         lambda_coverage:float,
         lambda_deriv  : float,
+        lambda_median : float,
         smoothing_cross:float
     ) -> Tuple[float, float]:
     """
@@ -652,9 +653,10 @@ def subset_evolution_torch(
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(X_scaled_dev)
-            loss_quantile_scaled_dev = losses.wrapper_quantile_torch(
+            loss_quantile_scaled_dev = losses.quantile_torch(
                 pred_scaled_dev, y_scaled_dev, quantiles,
-                lambda_cross, lambda_coverage, lambda_deriv, smoothing_cross)
+                lambda_cross, lambda_coverage, lambda_deriv,
+                lambda_median, smoothing_cross)
 
         amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -683,6 +685,7 @@ def subset_evolution_numpy(
         lambda_cross  : float,
         lambda_coverage:float,
         lambda_deriv  : float,
+        lambda_median : float,
         smoothing_cross:float
     ) -> Tuple[float, float]:
     """
@@ -706,9 +709,10 @@ def subset_evolution_numpy(
         pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
 
         # loss
-        loss_quantile_scaled_cpu = losses.wrapper_quantile_numpy(
+        loss_quantile_scaled_cpu = losses.quantile_numpy(
             pred_scaled_cpu, y_scaled_cpu, quantiles,
-            lambda_cross, lambda_coverage, lambda_deriv, smoothing_cross)
+            lambda_cross, lambda_coverage, lambda_deriv,
+            lambda_median, smoothing_cross)
         loss_quantile_scaled += loss_quantile_scaled_cpu
 
         # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")

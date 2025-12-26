@@ -348,7 +348,7 @@ def load_data(dict_fnames: dict, output_fname: str,
     common_start  = max(starts.values()); common_end = min(ends  .values())
     earliest_start= min(starts.values()); latest_end = max(ends  .values())
 
-    if verbose >= 2:
+    if verbose >= 3:
         print(f"intersection start: {common_start  }, end: {common_end}")
         print(f"union        start: {earliest_start}, end: {latest_end}")
 
@@ -582,21 +582,22 @@ def print_model_summary(
     minutes_per_step,  num_steps_per_day,
     num_time_steps,
     feature_cols,
-    input_length, pred_length,
+    input_length: int, pred_length: int, features_in_future:bool,
     # incr_steps_test,
-    batch_size,
-    epochs,
-    learning_rate,
-    weight_decay,
-    dropout,
-    warmup_steps,
-    patience,  min_delta,
-    model_dim,  num_layers,  num_heads, ffn_size,
-    patch_len,  stride,  num_patches,
+    batch_size: int,
+    epochs: int,
+    learning_rate: float,
+    weight_decay: float,
+    dropout: float,
+    warmup_steps: int,
+    patience: int,  min_delta,
+    model_dim: int,  num_layers: int,  num_heads: int, ffn_size: int,
+    patch_len: int,  stride: int,  num_patches: int,
     quantiles,
     lambda_cross:   float,
     lambda_coverage:float,
     lambda_deriv:   float,
+    lambda_median:  float
 ):
     # number of sliding windows
     num_samples = max(0, num_time_steps - (input_length + pred_length) + 1)
@@ -613,12 +614,14 @@ def print_model_summary(
     print(f"{'PRED_LENGTH' :17s} ={pred_length :5n} half-hours ={pred_length /24/2:5.1f} days")
     # print(f"{'INCR_STEPS_TEST':17s} ={incr_steps_test:5n} half-hours ="
     #       f"{incr_steps_test/24/2:5.1f} days")
+    print(f"{'FEATURES_IN_FUTURE' :17s} = features_in_future")
 
     print("\n===== LOSSES =====")
     print(f"{'QUANTILES'   :17s} = {quantiles}")
     print(f"{'LAMBDA_CROSS':17s} ={lambda_cross:8.2f}")
     print(f"{'LAMBDA_COVERAGE':17s} ={lambda_coverage:8.2f}")
     print(f"{'LAMBDA_DERIV':17s} ={lambda_deriv:8.2f}")
+    print(f"{'LAMBDA_MEDIAN':17s} ={lambda_median:8.2f}")
 
 
     print("\n===== TRAINING =====")

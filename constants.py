@@ -1,7 +1,7 @@
 __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LENGTH',
            'PRED_LENGTH', 'BATCH_SIZE', 'EPOCHS', 'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
            'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'FEATURES_IN_FUTURE',
-           'LAMBDA_CROSS', 'LAMBDA_COVERAGE', 'LAMBDA_DERIV',
+           'LAMBDA_CROSS', 'LAMBDA_COVERAGE', 'LAMBDA_DERIV', 'LAMBDA_MEDIAN',
            'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
@@ -54,6 +54,7 @@ FEATURES_IN_FUTURE=True  # features do not stop at noon
 LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles
 LAMBDA_COVERAGE= 0.5
 LAMBDA_DERIV   = 0.1            # derivative weight in loss function
+LAMBDA_MEDIAN  = 0.5
 SMOOTHING_CROSS= 0.02
 QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
 

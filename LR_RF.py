@@ -249,7 +249,7 @@ def regression_and_forest(
 
     def loss_quantile_GW(pred_GW, y_GW, sigma_y_GW=sigma_y_GW):
         # /!\ Not linear: must work on scaled values
-        return losses.wrapper_quantile_numpy(
+        return losses.quantile_numpy(
             pred_GW/sigma_y_GW, y_GW/sigma_y_GW, quantiles, lambda_cross=0.,
             lambda_coverage=0., lambda_deriv=lambda_deriv,
             smoothing_cross=smoothing_cross) * sigma_y_GW
