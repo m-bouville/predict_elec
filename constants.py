@@ -1,7 +1,8 @@
 __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LENGTH',
            'PRED_LENGTH', 'BATCH_SIZE', 'EPOCHS', 'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
-           'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'LAMBDA_CROSS', 'LAMBDA_COVERAGE',
-           'LAMBDA_DERIV', 'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
+           'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'FEATURES_IN_FUTURE',
+           'LAMBDA_CROSS', 'LAMBDA_COVERAGE', 'LAMBDA_DERIV',
+           'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
@@ -47,6 +48,7 @@ NUM_LAYERS   = [  1,  2,  3,  6] # Number of transformer encoder layers
 # PatchEmbedding
 PATCH_LEN    = days_to_steps(0.5)                # [half-hours]
 STRIDE       = max(int(round(PATCH_LEN/2)), 1)   # [half-hours]
+FEATURES_IN_FUTURE=True  # features do not stop at noon
 
 # losses
 LAMBDA_CROSS   = 1.              # enforcing correct order of quantiles

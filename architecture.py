@@ -17,8 +17,6 @@ import losses  # utils
 
 
 
-
-
 # ==============================================================================
 # 2. DATASET CLASS FOR DAY-AHEAD FORECASTING
 # ==============================================================================
@@ -37,6 +35,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         dates_subset : pd.DatetimeIndex,
         input_length : int,
         pred_length  : int,
+        features_in_future:int,
         forecast_hour: int,
         target_index : int
     ):
@@ -60,6 +59,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         self.dates_subset = dates_subset
         self.input_length = input_length
         self.pred_length  = pred_length
+        self.features_in_future=int(features_in_future)
         self.forecast_hour= forecast_hour
         self.target_index = target_index
 
@@ -97,7 +97,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
         idx_subset = self.start_indices_subset[idx_days_subset]
 
         # Input: all features (=> excluding consumption) from past
-        X = self.data_subset[idx_subset - self.input_length : idx_subset]  # (L, F)
+        X = self.data_subset[idx_subset - self.input_length :
+                             idx_subset + self.features_in_future*self.pred_length]  # (L+H, F)
         X = np.delete(X, self.target_index, axis=1)
 
         # Target: only consumption, future values (excluding present datetime)
@@ -125,8 +126,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
 def make_X_and_y(series, dates,
                  train_split, n_valid,
                  feature_cols, target_col,
-                 input_length:int, pred_length:int, batch_size:int,
-                 forecast_hour:int=12,
+                 input_length:int, pred_length:int, features_in_future:bool,
+                 batch_size:int, forecast_hour:int=12,
                  verbose: int = 0):
 
     assert series.shape[0] == len(dates), \
@@ -217,6 +218,7 @@ def make_X_and_y(series, dates,
             dates_subset = date_slice,
             input_length = input_length,
             pred_length  = pred_length,
+            features_in_future=features_in_future,
             forecast_hour= forecast_hour,
             target_index = target_idx
         ) # X_list, y_list, origin_list, target_dates_list
@@ -373,6 +375,7 @@ class PatchEmbedding(nn.Module):
 class TimeSeriesTransformer(nn.Module):
     def __init__(self, num_features:int, dim_model:int, nhead:int, num_layers:int,
                  input_len:int, patch_len:int, stride:int, pred_len:int,
+                 features_in_future: bool,
                  dropout:float, ffn_mult:int, num_quantiles:int,
                  num_geo_blocks, geo_block_ratio):
         super().__init__()
@@ -383,9 +386,11 @@ class TimeSeriesTransformer(nn.Module):
         self.num_quantiles  = num_quantiles
 
         self.input_len      = input_len
+        self.features_in_future=int(features_in_future)
         self.patch_len      = patch_len
         self.stride         = stride
-        self.num_patches    = (input_len - patch_len) // stride + 1
+        self.num_patches    = ((input_len+self.features_in_future*pred_len) \
+                               - patch_len) // stride + 1
 
         total_covered = ((input_len - patch_len) // stride) * stride + patch_len
         self.pad_len  = input_len - total_covered
@@ -429,22 +434,23 @@ class TimeSeriesTransformer(nn.Module):
 
 
 
-    def forward(self, x, *args, **kwargs):
-        B, L, F = x.shape    # x: (B, input_len, features)
+    def forward(self, X, *args, **kwargs):
+        B, L_plus_H, F = X.shape      # x: (B, L+H, F)
+        L = L_plus_H - self.features_in_future*self.pred_len  # (L+H) - H
         assert L == self.input_len,    (L, self.input_len)
         assert F == self.num_features, (F, self.num_features)
 
         # guaranteeing: last patch ends exactly at t = L
         if self.pad_len > 0:
-            x = torch.nn.functional.pad(
-                x,
+            X = torch.nn.functional.pad(
+                X,
                 pad  = (0, 0, 0, self.pad_len),  # pad time dimension on the right
                 mode = "constant",
                 value= 0.
         )
 
         # 1. Patch embedding
-        h = self.patch_embed(x)                     # (B, num_patches, model_dim)
+        h = self.patch_embed(X)                     # (B, num_patches, model_dim)
 
         # 2. Transformer encoder
         for layer in self.layers:

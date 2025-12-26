@@ -13,10 +13,11 @@ import pandas as pd
 
 
 # from   constants import *  # Spyder annoyingly complains: "may be defined in constants"
-from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO, INPUT_LENGTH,
-           PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
-           NUM_LAYERS, PATCH_LEN, STRIDE, LAMBDA_CROSS, LAMBDA_COVERAGE,
-           LAMBDA_DERIV, SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
+from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
+           INPUT_LENGTH,PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
+           NUM_LAYERS, PATCH_LEN, STRIDE, FEATURES_IN_FUTURE,
+           LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
+           SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
            VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
@@ -31,7 +32,8 @@ import architecture, utils, LR_RF, IO, plots  # losses,
 # Q = number of quantiles = len(quantiles)
 
 
-# TODO account for known future: sines, WE, T° (as forecast: _add noise_), etc.
+# [done] account for known future: sines, WE, T° (as forecast: _add noise_), etc.
+# TODO make future T° noisy
 # TODO trained metamodel (NN + RF)
 #   - [done] Linear meta-learner per horizon (fast, interpretable)
 #   - Small MLP or ridge regression trained on validation OOF predictions
@@ -147,7 +149,7 @@ if __name__ == "__main__":
         IO.print_model_summary(
                 MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
                 num_time_steps,  feature_cols,
-                INPUT_LENGTH,  PRED_LENGTH,
+                INPUT_LENGTH,  PRED_LENGTH, FEATURES_IN_FUTURE,
                 BATCH_SIZE,  EPOCHS,
                 LEARNING_RATE,  WEIGHT_DECAY,  DROPOUT, WARMUP_STEPS,
                 PATIENCE,  MIN_DELTA,
@@ -288,7 +290,8 @@ assert INPUT_LENGTH + 60 < test_months,\
 
 
 # assert all(ts.hour == 12 for ts in train_dataset.forecast_origins)
-# assert len(set(test_results['predictions']['target_time'])) == len(test_results['predictions'])
+# assert len(set(test_results['predictions']['target_time'])) == \
+#    len(test_results['predictions'])
 
 
 # ============================================================
@@ -304,7 +307,8 @@ assert INPUT_LENGTH + 60 < test_months,\
     architecture.make_X_and_y(
         series, dates, TRAIN_SPLIT, n_valid,
         feature_cols, target_col,
-        input_length=INPUT_LENGTH, pred_length=PRED_LENGTH, batch_size=BATCH_SIZE,
+        input_length=INPUT_LENGTH, pred_length=PRED_LENGTH,
+        features_in_future=FEATURES_IN_FUTURE, batch_size=BATCH_SIZE,
         forecast_hour=FORECAST_HOUR,
         verbose=VERBOSE)
 
@@ -314,15 +318,15 @@ if VERBOSE >= 2:
     print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
     print(f"Test mean :{y_test_GW.mean()  :6.2f} GW")
 
-# scale loss for LR
-sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
-if VERBOSE >= 1:
-    print(f"sigma_y = {sigma_y:.1f} GW")
-baseline_losses_quantile_scaled = {
-    name: {k: v / sigma_y / 2 for k, v in d.items()}  # BUG hack!
-    for name, d in baseline_losses_quantile_GW.items()
-}
-# lr_losses = {_key: lr_losses[_key] / sigma_y**2 for _key in lr_losses}
+# # scale loss for LR
+# sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
+# if VERBOSE >= 1:
+#     print(f"sigma_y = {sigma_y:.1f} GW")
+# baseline_losses_quantile_scaled = {
+#     name: {k: v / sigma_y / 2 for k, v in d.items()}  # BUG hack!
+#     for name, d in baseline_losses_quantile_GW.items()
+# }
+# # lr_losses = {_key: lr_losses[_key] / sigma_y**2 for _key in lr_losses}
 
 
 # Free heavy CPU-side arrays that are no longer needed.
@@ -350,6 +354,7 @@ model = architecture.TimeSeriesTransformer(
     pred_len    = PRED_LENGTH,
     patch_len   = PATCH_LEN,
     stride      = STRIDE,
+    features_in_future=FEATURES_IN_FUTURE,
     dropout     = DROPOUT,
     ffn_mult    = FFN_SIZE,
     num_quantiles=len(QUANTILES),
@@ -454,7 +459,8 @@ for epoch in range(EPOCHS):
     # display evoltion of losses
     (list_of_min_losses, list_of_lists) = \
         utils.display_evolution(
-            epoch, t_epoch_loop_start, train_loss_quantile_scaled, valid_loss_quantile_scaled,
+            epoch, t_epoch_loop_start,
+            train_loss_quantile_scaled, valid_loss_quantile_scaled,
             list_of_min_losses, list_of_lists,
             EPOCHS, DISPLAY_EVERY, PLOT_CONV_EVERY, MIN_DELTA, VERBOSE)
 
@@ -504,7 +510,7 @@ df_train = pd.concat([
     ], axis=1, join="inner").astype(np.float32)
 # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
 df_train.columns = ['y', 'lr', 'rf', 'nn']
-X_train = df_train[['nn', 'lr', 'rf']]  #.to_numpy()
+X_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
 y_train = df_train[['y']].squeeze()  #.to_numpy()
 
 
@@ -686,10 +692,10 @@ for k in dict_baseline_test_GW:
 # )
 
 with torch.no_grad():
-    last_window = X_test_scaled[-INPUT_LENGTH:]         # shape (L, F)
+    last_window = X_test_scaled[-(INPUT_LENGTH+FEATURES_IN_FUTURE*PRED_LENGTH):] # (L, F)
     last_window = torch.tensor(last_window).unsqueeze(0).to(device)
 
-    pred = model(last_window)                         # (1, H, Q)
+    pred = model(last_window)                  # (1, H, Q)
     pred = pred.squeeze(0).cpu().numpy()       # (H, Q)
 
     # Inverse scaling (works column-wise)
@@ -759,7 +765,10 @@ plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
 try:
     del valid_loader, test_loader, test_dataset_scaled
     # del train_dataset, valid_dataset
-    # del true_series_GW, dict_pred_series_GW, baseline_losses_quantile_scaled, meta_series
+    del true_train_GW, dict_pred_train_GW, pred_meta_train
+    del true_valid_GW, dict_pred_valid_GW, pred_meta_valid
+    del true_test_GW,  dict_pred_test_GW,  pred_meta_test
+    # del baseline_losses_quantile_scaled,
 except NameError:
     pass
 
