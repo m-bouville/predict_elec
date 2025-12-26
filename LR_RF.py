@@ -345,19 +345,13 @@ def regression_and_forest(
 # linear regression for meta-model
 # ----------------------------------------------------------------------
 
-def weights_metamodel(X_train: np.ndarray,
-                      y_train: np.ndarray,
-                      X_valid: Optional[np.ndarray] = None,
-                      X_test : Optional[np.ndarray] = None,
+def weights_metamodel(X_train: pd.DataFrame,
+                      y_train: pd.Series,
+                      X_valid: Optional[pd.DataFrame] = None,
+                      X_test : Optional[pd.DataFrame] = None,
                       verbose: int = 0) \
-        -> Tuple[Dict[str, float], pd.Series, np.ndarray or None, np.ndarray or None]:
+        -> Tuple[Dict[str, float], pd.Series, pd.Series or None, pd.Series or None]:
     # X: (N, 3), y: (N,)
-
-    names = (['nn', 'lr', 'rf'])
-
-    dates_train  = y_train.index
-    X_train = X_train.to_numpy()
-    y_train = y_train.to_numpy()
 
     model_meta = LinearRegression(fit_intercept=False, positive=True)
     model_meta.fit(X_train, y_train)
@@ -367,15 +361,19 @@ def weights_metamodel(X_train: np.ndarray,
         _output = pd.concat([
              y_train, X_train,
              pd.Series(pred_train, name='meta', index=y_train.index)], axis=1)
-        _output.columns=['true'] + names + ['meta']
+        _output.columns=['true'] + X_train.columns + ['meta']
         print(_output.astype(np.float32).round(2))
 
     weights_meta = {name: round(float(coeff), 3) for name, coeff in \
-           zip(names, model_meta.coef_)}
+           zip(X_train.columns, model_meta.coef_)}
 
     pred_train = model_meta.predict(X_train)
     pred_valid = model_meta.predict(X_valid) if X_valid is not None else None
     pred_test  = model_meta.predict(X_test)  if X_test  is not None else None
 
+    print(f"types: {type(pred_train)}, {type(pred_valid)}, {type(pred_test)}")
+
     return (weights_meta,
-            pd.Series(pred_train, index=dates_train), pred_valid, pred_test)
+            pd.Series(pred_train, index=X_train.index),
+            pd.Series(pred_valid, index=X_valid.index),
+            pd.Series(pred_test,  index=X_test .index))
