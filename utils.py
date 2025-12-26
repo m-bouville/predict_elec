@@ -20,7 +20,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-import IO, plots  # losses, architecture
+import IO  # losses, architecture,  plots
 
 
 
@@ -89,10 +89,10 @@ def df_features_past_consumption(consumption: pd.Series,
     return df.drop(columns=['consumption_GW'])
 
 
-def df_features(dict_fnames: Dict[str, str], output_fname: str,
+def df_features(dict_fnames: Dict[str, str], cache_fname: str,
         lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df, dates_df = IO.load_data(dict_fnames, output_fname,
+    df, dates_df = IO.load_data(dict_fnames, cache_fname,
             num_steps_per_day=num_steps_per_day, minutes_per_step=minutes_per_step)
     assert isinstance(df.index, pd.DatetimeIndex)
 
@@ -355,7 +355,7 @@ def quantile_coverage(y_true: pd.Series,
 
 def compare_models(true_series, dict_pred_series,
                    dict_baseline_series: Dict[str, List[float]] or None,
-                   pred_meta, subset: str="", unit:str="",
+                   list_pred_meta: List[List[float]], subset: str="", unit:str="",
                    max_RMSE: float = 7,
                    verbose: int = 0) -> pd.DataFrame:
     # if verbose < 1: return  # this function does nothing if it cannot display
@@ -371,9 +371,10 @@ def compare_models(true_series, dict_pred_series,
         print(f"nn:   {dict_pred_series.get('q50').shape} "
               f"({dict_pred_series.get('q50').index.min()} -> "
               f"{dict_pred_series.get('q50').index.max()})")
-        if pred_meta is not None:
-            print(f"meta: {pred_meta.shape}")
-            #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
+        if list_pred_meta is not None:
+            for (i, _pred_meta) in enumerate(list_pred_meta):
+                print(f"meta {i+1}: {_pred_meta.shape}")
+                #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
 
     df_eval = pd.DataFrame({
         "true": true_series,
@@ -398,9 +399,11 @@ def compare_models(true_series, dict_pred_series,
     names_models = ['nn'] + list_baselines
 
     # print("pred_meta:", pred_meta)
-    if pred_meta is not None:
-        df_eval['meta'] = pred_meta.reindex(df_eval.index)
-        names_models += ['meta']
+    if list_pred_meta is not None:
+        for (i, _pred_meta) in enumerate(list_pred_meta):
+            _name = "meta" if len(list_pred_meta) == 1 else f"meta{i+1}"
+            df_eval[_name] = _pred_meta.reindex(df_eval.index)
+            names_models += [_name]
 
     y_true = df_eval["true"]
 

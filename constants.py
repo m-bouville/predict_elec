@@ -5,8 +5,10 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LE
            'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
            'LEARNING_RATE', 'WEIGHT_DECAY', 'DROPOUT', 'WARMUP_STEPS', 'PATIENCE',
            'MIN_DELTA', 'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
-           'VERBOSE', 'DICT_FNAMES', 'OUTPUT_FNAME', 'BASELINE_CFG',
-           'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY']
+           'VERBOSE', 'DICT_FNAMES', 'CACHE_FNAME', 'BASELINE_CFG',
+           'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
+           'META_EPOCHS', 'META_LR', 'META_WEIGHT_DECAY', 'META_BATCH_SIZE',
+           'META_DROPOUT', 'META_NUM_CELLS', 'META_PATIENCE', 'META_FACTOR']
 
 
 
@@ -70,12 +72,22 @@ WARMUP_STEPS =[4000,2500,2250,2500]
 
 
 PATIENCE     = [  5,  5, 10, 10]  # DEBUG: patience > nb epochas
-MIN_DELTA    =   20 / 1000
+MIN_DELTA    =   10 / 1000
 
 VALIDATE_EVERY=  1
 DISPLAY_EVERY=   2
 PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
+
+# metamodel
+META_EPOCHS     =  50
+META_LR         =   2e-4  # learning rate
+META_WEIGHT_DECAY=  1e-5
+META_BATCH_SIZE = 256
+META_DROPOUT    =   0.2
+META_NUM_CELLS  = [32, 16]
+META_PATIENCE   =  10
+META_FACTOR     =   0.5
 
 VERBOSE: int   = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
@@ -85,7 +97,7 @@ DICT_FNAMES = {
     "temperature": 'data/temperature-quotidienne-regionale.csv',
     "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
 }
-OUTPUT_FNAME = "output/merged_aligned.csv"
+CACHE_FNAME = "cache/merged_aligned.csv"
 
 
 

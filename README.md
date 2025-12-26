@@ -35,25 +35,75 @@ Gearing the model toward this specific case has two advantages:
 
 ---
 
-## Current State
+## Architecture
 
-### Model overview
-The current consumption forecasting system revolves around a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ), with direct multi-horizon prediction.
+The strategy is based on a **two-stage architecture** with a strict separation of responsibilities:
+1. Firest, a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ) estimates uncertainty.
+2. Then, a meta-model forecasts the operational point as the mean.
 
-The loss includes:
-- pinball (quantile) loss,
-- quantile crossing constraints applied sequentially (so that `q10` <= `q50` <= `q90`),
-- sharpness (derivatives).
+There is **no feedback loop** between the two stages.
 
+Expected benefits
+- Improved point forecast accuracy over using `q50` alone
+- Retention of well-calibrated probabilistic forecasts
+- Better bias correction across regimes
+- Clean validation and interpretability at each stage
+
+
+### Stage 1 — Quantile Neural Network
+
+**Input**
+- Raw exogenous and engineered features
+- LR and RF predictions (as features)
+
+**Output**
+- Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
+
+**Training**
+- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives),
+- Direct multi-horizon prediction
+  - Possible later extension: a light (partial) decoder
+
+**Role**
+- Learn the conditional distribution of electricity demand to produce
+  - calibrated uncertainty estimates (e.g. deciles),
+  - a statistically meaningful median (`q50`).
+
+This stage is **self-contained** and remains unchanged by the downstream metamodel.
+
+
+### Stage 2 — Mean-Based Meta-Model
+
+**Input**
+- LR and RF predictions
+- Median (`q50`) output from stage 1
+- Potentially: raw features similar to those used in the quantile NN
+   - also, `q75` minus `q25` (uncertainty proxy)?
+
+**Output**
+- A single point forecast optimized for mean accuracy
+
+**Training**
+- no quantiles (e.g. MAE or MSE)
+- Trained independently from the quantile NN
+- No gradient flow or feedback to Stage 1
+
+**Role**
+- Correct systematic bias
+- Optimize operational point accuracy
+
+
+### Features
 The NN is trained using:
 - exogenous features (temperature, school holidays),
 - week-ends plus Fourier-like sine waves at different scales (day, year),
 - moving averages of recent consumption (but not so recent as to cause leaks),
 - predictions from baseline models used as features: **linear regression (LR)** and **random forest (RF)**
   - LR and RF are *not* ensembled directly: they are treated as informative input features.
+  
+---
 
-
-### Issues in the current model
+## Issues in the current model
 - **Systematic bias in predictions**
   - Bias is visible in LR, RF and NN in validation and testing (but not training).
   - Adding moving averages as features (see above) halved the bias.
@@ -70,87 +120,3 @@ The NN is trained using:
 
 - **Remote prdiction**
   - The model currently predicts _h_ to _h_ + 24: it must be allowed to skip the first 12 hours in validation -- run from _h_ to _h_ + 36 but vaidate on _h_ + 12 to _h_ + 36 only.
-
-
----
-
-## Planned Architecture
-
-### High-level design
-The planned system introduces a **two-stage architecture** with a strict separation of responsibilities:
-1. A **probabilistic model** estimates uncertainty: the Neural Network using Transformers for Quantiles (NNTQ)
-2. A **deterministic mean meta-model** forecasts the operational point 
-
-There is **no feedback loop** between the two stages.
-
-
-### Stage 1 — Quantile Neural Network (probabilistic layer)
-
-**Input**
-- Raw exogenous and engineered features
-- LR and RF predictions (as features)
-
-**Output**
-- Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
-
-**Training**
-- Pinball loss with sequential crossing constraints
-- Direct multi-horizon prediction
-  - Possible later extension: a light (partial) decoder
-
-**Role**
-- Learn the conditional distribution of electricity demand to produce
-  - calibrated uncertainty estimates (e.g. deciles),
-  - a statistically meaningful median (`q50`).
-
-This stage is **self-contained** and remains unchanged by downstream models.
-
-
-### Stage 2 — Mean-Based Meta-Model (deterministic layer)
-
-**Input**
-- LR and RF predictions
-- Median (`q50`) output from stage 1
-- Potentially: raw features similar to those used in the quantile NN
-
-**Output**
-- A single point forecast optimized for mean accuracy
-
-**Training**
-- no quantiles (e.g. MAE or MSE)
-- Trained independently from the quantile NN
-- No gradient flow or feedback to Stage 1
-
-**Role**
-- Correct systematic bias
-- Optimize operational point accuracy
-
-
-#### Implementation plan
-- current meta-model:
-  - linear regression based on 3 predictions: LR, RF and the median (`q50`) from the NNTQ;
-  - weights are constant (3/4 NN, 1/4 RF).
-- soon: 
-  - small dense neural network;
-  - extra features beyond the three predictions (similar to those to train the NNTQ);
-  - still no influence on quantile training.
-
-
-### Key design principles
-
-- **Strict separation of concerns**
-  - Quantile NN defines uncertainty
-  - Meta-model defines the point forecast
-- **One-way information flow**
-  - Quantile outputs feed the meta-model
-  - Meta-model does not influence quantile training
-- **Probabilistic integrity**
-  - Quantile calibration is preserved
-  - Point forecast improvements do not distort uncertainty estimates
-
-
-### Expected benefits
-- Improved point forecast accuracy over using `q50` alone
-- Retention of well-calibrated probabilistic forecasts
-- Better bias correction across regimes
-- Clean validation and interpretability at each stage

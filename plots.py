@@ -40,7 +40,7 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
 
     if verbose >= 1:
         if not partial:
-            print("Training done. Plotting convergence...")
+            print("\nTraining done. Plotting convergence...")
         else:
             print("Plotting convergence for training so far...")
 
@@ -139,11 +139,11 @@ def test(true_series     : pd.Series,
     if _true_series is not None:
         plt.plot(_true_series.index, _true_series.values, label="actual", color="black")
 
-    for name, series in _dict_pred_series.items():
+    for quantile, series in _dict_pred_series.items():
         plt.plot(series.index, series.values,
                  color="red",
                  alpha=0.7,
-                 label=f"forecast NN ({name})") # if k == 0 else None)
+                 label=f"forecast NN ({quantile})")
 
 
     if name_baseline is not None:

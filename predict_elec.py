@@ -6,7 +6,7 @@ import gc
 import time
 
 import torch
-# import torch.nn as nn
+import torch.nn as nn
 
 import numpy  as np
 import pandas as pd
@@ -20,9 +20,12 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
            SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
            LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS, PATIENCE,
            MIN_DELTA, VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
-           VERBOSE, DICT_FNAMES, OUTPUT_FNAME, BASELINE_CFG,
-           FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY)
-import architecture, utils, LR_RF, IO, plots  # losses,
+           VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
+           FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
+           META_EPOCHS, META_LR, META_WEIGHT_DECAY, META_BATCH_SIZE,
+           META_DROPOUT, META_NUM_CELLS, META_PATIENCE, META_FACTOR)
+
+import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 
 
 # system dimensions
@@ -40,7 +43,7 @@ import architecture, utils, LR_RF, IO, plots  # losses,
 # TODO Add public holidays to features
 # TODO make PRED_LENGTH == 36h and validate h+12 to h+36
 # BUG NNTQ misses whole days for no apparent reason
-# BUG bias => bad coverage of qunitiles.
+# BUG bias => bad coverage of quantiles.
 
 
 
@@ -75,7 +78,7 @@ if __name__ == "__main__":
     # 2. LOAD
     # ============================================================
 
-    df, dates_df = utils.df_features(DICT_FNAMES, OUTPUT_FNAME, PRED_LENGTH,
+    df, dates_df = utils.df_features(DICT_FNAMES, CACHE_FNAME, PRED_LENGTH,
                             NUM_STEPS_PER_DAY, MINUTES_PER_STEP, VERBOSE)
         # 2 if SYSTEM_SIZE == 'DEBUG' else 1)
 
@@ -156,7 +159,9 @@ if __name__ == "__main__":
                 MODEL_DIM, NUM_LAYERS, NUM_HEADS, FFN_SIZE,
                 PATCH_LEN, STRIDE, NUM_PATCHES,
                 QUANTILES,
-                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN
+                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN,
+                META_EPOCHS, META_LR, META_WEIGHT_DECAY, META_BATCH_SIZE,
+                META_DROPOUT, META_NUM_CELLS, META_PATIENCE, META_FACTOR
         )
 
 
@@ -176,11 +181,11 @@ rf_params = dict(
         train_end     = TRAIN_SPLIT-n_valid,
         val_end       = TRAIN_SPLIT,
         models_cfg    = BASELINE_CFG,
-        quantiles     = QUANTILES,
-        lambda_cross  = LAMBDA_CROSS,
-        lambda_coverage=LAMBDA_COVERAGE,
-        lambda_deriv  = LAMBDA_DERIV,
-        smoothing_cross=SMOOTHING_CROSS,
+        # quantiles     = QUANTILES,
+        # lambda_cross  = LAMBDA_CROSS,
+        # lambda_coverage=LAMBDA_COVERAGE,
+        # lambda_deriv  = LAMBDA_DERIV,
+        # smoothing_cross=SMOOTHING_CROSS,
         verbose       = VERBOSE
     )
 
@@ -193,10 +198,10 @@ cache_id = {
     # "split": "v1",   # optional: data split identifier
 }
 
-baseline_features_GW, baseline_models, baseline_losses_quantile_GW = \
+baseline_features_GW, baseline_models = \
     LR_RF.load_or_compute_regression_and_forest(
         compute_kwargs  = rf_params,
-        cache_dir       = "output",
+        cache_dir       = "cache",
         cache_id_dict   = cache_id,
         force_calculation=VERBOSE >= 2,  #SYSTEM_SIZE == 'DEBUG',
         verbose         = VERBOSE
@@ -228,7 +233,7 @@ if VERBOSE >= 3:
 
 # ---- Construct final matrix: target first, then features ----
 
-if VERBOSE >= 1:
+if VERBOSE >= 2:
     print(f"Using {len(feature_cols)} features: {feature_cols}")
     print("Using target:  ", target_col)
 
@@ -511,7 +516,7 @@ df_train = pd.concat([
     ], axis=1, join="inner").astype(np.float32)
 # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
 df_train.columns = ['y', 'lr', 'rf', 'nn']
-X_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
+input_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
 y_train = df_train[['y']].squeeze()  #.to_numpy()
 
 
@@ -520,9 +525,9 @@ true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW = \
     subset_predictions_day_ahead(X_valid_GW, valid_loader)
 _baselines_valid = _baselines[:TRAIN_SPLIT][-n_valid:]
 _baselines_valid.index = valid_dates
-X_valid = pd.concat([_baselines_valid, dict_pred_valid_GW['q50']],
+input_valid = pd.concat([_baselines_valid, dict_pred_valid_GW['q50']],
                      axis=1, join="inner").astype('float32')
-X_valid.columns = ['lr', 'rf', 'nn']
+input_valid.columns = ['lr', 'rf', 'nn']
 
 
 # preparating testing
@@ -530,14 +535,14 @@ true_test_GW, dict_pred_test_GW, dict_baseline_test_GW = \
     subset_predictions_day_ahead(X_test_GW, test_loader)
 _baselines_test = _baselines[TRAIN_SPLIT:]
 _baselines_test.index = test_dates
-X_test = pd.concat([_baselines_test, dict_pred_test_GW['q50']],
+input_test = pd.concat([_baselines_test, dict_pred_test_GW['q50']],
                      axis=1, join="inner").astype('float32')
-X_test.columns = ['lr', 'rf', 'nn']
+input_test.columns = ['lr', 'rf', 'nn']
 
 
 # metamodel
-weights_meta, pred_meta_train, pred_meta_valid, pred_meta_test = \
-    LR_RF.weights_metamodel(X_train, y_train, X_valid, X_test,
+weights_meta, pred_meta1_train, pred_meta1_valid, pred_meta1_test = \
+    metamodel.weights_LR_metamodel(input_train, y_train, input_valid, input_test,
                             verbose=VERBOSE)
 if VERBOSE >= 1:
     print(f"weights_meta [%]: "
@@ -548,17 +553,113 @@ if VERBOSE >= 2:
     print(f"metamodel  took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
+# NN metamodel
+# ============================================================
+
+
+
+
+pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
+    metamodel.metamodel_NN(
+        [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW],
+         [dict_baseline_train_GW,dict_baseline_valid_GW,dict_baseline_test_GW],
+         [X_train_GW,  X_valid_GW, X_test_GW],
+         [y_train_GW,  y_valid_GW, y_test_GW],
+         [train_dates, valid_dates,test_dates],
+        feature_cols,
+        #constants
+        META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
+        META_LR, META_WEIGHT_DECAY,
+        META_PATIENCE, META_FACTOR,
+        META_BATCH_SIZE, device)
+
+
+
+
+
+
+
+#
+# class MetaNet(nn.Module):
+#     def __init__(self, in_dim):
+#         super().__init__()
+#         self.net = nn.Sequential(
+#             nn.Linear(in_dim, 16),
+#             nn.ReLU(),
+#             nn.Linear(16, 16),
+#             nn.ReLU(),
+#             nn.Linear(16, 3)
+#         )
+
+#     def forward(self, x, preds):  # preds = (nn, lr, rf)
+#         w = torch.softmax(self.net(x), dim=-1)
+#         y = (w * preds).sum(dim=-1)
+#         return y, w
+
+# criterion = nn.MSELoss()
+
+# df_input = pd.concat([
+#         dict_pred_valid_GW   ['q50'],
+#         # dict_baseline_valid_GW['lr'],
+#         # dict_baseline_valid_GW['rf'],
+#         pd.DataFrame(X_valid_GW, index= valid_dates)
+#     ], axis=1, join="inner").astype(np.float32)
+# df_input.columns = ['nn'] + feature_cols
+# print(df_input.shape)
+
+
+# # (B*H, 3)
+# preds = torch.stack([
+#     torch.tensor(df_input['nn'            ].values, dtype=torch.float32),
+#     torch.tensor(df_input['consumption_lr'].values, dtype=torch.float32),
+#     torch.tensor(df_input['consumption_rf'].values, dtype=torch.float32)
+#     ], dim=-1
+# )
+# print(f"preds: {preds.shape}")
+
+# context = df_input.drop(columns=['nn', 'consumption_lr', 'consumption_rf'])
+# print(f"context: {context.shape}")
+# F = context.shape[1]
+
+# # (B*H, 1 + F)  # F already include LR and RF
+# X = torch.cat([preds,
+#                torch.tensor(context.values, dtype=torch.float32)
+#                ], dim=-1)
+# print(f"X: {X.shape}")
+
+# # flatten for the meta network
+# BH, _      = X    .shape
+# X_flat     = X     .to(device)# .view(B * H, F)     # (B·H, F)
+# preds_flat = preds .to(device) #.view(B * H, 3)     # (B·H, 3)
+
+# # Training step
+# for epoch in range(10):
+#     meta_net = MetaNet(in_dim=F).to(device)
+#     y_meta_flat, weights_flat = meta_net(X_flat, preds_flat).cpu()
+
+#     y_meta  = y_meta_flat  #.view(B, H)          # final forecast
+#     weights = weights_flat #.view(B, H, 3)     # interpretability
+
+#     loss = criterion(y_meta, true_valid_GW.squeeze(-1))
+#     loss.backward()
+#     optimizer.step()
+
+# # inference
+# with torch.no_grad():
+#     y_meta, weights = meta_net(X_flat, preds_flat)
+#     y_meta = y_meta  #.view(B, H)
+
 
 
 if VERBOSE >= 1:
     print("\nTraining metrics [GW]:")
     utils.compare_models(true_train_GW, dict_pred_train_GW, dict_baseline_train_GW,
-                         pred_meta_train,
+                         [pred_meta1_train, pred_meta2_train],
                          subset="train", unit="GW", verbose=VERBOSE)
 
     print("\nvalidation metrics [GW]:")
     utils.compare_models(true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
-                         pred_meta_valid,
+                         [pred_meta1_valid, pred_meta2_valid],
                          subset="valid", unit="GW", verbose=VERBOSE)
 
 
@@ -629,7 +730,7 @@ if VERBOSE >= 1:
 # ============================================================
 
 if VERBOSE >= 1:
-    print("Starting test ...")  #"(baseline: {name_baseline})...")
+    print("\nStarting test ...")  #"(baseline: {name_baseline})...")
 
 
 true_test_GW, dict_pred_test_GW, dict_baseline_test_GW = \
@@ -731,13 +832,13 @@ with torch.no_grad():
 # assert true_series.index.equals(pred_series.index)
 # assert true_series.index.equals(lr_series.index)
 
-meta_test_GW = pd.Series(pred_meta_test, index=X_test.index)
+# meta2_test_GW = pd.Series(pred_meta2_test.cpu().numpy(), index=df_meta_test.index)
 
 if VERBOSE >= 1:
 
     print("\nTesting metrics [GW]:")
     utils.compare_models(true_test_GW, dict_pred_test_GW,
-                         dict_baseline_test_GW, meta_test_GW,
+                         dict_baseline_test_GW, [pred_meta1_test, pred_meta2_test],
                          subset="test", unit="GW", verbose=VERBOSE)
 
     print("Plotting test results...")
@@ -747,7 +848,7 @@ if VERBOSE >= 1:
 # print(dict_baseline_test_GW['rf'])
 # print(meta_test_GW)
 plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
-                dict_baseline_test_GW, meta_test_GW, name_baseline)
+                dict_baseline_test_GW, pred_meta2_test, name_baseline)
 
 
 
@@ -766,9 +867,9 @@ plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
 try:
     del valid_loader, test_loader, test_dataset_scaled
     # del train_dataset, valid_dataset
-    del true_train_GW, dict_pred_train_GW, pred_meta_train
-    del true_valid_GW, dict_pred_valid_GW, pred_meta_valid
-    del true_test_GW,  dict_pred_test_GW,  pred_meta_test
+    del true_train_GW, dict_pred_train_GW, pred_meta1_train, pred_meta2_train
+    del true_valid_GW, dict_pred_valid_GW, pred_meta1_valid, pred_meta2_valid
+    del true_test_GW,  dict_pred_test_GW,  pred_meta1_test,  pred_meta2_test
     # del baseline_losses_quantile_scaled,
 except NameError:
     pass

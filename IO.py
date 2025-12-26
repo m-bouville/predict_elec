@@ -304,7 +304,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
             print(f"✓ No missing timestamps at freq = {freq}")
 
 
-def load_data(dict_fnames: dict, output_fname: str,
+def load_data(dict_fnames: dict, cache_fname: str,
               num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     dfs = {}
@@ -396,10 +396,10 @@ def load_data(dict_fnames: dict, output_fname: str,
     merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
     merged.index.name = "datetime"
 
-    merged.to_csv(output_fname)
+    merged.to_csv(cache_fname)
 
     if verbose >= 2:
-        print(f"Saved merged dataset to {output_fname}")
+        print(f"Saved merged dataset to {cache_fname}")
         print(merged.head())
 
     if verbose >= 3:
@@ -593,11 +593,15 @@ def print_model_summary(
     patience: int,  min_delta,
     model_dim: int,  num_layers: int,  num_heads: int, ffn_size: int,
     patch_len: int,  stride: int,  num_patches: int,
+    # quantile loss
     quantiles,
     lambda_cross:   float,
     lambda_coverage:float,
     lambda_deriv:   float,
-    lambda_median:  float
+    lambda_median:  float,
+    # metamodel
+    meta_epochs: int, meta_lr: float, meta_weight_decay: float, meta_batch_size: int,
+    meta_dropout: float, meta_num_cells, meta_patience: int, meta_factor: float
 ):
     # number of sliding windows
     num_samples = max(0, num_time_steps - (input_length + pred_length) + 1)
@@ -651,6 +655,17 @@ def print_model_summary(
     print(f"{'PATCH_LEN'   :17s} ={patch_len:5n} half-hours")
     print(f"{'STRIDE'      :17s} ={stride:5n} half-hours"
           f" => NUM_PATCHES ={num_patches:5n}")
+
+    print("\n===== METAMODEL =====")
+    print(f"{'META_EPOCHS'  :17s} ={meta_epochs:5n}")
+    print(f"{'META_LR'      :17s} ={meta_lr:8.2f}")
+    print(f"{'META_WEIGHT_DECAY':17s} ={meta_weight_decay:8.2f}")
+    print(f"{'META_BATCH_SIZE':17s} ={meta_batch_size:5n}")
+    print(f"{'META_DROPOUT'  :17s} ={meta_dropout:8.2f}")
+    print(f"{'META_NUM_CELLS':17s} = {meta_num_cells}")
+    print(f"{'META_PATIENCE' :17s} ={meta_patience:5n}")
+    print(f"{'META_FACTOR'   :17s} ={meta_factor:8.2f}")
+
 
     # ---- Approximate parameter count ----
     d = model_dim
