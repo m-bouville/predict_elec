@@ -807,7 +807,7 @@ pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
          [X_train_GW,  X_valid_GW, X_test_GW],
          [y_train_GW,  y_valid_GW, y_test_GW],
          [train_dates, valid_dates,test_dates],
-        feature_cols,
+        feature_cols, PRED_LENGTH,
         #constants
         META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
         META_LR, META_WEIGHT_DECAY,
@@ -837,7 +837,8 @@ if VERBOSE >= 1:
 # print(dict_baseline_test_GW['rf'])
 # print(meta_test_GW)
 plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
-                dict_baseline_test_GW, pred_meta2_test, name_baseline)
+                dict_baseline_test_GW, pred_meta2_test, name_baseline,
+                NUM_STEPS_PER_DAY)
 
 
 

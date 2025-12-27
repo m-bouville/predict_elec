@@ -130,16 +130,16 @@ def prepare_meta_data(
 
     # Add context features
     df_features = pd.DataFrame(X_features_GW, index=dates, columns=feature_cols)
-    if 'hour_norm' not in df_features.columns:
-        df_features['hour_norm'] = \
-                (df_features.index.hour + df_features.index.minute/60) / 24
+    if 'horizon' not in df_features.columns:
+        df_features['horizon'] = \
+            (df_features.index.hour*2 + df_features.index.minute/30).round().astype(np.int16)
 
     df = pd.concat([df, df_features], axis=1)
 
     # Drop rows with any NaN
     df = df.dropna()
 
-    print(f"Meta-model {name} data: {df.shape}")
+    # print(f"Meta-model {name} data: {df.shape}")
     return df
 
 
@@ -157,8 +157,8 @@ def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
 
     # Context features (exclude predictions and target)
 
-    if 'hour_norm' not in df.columns:
-        df['hour_norm'] = (df.index.hour + df.index.minute/60) / 24
+    if 'horizon' not in df.columns:
+        df['horizon'] = (df.index.hour + df.index.minute/60) / 24
 
     context_cols = [c for c in feature_cols
         if c not in ['consumption_nn', 'consumption_lr', 'consumption_rf']]
@@ -174,10 +174,13 @@ def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
 
 
 def train_meta_model(
-    meta_net,
+    # meta_net,
     df_train,
     df_valid,
     feature_cols,
+    pred_length : int,
+    dropout     : float,
+    num_cells   : int,
     epochs      : int,
     lr          : float,
     weight_decay: float,
@@ -190,76 +193,114 @@ def train_meta_model(
     Train meta-model on training data, validate on validation data.
     """
 
-    optimizer = torch.optim.Adam(meta_net.parameters(),
-                                 lr=lr, weight_decay=weight_decay)
+    # Initialize meta-model
+    context_cols = [c for c in feature_cols
+                    if c not in ['consumption_nn', 'consumption_lr', 'consumption_rf']]
+
+    meta_nets  = []
+    optimizers = []
+    schedulers = []
+
+    for h in range(48):
+        net = MetaNet(context_dim=len(context_cols)+1, # including `horizon`
+                      num_predictors=3,
+                     dropout=dropout, num_cells=num_cells).to(device)
+        opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
+        sch = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, mode='min', patience=patience, factor=factor)  #, verbose=True
+
+        meta_nets .append(net)
+        optimizers.append(opt)
+        schedulers.append(sch)
+
+
     criterion = nn.MSELoss()
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=patience, factor=factor)  #, verbose=True
 
-    preds_train, context_train, y_train = to_tensors(df_train, feature_cols)
-    preds_valid, context_valid, y_valid = to_tensors(df_valid, feature_cols)
-
-    # Create datasets and loaders
-    train_dataset= TensorDataset(preds_train, context_train, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,   shuffle=True)
-
-    valid_dataset= TensorDataset(preds_valid, context_valid, y_valid)
-    valid_loader = DataLoader(valid_dataset, batch_size=batch_size*2, shuffle=False)
-
-    meta_net = meta_net.to(device)
     best_valid_loss = float('inf')
+    _feature_cols = feature_cols + ['horizon']
+
+
+
 
     for epoch in range(epochs):
-        # Training
-        meta_net.train()
-        train_loss_total = 0.
+        epoch_weights    = []
+        train_loss_total = 0.;   len_train_dataset = 0.
+        valid_loss_total = 0.;   len_valid_dataset = 0.
 
-        for preds_train, context_train, y_train in train_loader:
-            preds_train  = preds_train  .to(device)
-            context_train= context_train.to(device)
-            y_train      = y_train      .to(device)
+        for h in range(pred_length):
+            df_train_h = df_train[df_train['horizon'] == h].drop(columns=['horizon'])
+            valid_loss_h = 0.
 
-            optimizer.zero_grad()
+            preds_train, context_train, y_train = to_tensors(df_train_h, _feature_cols)
+            train_dataset = TensorDataset(preds_train, context_train, y_train)
 
-            # Forward pass
-            y_meta, weights = meta_net(context_train, preds_train)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size= batch_size,
+                shuffle   = True,
+                drop_last = True
+            )
 
-            # Loss
-            loss_train = criterion(y_meta, y_train)
-
-            # Backward
-            loss_train.backward()
-            torch.nn.utils.clip_grad_norm_(meta_net.parameters(), 1.)
-            optimizer.step()
-
-            train_loss_total += loss_train.item() * len(y_train)
-
-        train_loss_avg = train_loss_total / len(train_dataset)
+            net = meta_nets [h]
+            opt = optimizers[h]
+            sch = schedulers[h]
 
 
-        # Validation
-        meta_net.eval()
-        valid_loss_total = 0.
+            # Training
+            net.train()
 
-        with torch.no_grad():
-            for preds_valid, context_valid, y_valid in valid_loader:
-                preds_valid  = preds_valid  .to(device)
-                context_valid= context_valid.to(device)
-                y_valid      = y_valid      .to(device)
+            for preds_b, context_b, y_b in train_loader:
 
-                y_meta_valid, weights_valid = meta_net(context_valid, preds_valid)
-                loss_valid = criterion(y_meta_valid, y_valid)
+                opt.zero_grad()
 
-                valid_loss_total += loss_valid.item() * len(y_valid)
+                # Forward pass
+                y_meta, weights = net(context_b.to(device),
+                                        preds_b.to(device))
+                # Loss
+                loss_train = criterion(y_meta, y_b.to(device))
 
-        valid_loss_avg = valid_loss_total / len(valid_dataset)
+                # Backward
+                loss_train.backward()
+                torch.nn.utils.clip_grad_norm_(net.parameters(), 1.)
+                opt.step()
 
-        # Learning rate scheduling
-        scheduler.step(valid_loss_avg)
+                train_loss_total  += loss_train.item() * len(y_b)
+                len_train_dataset += len(y_b)
 
+
+            # Validation
+            df_valid_h = df_valid[df_valid['horizon'] == h]
+            preds_valid, context_valid, y_valid = to_tensors(df_valid_h, _feature_cols)
+            valid_dataset= TensorDataset(preds_valid, context_valid, y_valid)
+            valid_loader = DataLoader(valid_dataset,
+                                      batch_size=batch_size*2, shuffle=False)
+
+            net.eval()
+
+            with torch.no_grad():
+                for preds_b, context_b, y_b in valid_loader:
+                    y_meta_b, weights = net(context_b.to(device),
+                                              preds_b.to(device))
+                    epoch_weights.append(weights.cpu())
+                    loss_valid = criterion(y_meta_b, y_b.to(device))
+
+                    valid_loss_total  += loss_valid.item() * len(y_b)  # whole epoch
+                    valid_loss_h      += loss_valid.item() * len(y_b)  # this h
+                    len_valid_dataset += len(y_b)
+
+
+            # Learning rate scheduling
+            sch.step(valid_loss_h)
+
+
+        train_loss_avg = train_loss_total / len_train_dataset
+        valid_loss_avg = valid_loss_total / len_valid_dataset
         # Logging
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            avg_weights = weights_valid.mean(dim=0).cpu().numpy()
+
+
+        if (epoch + 1) % 2 == 0 or epoch == 0:
+            all_w = torch.cat(epoch_weights, dim=0)
+            avg_weights = all_w.mean(dim=0).numpy()
             print(f"Epoch{epoch+1:3n}/{epochs}: "
                   f"losses train{train_loss_avg:6.2f}, "
                   f"valid{valid_loss_avg:6.2f}; "
@@ -269,12 +310,12 @@ def train_meta_model(
         # Save best model
         if valid_loss_avg < best_valid_loss:
             best_valid_loss = valid_loss_avg
-            torch.save(meta_net.state_dict(), 'cache/best_metamodel.pth')
+            # torch.save(net.state_dict(), 'cache/best_metamodel.pth')
 
     # Load best model
-    meta_net.load_state_dict(torch.load('cache/best_metamodel.pth', weights_only=True))
+    # load_state_dict(torch.load('cache/best_metamodel.pth', weights_only=True))
 
-    return meta_net
+    return meta_nets
 
 
 
@@ -282,6 +323,7 @@ def train_meta_model(
 def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
                 feature_cols,
                 #constants
+                pred_length:int,
                 dropout   : float,
                 num_cells : int,
                 epochs    : int,
@@ -300,7 +342,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
     [train_dates, valid_dates,test_dates]= list_dates
 
 
-    _feature_cols = feature_cols + ['hour_norm']
+    _feature_cols = feature_cols + ['horizon']
 
     # Prepare data
     df_meta_train = prepare_meta_data(
@@ -310,7 +352,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
         X_train_GW,
         y_train_GW,
         train_dates,
-        feature_cols  # /!\ 'hour_norm' will be added inside
+        feature_cols  # /!\ 'horizon' will be added inside
     )
 
     df_meta_valid = prepare_meta_data(
@@ -320,24 +362,23 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
         X_valid_GW,
         y_valid_GW,
         valid_dates,
-        feature_cols  # /!\ 'hour_norm' will be added inside
+        feature_cols  # /!\ 'horizon' will be added inside
     )
 
-    # Initialize meta-model
-    context_cols = [c for c in _feature_cols
-                    if c not in ['consumption_nn', 'consumption_lr', 'consumption_rf']]
-    print(f"len feature_cols {len(feature_cols)}, _feature_cols {len(_feature_cols)}, "
-          f"context_cols {len(context_cols)}")
 
-    meta_net = MetaNet(context_dim=len(context_cols), num_predictors=3,
-                                 dropout=dropout, num_cells=num_cells)
+
+    # meta_net = MetaNet(context_dim=len(context_cols), num_predictors=3,
+    #                              dropout=dropout, num_cells=num_cells)
 
     # Train
-    meta_net = train_meta_model(
-        meta_net,
+    meta_nets = train_meta_model(
+        # meta_net,
         df_meta_train,
         df_meta_valid,
-        _feature_cols,
+        feature_cols,
+        pred_length,
+        dropout,
+        num_cells,
         epochs      ,
         lr          ,
         weight_decay,
@@ -355,28 +396,67 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
         X_test_GW,
         y_test_GW,
         test_dates,
-        feature_cols  # /!\ 'hour_norm' will be added inside
+        feature_cols  # /!\ 'horizon' will be added inside
     )
 
     preds_train, context_train, y_train = to_tensors(df_meta_train, _feature_cols)
     preds_valid, context_valid, y_valid = to_tensors(df_meta_valid, _feature_cols)
     preds_test,  context_test,  y_test =  to_tensors(df_meta_test,  _feature_cols)
 
-    meta_net.eval()
+
+
+    pred_meta2_train = torch.zeros(len(df_meta_train), device=device)
+    pred_meta2_valid = torch.zeros(len(df_meta_valid), device=device)
+    pred_meta2_test  = torch.zeros(len(df_meta_test ), device=device)
+
+
+    weights_train_all = []
+    weights_valid_all = []
+    weights_test_all  = []
+
     with torch.no_grad():
-        pred_meta2_train, weights_train = \
-            meta_net(context_train.to(device), preds_train.to(device))
-        pred_meta2_valid, weights_valid = \
-            meta_net(context_valid.to(device), preds_valid.to(device))
-        pred_meta2_test,  weights_test  = \
-            meta_net(context_test .to(device), preds_test .to(device))
+        for h in range(pred_length):
+            net = meta_nets[h]
+            net.eval()
+
+            # ---- TRAIN ----
+            idx = (df_meta_train['horizon'].values == h)
+            if idx.any():
+                y_hat, w = net(
+                    context_train[idx].to(device),
+                    preds_train[idx].to(device)
+                )
+                pred_meta2_train[idx] = y_hat
+                weights_train_all.append(w.cpu())
+
+            # ---- VALID ----
+            idx = (df_meta_valid['horizon'].values == h)
+            if idx.any():
+                y_hat, w = net(
+                    context_valid[idx].to(device),
+                    preds_valid[idx].to(device)
+                )
+                pred_meta2_valid[idx] = y_hat
+                weights_valid_all.append(w.cpu())
+
+            # ---- TEST ----
+            idx = (df_meta_test['horizon'].values == h)
+            if idx.any():
+                y_hat, w = net(
+                    context_test[idx].to(device),
+                    preds_test[idx].to(device)
+                )
+                pred_meta2_test[idx] = y_hat
+                weights_test_all.append(w.cpu())
+
 
     # Evaluate
     rmse_test = torch.sqrt(torch.mean((pred_meta2_test - y_test.to(device))**2))
     print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
 
     # Analyze learned weights
-    avg_weights_test = weights_test.mean(dim=0).cpu().numpy()
+    weights_test_all = torch.cat(weights_test_all, dim=0)  # (N_total, 3)
+    avg_weights_test = weights_test_all.mean(dim=0)
     print(f"Average test weights: NN={avg_weights_test[0]*100:.1f}%, "
           f"LR={avg_weights_test[1]*100:.1f}%, RF={avg_weights_test[2]*100:.1f}%")
 

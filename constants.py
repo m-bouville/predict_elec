@@ -26,7 +26,7 @@ def days_to_steps(num_days: float, num_steps_per_day=NUM_STEPS_PER_DAY) -> int:
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
+SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
 
 SEED         =   0              # For reproducibility
 
@@ -80,14 +80,14 @@ PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
 # metamodel
-META_EPOCHS     = [  5, 30, 50, 80]
-META_LR         =   2e-4  # learning rate
+META_EPOCHS     = [  1, 10, 15, 20]
+META_LR         =   5e-4  # learning rate
 META_WEIGHT_DECAY=  1e-5
 META_BATCH_SIZE = 256
-META_DROPOUT    =   0.2
-META_NUM_CELLS  = [32, 16]
-META_PATIENCE   =  10
-META_FACTOR     =   0.5
+META_DROPOUT    =   0.05
+META_NUM_CELLS  = [64, 32]
+META_PATIENCE   =   4
+META_FACTOR     =   0.7
 
 VERBOSE: int   = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 

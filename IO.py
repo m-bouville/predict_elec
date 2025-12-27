@@ -663,8 +663,8 @@ def print_model_summary(
 
     print("\n===== METAMODEL =====")
     print(f"{'META_EPOCHS'  :17s} ={meta_epochs:5n}")
-    print(f"{'META_LR'      :17s} ={meta_lr:8.2f}")
-    print(f"{'META_WEIGHT_DECAY':17s} ={meta_weight_decay:8.2f}")
+    print(f"{'META_LR'      :17s} ={meta_lr*1e3:8.2f}e-3")
+    print(f"{'META_WEIGHT_DECAY':17s} ={meta_weight_decay*1e6:8.2f}e-6")
     print(f"{'META_BATCH_SIZE':17s} ={meta_batch_size:5n}")
     print(f"{'META_DROPOUT'  :17s} ={meta_dropout:8.2f}")
     print(f"{'META_NUM_CELLS':17s} = {meta_num_cells}")

@@ -40,8 +40,9 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['doy_norm']  =  df.index.dayofyear / 365
 
     # sine waves
-    for _hours in [12, 24]:  # several periods per day
+    for _hours in [6, 12, 24]:  # several periods per day
         df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
+    df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
 
     df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
     # df['cos_1wk']  = np.cos(2*np.pi*df['dow_norm'])
@@ -55,6 +56,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16)   # (0: Monday)
     df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
     df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
+    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # for morning
 
     if verbose >= 3:
         print(df.head().to_string())
@@ -415,7 +417,7 @@ def compare_models(true_series, dict_pred_series,
         rows.append({
             "model": name,
             "bias":  res.mean(),
-            "std":   res.std(),
+            # "std":   res.std(),
             "RMSE":  rmse(y_pred, y_true),
             "MAE":   mae (y_pred, y_true),
         })
@@ -428,6 +430,17 @@ def compare_models(true_series, dict_pred_series,
 
     if verbose >= 1:
         print(df_metrics.round(3))
+
+        # plotting RMSE as a function of bias for the different models
+        plt.figure(figsize=(10,6))
+        for model in df_metrics.index:
+            plt.scatter(df_metrics.loc[model, 'bias'],
+                        df_metrics.loc[model, 'RMSE'], label=model)
+        plt.xlabel(subset + ' bias [GW]'); plt.xlim(-0.5, 1.5)
+        plt.ylabel(subset + ' RMSE [GW]'); plt.ylim( 0.,  5. ) # plt.ylim(bottom=0.)
+        plt.legend()
+        plt.show()
+
 
 
 
@@ -448,7 +461,6 @@ def compare_models(true_series, dict_pred_series,
         })
         print(df_rmse_hour.round(2))
 
-        import matplotlib.pyplot as plt
 
         plt.figure(figsize=(10, 6))
         for col in df_rmse_hour.columns:
