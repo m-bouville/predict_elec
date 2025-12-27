@@ -1,5 +1,5 @@
 
-from   typing import Tuple, Sequence  #, List, Dict, Optional
+from   typing import Tuple, List, Sequence  #, Dict, Optional
 # from   collections import defaultdict
 
 import torch
@@ -405,11 +405,12 @@ class TimeSeriesTransformer(nn.Module):
         self.num_geo_blocks = num_geo_blocks
         self.geo_block_ratio= geo_block_ratio
 
-        self.block_sizes    = geometric_block_sizes(
+        self.block_sizes    = block_sizes(
             self.num_patches,
             self.num_geo_blocks,
             self.geo_block_ratio
         )
+
         assert sum(self.block_sizes) == self.num_patches
 
         self.block_ranges = []
@@ -457,35 +458,27 @@ class TimeSeriesTransformer(nn.Module):
             h, _ = layer(h, return_attn=False)      # (B, num_patches, model_dim)
 
         # Geometric block pooling
-        B, T, D = h.shape   # (batch_size = 256, num_tokens ≈ 160, model_dim = 256)
+        B, T, D = h.shape                   # (batch_size, num_tokens, model_dim)
         assert T == self.num_patches, (T, self.num_patches)
         assert D == self.dim_model,   (D, self.dim_model)
 
-        # block_sizes = geometric_block_sizes(
-        #     T, self.num_geo_blocks, self.geo_block_ratio)
-
         assert sum(self.block_sizes) == T, \
             "Geometric block sizes must sum to num_tokens ({T}), not {block_sizes}"
-        # block_sizes = compute_geometric_block_sizes(
-        #     num_tokens=T,
-        #     num_blocks=NUM_GEO_BLOCKS,
-        #     ratio=GEO_BLOCK_RATIO
-        # )
 
         # hybrid representation
         h_last = h[:, -1, :]          # (B, D)
-
 
         h_blocks = torch.stack([
                 h[:, start:end, :].mean(dim=1)
                 for start, end in self.block_ranges
             ], dim=1)  # (B, num_blocks, D)
 
+        # h_final = h_blocks.reshape(B, len(self.block_sizes) * D)   # (B, K·D)
 
         h_weighted = self.block_weighting(h_blocks)    # (B, D)
 
-        h_final = torch.cat([h_last, h_weighted], dim=-1)   # TODO remove h_geo
-        # (B, 960)
+        # h_final = h_weighted                              # (B, 2D)
+        h_final = torch.cat([h_last, h_weighted], dim=-1)   # (B,  D)
 
         expected_in = self.fc_out[0].in_features   # first Linear in your Sequential
         assert h_final.shape[1] == expected_in, (
@@ -525,25 +518,44 @@ class EarlyStopping:
         return False
 
 
+def constant_block_sizes(num_tokens: int, num_blocks: int) -> List[float]:
+    # print("constant", num_tokens, num_blocks)
+    sizes = [int(round(num_tokens / num_blocks))] * num_blocks
+
+    # Fix rounding drift so sum == num_tokens
+    drift: int = num_tokens - sum(sizes)
+    for i in range(abs(drift)):  # push correction of +/- 1 into enough blocks
+        sizes[-(i+1)] += int(np.sign(drift))
+    # print(sizes, sum(sizes), num_tokens)
+
+    return sizes
 
 
-def geometric_block_sizes(num_tokens, num_blocks, ratio):
+def geometric_block_sizes(num_tokens: int, num_blocks: int, ratio: float) -> List[float]:
     """
     Returns a list of block sizes that:
     - follow a geometric progression
     - sum exactly to num_tokens
     - give highest resolution to the most recent block
     """
-    weights = [ratio ** i for i in reversed(range(num_blocks))]
+    # print("geometric", num_tokens, num_blocks, ratio)
+    weights = [max(ratio ** i, 1./num_tokens) for i in reversed(range(num_blocks))]
+    # print([round(w, 3) for w in weights])
     total = sum(weights)
-
-    sizes = [int(round(num_tokens * w / total)) for w in weights]
+    # print([round(num_tokens * w / total, 3) for w in weights])
+    sizes = [max(int(round(num_tokens * w / total)), 1) for w in weights]
 
     # Fix rounding drift so sum == num_tokens
     drift = num_tokens - sum(sizes)
-    sizes[-1] += drift   # push correction into most recent block
+    sizes[-1] += drift   # push correction into largest block
 
     return sizes
+
+
+def block_sizes(num_tokens: int, num_blocks: int, ratio: float) -> List[float]:
+    if np.isclose(ratio, 1):
+        return constant_block_sizes(num_tokens, num_blocks)
+    return geometric_block_sizes(num_tokens, num_blocks, ratio)
 
 
 class BlockWeighting(nn.Module):
@@ -561,8 +573,8 @@ class BlockWeighting(nn.Module):
     def __init__(self, num_blocks, model_dim, use_proj=True):
         super().__init__()
         self.num_blocks = num_blocks
-        self.model_dim = model_dim
-        self.use_proj = use_proj
+        self.model_dim  = model_dim
+        self.use_proj   = use_proj
 
         # one scalar logit per block -> softmaxed to get weights
         self.logit = nn.Parameter(torch.zeros(num_blocks))

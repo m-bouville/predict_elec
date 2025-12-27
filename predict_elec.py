@@ -146,7 +146,9 @@ if __name__ == "__main__":
 
     num_time_steps = df.shape[0]
 
-    NUM_PATCHES = (INPUT_LENGTH - PATCH_LEN) // STRIDE + 1
+    NUM_PATCHES = (INPUT_LENGTH + FEATURES_IN_FUTURE*PRED_LENGTH - PATCH_LEN) \
+                    // STRIDE + 1
+
 
     if VERBOSE >= 1:
         IO.print_model_summary(
@@ -158,6 +160,7 @@ if __name__ == "__main__":
                 PATIENCE, MIN_DELTA,
                 MODEL_DIM, NUM_LAYERS, NUM_HEADS, FFN_SIZE,
                 PATCH_LEN, STRIDE, NUM_PATCHES,
+                NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
                 QUANTILES,
                 LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN,
                 META_EPOCHS, META_LR, META_WEIGHT_DECAY, META_BATCH_SIZE,
@@ -269,12 +272,6 @@ NUM_FEATURES   = len(feature_cols)  # /!\ y should not be included
 num_time_steps = series.shape[0]
 
 del df
-
-
-block_sizes = architecture.geometric_block_sizes(
-    NUM_PATCHES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO)
-if VERBOSE >= 1:
-    print(f"{'block_sizes'  :17s} = {block_sizes}")
 
 
 
@@ -553,28 +550,6 @@ if VERBOSE >= 2:
     print(f"metamodel  took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
-# NN metamodel
-# ============================================================
-
-
-
-
-pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
-    metamodel.metamodel_NN(
-        [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW],
-         [dict_baseline_train_GW,dict_baseline_valid_GW,dict_baseline_test_GW],
-         [X_train_GW,  X_valid_GW, X_test_GW],
-         [y_train_GW,  y_valid_GW, y_test_GW],
-         [train_dates, valid_dates,test_dates],
-        feature_cols,
-        #constants
-        META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
-        META_LR, META_WEIGHT_DECAY,
-        META_PATIENCE, META_FACTOR,
-        META_BATCH_SIZE, device)
-
-
-
 
 
 
@@ -648,19 +623,6 @@ pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
 # with torch.no_grad():
 #     y_meta, weights = meta_net(X_flat, preds_flat)
 #     y_meta = y_meta  #.view(B, H)
-
-
-
-if VERBOSE >= 1:
-    print("\nTraining metrics [GW]:")
-    utils.compare_models(true_train_GW, dict_pred_train_GW, dict_baseline_train_GW,
-                         [pred_meta1_train, pred_meta2_train],
-                         subset="train", unit="GW", verbose=VERBOSE)
-
-    print("\nvalidation metrics [GW]:")
-    utils.compare_models(true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
-                         [pred_meta1_valid, pred_meta2_valid],
-                         subset="valid", unit="GW", verbose=VERBOSE)
 
 
 # if VERBOSE >= 2:
@@ -742,6 +704,14 @@ true_test_GW, dict_pred_test_GW, dict_baseline_test_GW = \
 # print("dict_baseline_test_GW:\n", {_name: _test.head() \
 #                     for (_name, _test) in dict_baseline_test_GW.items()})
 
+if VERBOSE >= 1:
+    print("\nTesting quantiles")
+    for tau in QUANTILES:
+        key = f"q{int(100*tau)}"
+        cov = utils.quantile_coverage(true_test_GW, dict_pred_test_GW[key])
+        print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
+              f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
+    print()
 
 name_baseline =  'rf' if 'rf' in dict_baseline_test_GW else \
                 ('lr' if 'lr' in dict_baseline_test_GW else None)
@@ -759,14 +729,6 @@ for _name in ['rf']:  # 'lr',
 
 # assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
 # TODO reinstate assert
-
-if VERBOSE >= 1:
-    print("\nTesting quantiles")
-    for tau in QUANTILES:
-        key = f"q{int(100*tau)}"
-        cov = utils.quantile_coverage(true_test_GW, dict_pred_test_GW[key])
-        print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
-              f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
 
 
 true_test_GW = true_test_GW.loc[common_idx]
@@ -793,38 +755,38 @@ for k in dict_baseline_test_GW:
 #     freq=f"{MINUTES_PER_STEP}min"
 # )
 
-with torch.no_grad():
-    last_window = X_test_scaled[-(INPUT_LENGTH+FEATURES_IN_FUTURE*PRED_LENGTH):] # (L, F)
-    last_window = torch.tensor(last_window).unsqueeze(0).to(device)
+# with torch.no_grad():
+#     last_window = X_test_scaled[-(INPUT_LENGTH+FEATURES_IN_FUTURE*PRED_LENGTH):] # (L, F)
+#     last_window = torch.tensor(last_window).unsqueeze(0).to(device)
 
-    pred = model(last_window)                  # (1, H, Q)
-    pred = pred.squeeze(0).cpu().numpy()       # (H, Q)
+#     pred = model(last_window)                  # (1, H, Q)
+#     pred = pred.squeeze(0).cpu().numpy()       # (H, Q)
 
-    # Inverse scaling (works column-wise)
-    future_pred = scaler_y.inverse_transform(pred)     # (H, Q)
+#     # Inverse scaling (works column-wise)
+#     future_pred = scaler_y.inverse_transform(pred)     # (H, Q)
 
-    # # Build one Series per quantile
-    # future_series = {
-    #     f"q{int(100*tau)}": pd.Series(
-    #         future_pred[:, i],
-    #         index=future_dates
-    #     )
-    #     for i, tau in enumerate(QUANTILES)
-    # }
+#     # # Build one Series per quantile
+#     # future_series = {
+#     #     f"q{int(100*tau)}": pd.Series(
+#     #         future_pred[:, i],
+#     #         index=future_dates
+#     #     )
+#     #     for i, tau in enumerate(QUANTILES)
+#     # }
 
-    # free temporaries
-    try:
-        del pred, last_window, future_pred
-    except NameError:
-        pass
-    gc.collect()
-    torch.cuda.empty_cache()
+#     # free temporaries
+#     try:
+#         del pred, last_window, future_pred
+#     except NameError:
+#         pass
+#     gc.collect()
+#     torch.cuda.empty_cache()
 
 
 
 
 # ============================================================
-# 8. PLOT ROLLING RESULTS (all test windows)
+# 8. METAMODEL
 # ============================================================
 # print(len(true_series), len(lr_series))
 # assert len(true_series) == len(lr_series),\
@@ -834,7 +796,34 @@ with torch.no_grad():
 
 # meta2_test_GW = pd.Series(pred_meta2_test.cpu().numpy(), index=df_meta_test.index)
 
+
+# NN metamodel
+# ============================================================
+
+pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
+    metamodel.metamodel_NN(
+        [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW],
+         [dict_baseline_train_GW,dict_baseline_valid_GW,dict_baseline_test_GW],
+         [X_train_GW,  X_valid_GW, X_test_GW],
+         [y_train_GW,  y_valid_GW, y_test_GW],
+         [train_dates, valid_dates,test_dates],
+        feature_cols,
+        #constants
+        META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
+        META_LR, META_WEIGHT_DECAY,
+        META_PATIENCE, META_FACTOR,
+        META_BATCH_SIZE, device)
+
 if VERBOSE >= 1:
+    print("\nTraining metrics [GW]:")
+    utils.compare_models(true_train_GW, dict_pred_train_GW, dict_baseline_train_GW,
+                         [pred_meta1_train, pred_meta2_train],
+                         subset="train", unit="GW", verbose=VERBOSE)
+
+    print("\nvalidation metrics [GW]:")
+    utils.compare_models(true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
+                         [pred_meta1_valid, pred_meta2_valid],
+                         subset="valid", unit="GW", verbose=VERBOSE)
 
     print("\nTesting metrics [GW]:")
     utils.compare_models(true_test_GW, dict_pred_test_GW,

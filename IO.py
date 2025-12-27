@@ -12,7 +12,7 @@ import numpy  as np
 import pandas as pd
 
 
-import plots
+import architecture, plots
 
 
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
@@ -593,6 +593,7 @@ def print_model_summary(
     patience: int,  min_delta,
     model_dim: int,  num_layers: int,  num_heads: int, ffn_size: int,
     patch_len: int,  stride: int,  num_patches: int,
+    num_geo_blocks: int, geo_block_ratio: float,
     # quantile loss
     quantiles,
     lambda_cross:   float,
@@ -655,6 +656,10 @@ def print_model_summary(
     print(f"{'PATCH_LEN'   :17s} ={patch_len:5n} half-hours")
     print(f"{'STRIDE'      :17s} ={stride:5n} half-hours"
           f" => NUM_PATCHES ={num_patches:5n}")
+
+    block_sizes = architecture.block_sizes(
+        num_patches, num_geo_blocks, geo_block_ratio)
+    print(f"{'block_sizes'  :17s} = {block_sizes}")
 
     print("\n===== METAMODEL =====")
     print(f"{'META_EPOCHS'  :17s} ={meta_epochs:5n}")

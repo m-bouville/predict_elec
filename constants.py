@@ -60,8 +60,8 @@ LAMBDA_MEDIAN  = 0.5
 SMOOTHING_CROSS= 0.02
 QUANTILES      = (0.1, 0.25, 0.5, 0.75, 0.9)
 
-NUM_GEO_BLOCKS=[  1,  3,  4,  6]
-GEO_BLOCK_RATIO= 0.5            # each block is half the size of the previous (geometric)
+NUM_GEO_BLOCKS=[  2,  5, 10, 15]
+GEO_BLOCK_RATIO=  1            # each block is half the size of the previous (geometric)
 
 LEARNING_RATE=   7.5e-3          # Optimizer learning rate
 WEIGHT_DECAY =   1.e-7
@@ -80,7 +80,7 @@ PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
 # metamodel
-META_EPOCHS     =  50
+META_EPOCHS     = [  5, 30, 50, 80]
 META_LR         =   2e-4  # learning rate
 META_WEIGHT_DECAY=  1e-5
 META_BATCH_SIZE = 256
@@ -111,6 +111,7 @@ NUM_LAYERS   = NUM_LAYERS   [IDX_SYSTEM_SIZE]
 NUM_GEO_BLOCKS=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
 PATIENCE     = PATIENCE     [IDX_SYSTEM_SIZE]
 WARMUP_STEPS = WARMUP_STEPS [IDX_SYSTEM_SIZE]
+META_EPOCHS  = META_EPOCHS  [IDX_SYSTEM_SIZE]
 BASELINE_CFG = (LR_RF.baseline_cfg)[IDX_SYSTEM_SIZE]
 
 
