@@ -185,11 +185,6 @@ rf_params = dict(
         train_end     = TRAIN_SPLIT-n_valid,
         val_end       = TRAIN_SPLIT,
         models_cfg    = BASELINE_CFG,
-        # quantiles     = QUANTILES,
-        # lambda_cross  = LAMBDA_CROSS,
-        # lambda_coverage=LAMBDA_COVERAGE,
-        # lambda_deriv  = LAMBDA_DERIV,
-        # smoothing_cross=SMOOTHING_CROSS,
         verbose       = VERBOSE
     )
 
@@ -317,16 +312,6 @@ if VERBOSE >= 2:
     print(f"Train std :{scaler_y.scale_[0]:6.2f} GW")
     print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
     print(f"Test mean :{y_test_GW.mean()  :6.2f} GW")
-
-# # scale loss for LR
-# sigma_y = float(scaler_y.scale_[0])   # scale to normalize y (use for loss)
-# if VERBOSE >= 1:
-#     print(f"sigma_y = {sigma_y:.1f} GW")
-# baseline_losses_quantile_scaled = {
-#     name: {k: v / sigma_y / 2 for k, v in d.items()}  # BUG hack!
-#     for name, d in baseline_losses_quantile_GW.items()
-# }
-# # lr_losses = {_key: lr_losses[_key] / sigma_y**2 for _key in lr_losses}
 
 
 # Free heavy CPU-side arrays that are no longer needed.
@@ -550,79 +535,6 @@ if VERBOSE >= 2:
 
 
 
-
-
-#
-# class MetaNet(nn.Module):
-#     def __init__(self, in_dim):
-#         super().__init__()
-#         self.net = nn.Sequential(
-#             nn.Linear(in_dim, 16),
-#             nn.ReLU(),
-#             nn.Linear(16, 16),
-#             nn.ReLU(),
-#             nn.Linear(16, 3)
-#         )
-
-#     def forward(self, x, preds):  # preds = (nn, lr, rf)
-#         w = torch.softmax(self.net(x), dim=-1)
-#         y = (w * preds).sum(dim=-1)
-#         return y, w
-
-# criterion = nn.MSELoss()
-
-# df_input = pd.concat([
-#         dict_pred_valid_GW   ['q50'],
-#         # dict_baseline_valid_GW['lr'],
-#         # dict_baseline_valid_GW['rf'],
-#         pd.DataFrame(X_valid_GW, index= valid_dates)
-#     ], axis=1, join="inner").astype(np.float32)
-# df_input.columns = ['nn'] + feature_cols
-# print(df_input.shape)
-
-
-# # (B*H, 3)
-# preds = torch.stack([
-#     torch.tensor(df_input['nn'            ].values, dtype=torch.float32),
-#     torch.tensor(df_input['consumption_lr'].values, dtype=torch.float32),
-#     torch.tensor(df_input['consumption_rf'].values, dtype=torch.float32)
-#     ], dim=-1
-# )
-# print(f"preds: {preds.shape}")
-
-# context = df_input.drop(columns=['nn', 'consumption_lr', 'consumption_rf'])
-# print(f"context: {context.shape}")
-# F = context.shape[1]
-
-# # (B*H, 1 + F)  # F already include LR and RF
-# X = torch.cat([preds,
-#                torch.tensor(context.values, dtype=torch.float32)
-#                ], dim=-1)
-# print(f"X: {X.shape}")
-
-# # flatten for the meta network
-# BH, _      = X    .shape
-# X_flat     = X     .to(device)# .view(B * H, F)     # (B·H, F)
-# preds_flat = preds .to(device) #.view(B * H, 3)     # (B·H, 3)
-
-# # Training step
-# for epoch in range(10):
-#     meta_net = MetaNet(in_dim=F).to(device)
-#     y_meta_flat, weights_flat = meta_net(X_flat, preds_flat).cpu()
-
-#     y_meta  = y_meta_flat  #.view(B, H)          # final forecast
-#     weights = weights_flat #.view(B, H, 3)     # interpretability
-
-#     loss = criterion(y_meta, true_valid_GW.squeeze(-1))
-#     loss.backward()
-#     optimizer.step()
-
-# # inference
-# with torch.no_grad():
-#     y_meta, weights = meta_net(X_flat, preds_flat)
-#     y_meta = y_meta  #.view(B, H)
-
-
 # if VERBOSE >= 2:
 #     y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
 #         utils.aggregate_day_ahead(
@@ -735,50 +647,6 @@ for k in dict_pred_test_GW:
 for k in dict_baseline_test_GW:
     dict_baseline_test_GW[k] = dict_baseline_test_GW[k].loc[common_idx]
 
-# assert true_series.index.equals(dict_pred_series['median'].index),\
-#     (true_series.index, dict_pred_series['median'].index)
-# assert true_series.index.equals(dict_baseline_series['rf'].index),\
-#     (true_series.index, dict_baseline_series['rf'].index)
-
-
-# ============================================================
-# 9. FINAL OUT-OF-SAMPLE FORECAST (beyond last available data)
-# ============================================================
-
-# # future dates: add months to last observed date
-# last_date = true_series_GW.index[-1]
-# future_dates = pd.date_range(
-#     start=last_date + pd.Timedelta(minutes=MINUTES_PER_STEP),
-#     periods=PRED_LENGTH,
-#     freq=f"{MINUTES_PER_STEP}min"
-# )
-
-# with torch.no_grad():
-#     last_window = X_test_scaled[-(INPUT_LENGTH+FEATURES_IN_FUTURE*PRED_LENGTH):] # (L, F)
-#     last_window = torch.tensor(last_window).unsqueeze(0).to(device)
-
-#     pred = model(last_window)                  # (1, H, Q)
-#     pred = pred.squeeze(0).cpu().numpy()       # (H, Q)
-
-#     # Inverse scaling (works column-wise)
-#     future_pred = scaler_y.inverse_transform(pred)     # (H, Q)
-
-#     # # Build one Series per quantile
-#     # future_series = {
-#     #     f"q{int(100*tau)}": pd.Series(
-#     #         future_pred[:, i],
-#     #         index=future_dates
-#     #     )
-#     #     for i, tau in enumerate(QUANTILES)
-#     # }
-
-#     # free temporaries
-#     try:
-#         del pred, last_window, future_pred
-#     except NameError:
-#         pass
-#     gc.collect()
-#     torch.cuda.empty_cache()
 
 
 
@@ -786,13 +654,6 @@ for k in dict_baseline_test_GW:
 # ============================================================
 # 8. METAMODEL
 # ============================================================
-# print(len(true_series), len(lr_series))
-# assert len(true_series) == len(lr_series),\
-#     f"{len(true_series)} != {len(lr_series)}"
-# assert true_series.index.equals(pred_series.index)
-# assert true_series.index.equals(lr_series.index)
-
-# meta2_test_GW = pd.Series(pred_meta2_test.cpu().numpy(), index=df_meta_test.index)
 
 
 # NN metamodel
