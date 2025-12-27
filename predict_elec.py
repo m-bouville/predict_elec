@@ -6,7 +6,7 @@ import gc
 import time
 
 import torch
-import torch.nn as nn
+# import torch.nn as nn
 
 import numpy  as np
 import pandas as pd
@@ -127,7 +127,8 @@ if __name__ == "__main__":
         print("  NA:", df.index[df.isna().any(axis=1)].tolist())
 
     # Keep date separately for plotting later
-    dates = df.index
+    dates     = df.index
+    Tavg_full = df["Tavg_degC"]   # for plots and worst days
 
     df = df.reset_index(drop=True)
 
@@ -264,9 +265,6 @@ if VERBOSE >= 3:
     print(f"series:{series.shape}")
     print("  NA:", np.where(np.isnan(series))[0])
 
-
-
-Tavg_full = df["Tavg_degC"].values   # for worst days
 
 NUM_FEATURES   = len(feature_cols)  # /!\ y should not be included
 num_time_steps = series.shape[0]
@@ -836,8 +834,10 @@ if VERBOSE >= 1:
 # print(dict_pred_test_GW['q50'])
 # print(dict_baseline_test_GW['rf'])
 # print(meta_test_GW)
+
 plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
                 dict_baseline_test_GW, pred_meta2_test, name_baseline,
+                Tavg_full.reindex(true_test_GW.index),
                 NUM_STEPS_PER_DAY)
 
 
