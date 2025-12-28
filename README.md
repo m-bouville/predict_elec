@@ -38,7 +38,7 @@ Gearing the model toward this specific case has two advantages:
 ## Architecture
 
 The strategy is based on a **two-stage architecture** with a strict separation of responsibilities:
-1. Firest, a Neural Network which uses Transformers to predict Quantiles (hereafter, NNTQ) estimates uncertainty.
+1. First, a Neural Network uses Transformers to predict Quantiles (hereafter, NNTQ), thus estimating uncertainty.
 2. Then, a meta-model forecasts the operational point as the mean.
 
 There is **no feedback loop** between the two stages.
@@ -49,12 +49,16 @@ Expected benefits
 - Better bias correction across regimes
 - Clean validation and interpretability at each stage
 
+The main file is `predict_elec.py`.
+
 
 ### Stage 1 — Quantile Neural Network
 
 **Input**
-- Raw exogenous and engineered features
-- LR and RF predictions (as features)
+- exogenous features (temperature, school holidays),
+- week-ends plus Fourier-like sine waves at different scales (day, year),
+- moving averages of recent consumption (but not so recent as to cause leaks),
+- predictions from baseline models (**linear regression, LR** and **random forest, RF**) used as features, *not* ensembled directly.
 
 **Output**
 - Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
@@ -77,29 +81,20 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
 **Input**
 - LR and RF predictions
 - Median (`q50`) output from stage 1
-- Potentially: raw features similar to those used in the quantile NN
-   - also, `q75` minus `q25` (uncertainty proxy)?
+  - also, `q75` minus `q25` (uncertainty proxy)?
 
 **Output**
 - A single point forecast optimized for mean accuracy
 
 **Training**
-- no quantiles (e.g. MAE or MSE)
-- Trained independently from the quantile NN
-- No gradient flow or feedback to Stage 1
+- A small dense neural network minimizing MSE, not quartiles
+- Trained independently from the quantile NN: no gradient flow or feedback to Stage 1
 
 **Role**
 - Correct systematic bias
 - Optimize operational point accuracy
 
 
-### Features
-The NN is trained using:
-- exogenous features (temperature, school holidays),
-- week-ends plus Fourier-like sine waves at different scales (day, year),
-- moving averages of recent consumption (but not so recent as to cause leaks),
-- predictions from baseline models used as features: **linear regression (LR)** and **random forest (RF)**
-  - LR and RF are *not* ensembled directly: they are treated as informative input features.
   
 ---
 
@@ -113,10 +108,6 @@ The NN is trained using:
   - Operational evaluation and comparison (RMSE, MAE, bias) implicitly target the conditional mean.
   - Using `q50` as a point forecast mixes these two objectives and can lead to persistent bias.
   - The Transformer is simultaneously responsible for learning uncertainty structure (quantiles) and producing a usable point forecast; any change improving point RMSE can degrade quantile calibration (and vice versa).
-
-- **No learned combination of predictors**
-  - The meta-model is less powerful than it could be: LR, RF and NN outputs are statically with a simple linear regression.
-  - A learned meta-learner would allow nonlinear bias correction, make weights regime-dependent and improve robustness across seasons and extreme events.
 
 - **Remote prdiction**
   - The model currently predicts _h_ to _h_ + 24: it must be allowed to skip the first 12 hours in validation -- run from _h_ to _h_ + 36 but vaidate on _h_ + 12 to _h_ + 36 only.

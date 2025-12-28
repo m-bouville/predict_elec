@@ -181,22 +181,46 @@ def test_scatter(
          meta_series     : pd.Series,
          name_baseline: str or None,
          x_axis_series:  pd.Series,
+         resample:       Optional[str] = None,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
-         ylim: [float, float] or None = None) -> None:
+         ylim: [float, float] or None = None,
+         alpha: Optional[float] = 1.) -> None:
 
-    # index common to all
+    # resample
+    if resample is not None:
+        if true_series is not None:
+            true_series = true_series.resample(resample).mean()
+
+        if meta_series is not None:
+            meta_series = meta_series.resample(resample).mean()
+
+        if baseline_series is not None:
+            baseline_series = baseline_series.resample(resample).mean()
+
+        dict_pred_series = {
+            name: s.resample(resample).mean()
+            for name, s in dict_pred_series.items()
+        }
+
+        x_axis_series = x_axis_series.resample(resample).mean()
+
+    # find common index
     common_idx = x_axis_series.index
+
     if true_series is not None:
         common_idx = common_idx.intersection(true_series.index)
+
     if meta_series is not None:
         common_idx = common_idx.intersection(meta_series.index)
 
-    if name_baseline is not None:
+    if baseline_series is not None:
         common_idx = common_idx.intersection(baseline_series.index)
 
-    for name, series in dict_pred_series.items():
-        common_idx = common_idx.intersection(series.index)
+    for s in dict_pred_series.values():
+        common_idx = common_idx.intersection(s.index)
 
+
+    # --- align everything ---
     x_axis_series = x_axis_series.loc[common_idx]
 
 
@@ -205,21 +229,21 @@ def test_scatter(
 
     if true_series is not None:
         plt.scatter(x_axis_series, true_series.loc[common_idx].values,
-                    label="actual", color="black", alpha=0.1)
+                    label="actual", color="black", alpha=alpha)
 
     for quantile, series in dict_pred_series.items():
         plt.scatter(x_axis_series, series.loc[common_idx].values,
                  color="red",
-                 alpha=0.1,
+                 alpha=alpha,
                  label=f"forecast NN ({quantile})")
 
     if name_baseline is not None:
         plt.scatter(x_axis_series, baseline_series.loc[common_idx].values,
-                 label=f"forecast {name_baseline}", color="green", alpha=0.1)
+                 label=f"forecast {name_baseline}", color="green", alpha=alpha)
 
     if meta_series is not None:
         plt.scatter(x_axis_series, meta_series.loc[common_idx].values,
-                    label="meta", color="blue", alpha=0.1)
+                    label="meta", color="blue", alpha=alpha)
 
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
@@ -280,20 +304,6 @@ def all_tests(true_series:         pd.Series,
     dict_residual_pred_series= {name: series - true_series\
         for name, series in dict_pred_series.items()}
 
-    #     test(residual_true_series, dict_residual_pred_series,
-    #          residual_baseline_series, residual_meta_series,
-    #          name_baseline, ylabel=f"consumption difference{_SMA_str} [GW]",
-    #          ylim=ylim[1], date_range=[zoom_start, zoom_end], moving_average=_SMA)
-
-
-    # _zoom = 360   # max(days_zoom)
-    # zoom_horizon= pd.Timedelta(days=_zoom)
-    # zoom_end    = true_series.index[-1]
-    # zoom_start  = zoom_end - zoom_horizon
-
-    # ylim[0] = [e + 5 for e in ylim[0]]
-    # ylim[1] = [e + 1 for e in ylim[1]]
-
 
     # plot seasonal consumption by date, SMA 1 week
     test(true_series, dict_pred_series, baseline_series, meta_series,
@@ -328,15 +338,17 @@ def all_tests(true_series:         pd.Series,
          ylim=ylim[1], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)  # smoothing a little
 
+
     # as a function of temperature
     if Tavg is not None:
-        Tavg = Tavg[Tavg.index.month.isin([11, 12, 1, 2, 3])]
+        Tavg = Tavg[Tavg.index.month.isin([10, 11, 12, 1, 2, 3, 4])]
         test_scatter(true_series, dict_pred_series, baseline_series, meta_series,
-            name_baseline, Tavg, ylim=[ylim[0][0]-5, ylim[0][1]+25],
+            name_baseline, Tavg, ylim=[ylim[0][0], ylim[0][1]+25],
+            resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]", ylabel="consumption [GW]")
         test_scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
-            name_baseline, Tavg, ylim=[-10,10],
+            name_baseline, Tavg, ylim=[-6,10], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]",
             ylabel="consumption difference [GW]")
 

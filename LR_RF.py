@@ -22,7 +22,6 @@ import pandas as pd
 
 from   sklearn.linear_model    import Ridge
 from   sklearn.ensemble        import RandomForestRegressor
-# from   sklearn.model_selection import TimeSeriesSplit
 
 # import matplotlib.pyplot as plt
 
@@ -188,11 +187,6 @@ def regression_and_forest(
     feature_cols:List[str],
     train_end:   int,   # end of training set (exclusive)
     val_end:     int,     # end of validation set (exclusive)
-    # quantiles:   Tuple[float, ...],
-    # lambda_cross:float,
-    # lambda_coverage:float,
-    # lambda_deriv:float,
-    # smoothing_cross:float,
     models_cfg:  Dict[str, dict],
     verbose:     int = 0
 ) -> Tuple[Dict[str, pd.Series], Ridge, Dict[str, Dict[str, float]]]:
@@ -245,18 +239,8 @@ def regression_and_forest(
     # 3. predictions on TRAIN only
     # -------------------------
 
-    # def mse(a,b): return float(np.mean((a-b)**2))
-
-    # def loss_quantile_GW(pred_GW, y_GW, sigma_y_GW=sigma_y_GW):
-    #     # /!\ Not linear: must work on scaled values
-    #     return losses.quantile_numpy(
-    #         pred_GW/sigma_y_GW, y_GW/sigma_y_GW, quantiles, lambda_cross=0.,
-    #         lambda_coverage=0., lambda_deriv=lambda_deriv,
-    #         smoothing_cross=smoothing_cross) * sigma_y_GW
-
     models            = dict()
     preds_GW          = dict()
-    # losses_quantile_GW= dict()
     series_pred_GW    = pd.Series()
 
     for name, cfg in models_cfg.items():  # name = e.g. 'lr', 'rf'
@@ -278,24 +262,10 @@ def regression_and_forest(
             pred_valid_GW = y_valid_GW
             pred_test_GW  = y_test_GW
 
-        # series_pred_GW[name] = {
-        #     'train': pd.Series(pred_train_GW, index=df.index[train_idx]),
-        #     'valid': pd.Series(pred_valid_GW, index=df.index[valid_idx]),
-        #     'test':  pd.Series(pred_test_GW,  index=df.index[test_idx ]),
-        # }
         series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
                             index = df.index)
         # print(series_pred_GW[name])
-
-
-    #     # Calculate losses
-    #     losses_quantile_GW[name]['train'] = loss_quantile_GW(pred_train_GW, y_train_GW)
-    #     losses_quantile_GW[name]['valid'] = loss_quantile_GW(pred_valid_GW, y_valid_GW)
-    #     losses_quantile_GW[name]['test' ] = loss_quantile_GW(pred_test_GW,  y_test_GW)
-
-    # if verbose >= 1:
-    #     print("quantile losses [GW]:\n", pd.DataFrame(losses_quantile_GW).round(1).T)
 
 
     # most relevant features

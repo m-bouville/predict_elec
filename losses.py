@@ -20,8 +20,8 @@ import numpy  as np
 # ----------------------------------------------------------------------
 
 def quantile_with_crossing_torch(
-    y_pred:         torch.Tensor,     # (B, H, Q)
-    y_true:         torch.Tensor,     # (B, H) or (B, H, 1)
+    y_pred:         torch.Tensor,     # (B, V, Q)
+    y_true:         torch.Tensor,     # (B, V) or (B, V, 1)
     quantiles:      Tuple[float, ...],
     lambda_cross:   float,
     lambda_coverage:float,
@@ -42,14 +42,14 @@ def quantile_with_crossing_torch(
         # Coverage penalty
         if lambda_coverage > 0.:
             # scale per horizon using target variability
-            scale_h    = torch.std(y_true, dim=0, unbiased=False)  # (H,)
-            tau_smooth = smoothing * scale_h.clamp_min(1e-3)       # (H,)
+            scale_h    = torch.std(y_true, dim=0, unbiased=False)  # (V,)
+            tau_smooth = smoothing * scale_h.clamp_min(1e-3)       # (V,)
             # tau_smooth = smoothing * torch.std(y_true)
 
             z = (y_pred[..., i] - y_true) / tau_smooth   # broadcast over B
             z = torch.clamp(z, -20., 20.)  # preventing overflow
-            soft_ind   = torch.sigmoid(z)         # (B, H)
-            coverage_h = soft_ind.mean(dim=0)     # (H,)
+            soft_ind   = torch.sigmoid(z)         # (B, V)
+            coverage_h = soft_ind.mean(dim=0)     # (V,)
             # coverage = torch.sigmoid(z).mean()
 
             err  = coverage_h - tau
@@ -68,8 +68,8 @@ def quantile_with_crossing_torch(
 
 
 def quantile_with_crossing_numpy(
-        y_pred        : np.ndarray,     # (B, H, Q)
-        y_true        : np.ndarray,     # (B, H)
+        y_pred        : np.ndarray,     # (B, V, Q)
+        y_true        : np.ndarray,     # (B, V)
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -95,14 +95,14 @@ def quantile_with_crossing_numpy(
         # Coverage penalty
         if lambda_coverage > 0.:
             # scale per horizon using target variability
-            scale_h    = np.std(y_true, axis=0, correction=0)     # (H,)
-            tau_smooth = smoothing * np.clip(scale_h, 1e-3, None)  # (H,)
+            scale_h    = np.std(y_true, axis=0, correction=0)     # (V,)
+            tau_smooth = smoothing * np.clip(scale_h, 1e-3, None)  # (V,)
             # tau_smooth = smoothing * np.std(y_true)
 
             z = (y_pred[..., i] - y_true) / tau_smooth
             z = np.clip(z, -20., 20.)  # preventing overflow
             soft_ind   = sigmoid(z)
-            coverage_h = soft_ind.mean(axis=0)   # (H,)
+            coverage_h = soft_ind.mean(axis=0)   # (V,)
             # coverage = sigmoid(z).mean()
 
             err  = coverage_h - tau
@@ -135,9 +135,9 @@ def derivative_torch(
     Parameters
     ----------
     y_pred : torch.Tensor
-        Shape (B, H, Q) or (B, H)
+        Shape (B, V, Q) or (B, V)
     y_true : torch.Tensor
-        Shape (B, H)
+        Shape (B, V)
 
     Returns
     -------
@@ -149,7 +149,7 @@ def derivative_torch(
     if y_pred.dim() < 2:
         return y_pred.new_zeros(())
 
-    # Ensure (B, H, Q)
+    # Ensure (B, V, Q)
     if y_pred.dim() == 2:
         y_pred = y_pred.unsqueeze(-1)
 
@@ -160,11 +160,11 @@ def derivative_torch(
     assert y_pred.shape[:2] == y_true.shape, (y_pred.shape, y_true.shape)
 
     # Temporal finite differences (within each sample)
-    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, H-1, Q)
-    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, H-1)
+    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, V-1, Q)
+    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, V-1)
 
     # Broadcast true derivatives over quantiles
-    dy_true = dy_true.unsqueeze(-1)                  # (B, H-1, 1)
+    dy_true = dy_true.unsqueeze(-1)                  # (B, V-1, 1)
 
     return torch.mean((dy_pred - dy_true) ** 2)  # MSE on derivative mismatch
 
@@ -181,9 +181,9 @@ def derivative_numpy(
     Parameters
     ----------
     y_pred : np.ndarray
-         Shape (B, H, Q), (B, H), or (B,)
+         Shape (B, V, Q), (B, V), or (B,)
     y_true : np.ndarray
-         Shape (B, H) or (B,)
+         Shape (B, V) or (B,)
 
     Returns
     -------
@@ -195,9 +195,9 @@ def derivative_numpy(
     if y_pred.ndim < 2 or y_true.ndim < 2:
         return 0.
 
-    # Ensure (B, H, Q)
+    # Ensure (B, V, Q)
     if y_pred.ndim == 2:
-        y_pred = y_pred[..., np.newaxis]   # (B, H, 1)
+        y_pred = y_pred[..., np.newaxis]   # (B, V, 1)
 
     # Horizon must exist
     if y_pred.shape[1] < 2:
@@ -208,10 +208,10 @@ def derivative_numpy(
     )
 
     # Temporal finite differences
-    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, H-1, Q)
-    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, H-1)
+    dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, V-1, Q)
+    dy_true = y_true[:, 1:]    - y_true[:, :-1]      # (B, V-1)
 
-    dy_true = dy_true[..., np.newaxis]               # (B, H-1, 1)
+    dy_true = dy_true[..., np.newaxis]               # (B, V-1, 1)
 
     return float(np.mean((dy_pred - dy_true) ** 2))
 
@@ -220,8 +220,8 @@ def derivative_numpy(
 # ----------------------------------------------------------------------
 
 def quantile_torch(
-        y_pred        : torch.Tensor,   # (B, H, Q)
-        y_true        : torch.Tensor,   # (B, H) or (B, H, 1)
+        y_pred        : torch.Tensor,   # (B, V, Q)
+        y_true        : torch.Tensor,   # (B, V) or (B, V, 1)
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -258,8 +258,8 @@ def quantile_torch(
 
 
 def quantile_numpy(
-        y_pred        : np.ndarray,     # (B, H, Q)
-        y_true        : np.ndarray,     # (B, H)
+        y_pred        : np.ndarray,     # (B, V, Q)
+        y_true        : np.ndarray,     # (B, V)
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,

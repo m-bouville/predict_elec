@@ -158,7 +158,9 @@ def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
     # Context features (exclude predictions and target)
 
     if 'horizon' not in df.columns:
-        df['horizon'] = (df.index.hour + df.index.minute/60) / 24
+        df['horizon'] = \
+            (df.index.hour*2 + df.index.minute/30).round().astype(np.int16)
+            # (df.index.hour + df.index.minute/60) / 24
 
     context_cols = [c for c in feature_cols
         if c not in ['consumption_nn', 'consumption_lr', 'consumption_rf']]
@@ -178,7 +180,8 @@ def train_meta_model(
     df_train,
     df_valid,
     feature_cols,
-    pred_length : int,
+    # pred_length : int,
+    valid_length: int,
     dropout     : float,
     num_cells   : int,
     epochs      : int,
@@ -227,7 +230,7 @@ def train_meta_model(
         train_loss_total = 0.;   len_train_dataset = 0.
         valid_loss_total = 0.;   len_valid_dataset = 0.
 
-        for h in range(pred_length):
+        for h in range(valid_length):
             df_train_h = df_train[df_train['horizon'] == h].drop(columns=['horizon'])
             valid_loss_h = 0.
 
@@ -323,15 +326,16 @@ def train_meta_model(
 def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
                 feature_cols,
                 #constants
-                pred_length:int,
-                dropout   : float,
-                num_cells : int,
-                epochs    : int,
-                lr        : float,
-                weight_decay:float,
-                patience  : int,
-                factor    : float,
-                batch_size: int,
+                # pred_length : int,
+                valid_length: int,
+                dropout     : float,
+                num_cells   : int,
+                epochs      : int,
+                lr          : float,
+                weight_decay: float,
+                patience    : int,
+                factor      : float,
+                batch_size  : int,
                 device):
 
     [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW] = list_dict_pred
@@ -373,18 +377,15 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
     # Train
     meta_nets = train_meta_model(
         # meta_net,
-        df_meta_train,
-        df_meta_valid,
+        df_meta_train, df_meta_valid,
         feature_cols,
-        pred_length,
+        valid_length,
         dropout,
         num_cells,
-        epochs      ,
-        lr          ,
-        weight_decay,
-        batch_size  ,
-        patience    ,
-        factor      ,
+        epochs,
+        lr, weight_decay,
+        batch_size,
+        patience, factor,
         device
     )
 
@@ -415,7 +416,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
     weights_test_all  = []
 
     with torch.no_grad():
-        for h in range(pred_length):
+        for h in range(valid_length):
             net = meta_nets[h]
             net.eval()
 
@@ -461,9 +462,9 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
           f"LR={avg_weights_test[1]*100:.1f}%, RF={avg_weights_test[2]*100:.1f}%")
 
 
-    pred_meta2_train = pd.Series(pred_meta2_train.cpu().numpy(), index=df_meta_train.index)
-    pred_meta2_valid = pd.Series(pred_meta2_valid.cpu().numpy(), index=df_meta_valid.index)
-    pred_meta2_test  = pd.Series(pred_meta2_test .cpu().numpy(), index=df_meta_test .index)
+    pred_meta2_train= pd.Series(pred_meta2_train.cpu().numpy(), index=df_meta_train.index)
+    pred_meta2_valid= pd.Series(pred_meta2_valid.cpu().numpy(), index=df_meta_valid.index)
+    pred_meta2_test = pd.Series(pred_meta2_test .cpu().numpy(), index=df_meta_test .index)
 
 
     return pred_meta2_train, pred_meta2_valid, pred_meta2_test

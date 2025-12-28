@@ -182,7 +182,7 @@ def load_temperature(path, weights,
     # out["T_spread_degC"] = Tavg.max(axis=1) - Tavg.min(axis=1)
 
     # for heating, we care only about T <= X °C
-    HEATING_REF_DEGC: int = 12
+    HEATING_REF_DEGC: int = 15
     Tsat_local = Tavg.clip(upper=HEATING_REF_DEGC)
     Tsat_local_3days = Tsat_local.rolling(3, min_periods=3).mean()
     name = 'Tavg_sat'+str(HEATING_REF_DEGC)
@@ -455,8 +455,8 @@ def _normalize_name(s: str) -> str:
     )
 
 
-def school_holidays(fname1: str = 'data/fr-en-calendrier-scolaire.csv',
-                    fname2: str = 'data/vacances_scolaires_2015_2017.csv') -> pd.DataFrame:
+def school_holidays(fname1: str='data/fr-en-calendrier-scolaire.csv',
+                    fname2: str='data/vacances_scolaires_2015_2017.csv')->pd.DataFrame:
     # URL = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/'
     # 'fr-en-calendrier-scolaire/exports/csv?delimiter=;'
 
@@ -480,8 +480,8 @@ def school_holidays(fname1: str = 'data/fr-en-calendrier-scolaire.csv',
 
     # Complement: holidays 2015-17
     holidays_2015_2017 = pd.read_csv(fname2, sep=",", comment="#")
-    holidays_2015_2017["start_date"]= pd.to_datetime(holidays_2015_2017["start_date"],utc=True)
-    holidays_2015_2017["end_date"]  = pd.to_datetime(holidays_2015_2017["end_date"],  utc=True)
+    for _date in ["start_date", "end_date"]:
+        holidays_2015_2017[_date] = pd.to_datetime(holidays_2015_2017[_date],utc=True)
 
     holidays = pd.concat([holidays_2015_2017, holidays], axis=0)
 
@@ -517,19 +517,6 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
     # zone_count = pd.Series(0, index=dates)
 
     holidays = school_holidays()
-    if verbose >= 3:
-        print(holidays.head())
-
-    # holidays_2015_2017 =\
-    #     pd.read_csv('data/vacances_scolaires_2015_2017.csv', sep=",", comment="#")
-
-    # holidays_2015_2017["start_date"]= pd.to_datetime(holidays_2015_2017["start_date"],utc=True)
-    # holidays_2015_2017["end_date"]  = pd.to_datetime(holidays_2015_2017["end_date"],  utc=True)
-    # if verbose >= 3:
-    #     print(holidays_2015_2017.head())
-
-    # holidays = pd.concat([holidays_2015_2017.drop(columns='holiday'),
-    #                       holidays], axis=0)
     if verbose >= 3:
         print(holidays.head())
 
@@ -582,7 +569,7 @@ def print_model_summary(
     minutes_per_step,  num_steps_per_day,
     num_time_steps,
     feature_cols,
-    input_length: int, pred_length: int, features_in_future:bool,
+    input_length: int, pred_length: int, valid_length: int, features_in_future:bool,
     # incr_steps_test,
     batch_size: int,
     epochs: int,
@@ -615,11 +602,11 @@ def print_model_summary(
     print(f"{'NUM_STEPS_PER_DAY':17s} ={num_steps_per_day:5n}")
 
     print("\n===== MODEL CONSTANTS =====")
-    print(f"{'INPUT_LENGTH':17s} ={input_length:5n} half-hours ={input_length/24/2:5.1f} days")
-    print(f"{'PRED_LENGTH' :17s} ={pred_length :5n} half-hours ={pred_length /24/2:5.1f} days")
-    # print(f"{'INCR_STEPS_TEST':17s} ={incr_steps_test:5n} half-hours ="
-    #       f"{incr_steps_test/24/2:5.1f} days")
-    print(f"{'FEATURES_IN_FUTURE' :17s} = features_in_future")
+    print(f"{'INPUT_LENGTH':17s} ={input_length:5n} half-hours"
+          f" ={input_length/num_steps_per_day:5.1f} days")
+    print(f"{'PRED_LENGTH' :17s} ={pred_length :5n} half-hours")
+    print(f"{'VALID_LENGTH':17s} ={valid_length:5n} half-hours")
+    print(f"{'FEATURES_IN_FUTURE':17s}= {features_in_future}")
 
     print("\n===== LOSSES =====")
     print(f"{'QUANTILES'   :17s} = {quantiles}")

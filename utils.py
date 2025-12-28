@@ -8,7 +8,7 @@
 # import os
 import time
 
-from   typing import List, Tuple, Dict  #, Sequence, Optional
+from   typing import List, Tuple, Dict, Optional  #, Sequence
 
 import torch
 
@@ -40,7 +40,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['doy_norm']  =  df.index.dayofyear / 365
 
     # sine waves
-    for _hours in [6, 12, 24]:  # several periods per day
+    for _hours in [6, 8, 12, 24]:  # several periods per day
         df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
     df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
 
@@ -57,6 +57,11 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
     df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
     df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # for morning
+
+    df['is_August'  ] = ((df.index.month     == 8) \
+                         & (df.index.day >= 5) & (df.index.day >= 25)).astype(np.int16)
+    df['is_Christmas']= (((df.index.month == 12) & (df.index.day >= 24)) | \
+                         ((df.index.month ==  1) & (df.index.day <=  2))).astype(np.int16)
 
     if verbose >= 3:
         print(df.head().to_string())
@@ -191,48 +196,6 @@ def compute_meta_prediction_torch(
     return pred_meta_scaled
 
 
-# def compute_meta_prediction_numpy(
-#         pred_scaled   : np.ndarray,   # (B, Q) or (B, H, Q)
-#         x_scaled      : np.ndarray,   # (B, L, F)
-#         baseline_idx  : Dict[str, int],
-#         weights_meta  : Dict[str, float],
-#         idx_median    : int
-#     ) -> np.ndarray:                  # (B,)
-#     """
-#     NumPy-only meta prediction for validation.
-#     """
-
-#     # B, Q = pred_scaled.shape
-
-#     # NN: take median only
-#     if pred_scaled.ndim == 3:
-#         # (B, H, Q)
-#         nn_pred = pred_scaled[:, :, idx_median]   # (B,)
-#     elif pred_scaled.ndim == 2:
-#         # (B, Q)
-#         nn_pred = pred_scaled[:, idx_median]      # (B,)
-#     else:
-#         raise ValueError(f"Unexpected pred_scaled shape {pred_scaled.shape}")
-#     print(f"[compute_meta_prediction_numpy] nn_pred.shape = {nn_pred.shape}")
-
-
-
-#     y_meta = weights_meta.get('nn', 0.) * nn_pred  # (B,)
-
-#     for _name in ['lr', 'rf']:
-#         w = weights_meta.get(_name, 0.)
-#         if w == 0.:
-#             continue
-#         if _name not in baseline_idx:
-#             raise ValueError(f"{_name} not in baseline_idx, yet weight={w} != 0")
-
-#         baseline = x_scaled[:, :, baseline_idx[_name]]  # (B,)
-#         print(f"[compute_meta_prediction_numpy] {_name} baseline.shape = {baseline.shape}")
-#         y_meta  += w * baseline                          # (B,)
-
-#     assert y_meta.ndim == 2, y_meta.shape
-
-#     return y_meta
 
 # -------------------------------------------------------
 # Testing
@@ -243,9 +206,9 @@ def compute_meta_prediction_torch(
 def subset_predictions_day_ahead(
     X_subset_GW, subset_loader, model, scaler_y,
     feature_cols, device,
-    input_length: int, pred_length: int, minutes_per_step: int,
+    input_length: int, pred_length: int, valid_length: int, minutes_per_step: int,
     quantiles: Tuple[float, ...]
-) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray], Tuple]:
     # subset: train, valid ot test
 
     # print(f"X_subset_GW.shape = {X_subset_GW.shape}")
@@ -257,8 +220,12 @@ def subset_predictions_day_ahead(
         nm for nm in ('lr', 'rf', 'oracle')
         if f"consumption_{nm}" in feature_cols
     ]
+    offset_steps = pred_length - valid_length + 1
+    print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
 
     records = []  # one record per (origin, horizon)
+    min_origin_time =  np.inf
+    max_origin_time = -np.inf
 
     # Iterate once: no aggregation
     for (X_scaled, y_scaled, idx_subset, forecast_origin_int) in subset_loader:
@@ -267,39 +234,47 @@ def subset_predictions_day_ahead(
 
         # NN prediction
         X_scaled_dev = X_scaled.to(device)
-        pred_scaled  = model(X_scaled_dev).cpu().numpy()  # (B, [1..H], Q)
 
-        B, H, Q = pred_scaled.shape
-        # print(B, H, Q)
-        assert H == pred_length
+
+        # pred_scaled = model(X_scaled_dev).cpu().numpy()  # (B, H, Q)
+        # assert pred_scaled.shape[1] == valid_length
+        # pred_scaled = pred_scaled[:, -valid_length:]     # (B, V, Q)
+        pred_scaled = model(X_scaled_dev)[:, -valid_length:].cpu().numpy() #(B, V, Q)
+
+        B, V, Q = pred_scaled.shape
+        # print(B, V, Q)
+        assert V == valid_length
         assert Q == len(quantiles)
         # assert B <= batch_size
 
         # Inverse-scale ground truth                 # (B, [1..H])
         y_true_GW = scaler_y.inverse_transform(
-            y_scaled[:, :, 0].cpu().numpy().reshape(-1, 1)
-        ).reshape(B, H)
+            y_scaled[:, -valid_length:, 0].cpu().numpy().reshape(-1, 1)
+        ).reshape(B, V)
 
         # Inverse-scale predictions
         y_pred_GW = scaler_y.inverse_transform(
             pred_scaled.reshape(-1, Q)
-        ).reshape(B, H, Q)
+        ).reshape(B, V, Q)
 
         # One prediction per target timestamp
         for sample in range(B):
             forecast_origin_time = pd.Timestamp(
                 forecast_origin_int[sample], unit='s', tz='UTC')
             # print (f"sample:{sample:3n}, {forecast_origin_time}")
+            min_origin_time = min(min_origin_time, forecast_origin_int[sample])
+            max_origin_time = max(max_origin_time, forecast_origin_int[sample])
 
-            for h in range(H): # /!\ after reference: h == 0 <=> 30 min after noon
-                idx_subset_current = idx_subset[sample] + h + 1
+            for h in range(V):
+                    # /!\ after reference: h == 0 <=> offset_steps after noon
+                idx_subset_current = idx_subset[sample] + h + offset_steps
                 if idx_subset_current >= X_subset_GW.shape[0]:
                     continue     # otherwise, would be after end of dataset
 
                 # target_time = test_dates[target_idx]
 
                 time_current = forecast_origin_time + \
-                    pd.Timedelta(minutes = minutes_per_step * (h + 1))
+                    pd.Timedelta(minutes = minutes_per_step * (h + offset_steps))
                 # print (f"sample{sample:4n}, h ={h:3n}: "
                 #        f"idx_subset_current = {idx_subset_current}, "
                 #        f"time_current = {time_current}")
@@ -340,8 +315,9 @@ def subset_predictions_day_ahead(
         for nm in baseline_names
     }
 
-    return true_series_GW, dict_pred_series_GW, dict_baseline_series_GW
-
+    return true_series_GW, dict_pred_series_GW, dict_baseline_series_GW, \
+        (pd.Timestamp(min_origin_time, unit='s', tz='UTC'), \
+         pd.Timestamp(max_origin_time, unit='s', tz='UTC'))
 
 
 def quantile_coverage(y_true: pd.Series,
@@ -353,12 +329,24 @@ def quantile_coverage(y_true: pd.Series,
     return float(np.mean(y_true.loc[idx] <= y_pred.loc[idx]))
 
 
+def index_summary(name   : str,
+                  idx    : pd.DatetimeIndex,
+                  ref_idx: Optional[pd.DatetimeIndex] = None):
+    return {
+        "series":    name,
+        "start":     idx.min().date(),
+        "end":       idx.max().date(),
+        "n":         len(idx),
+        "n_common":  len(idx.intersection(ref_idx))if ref_idx is not None else None,
+        "start_diff":idx.min() != ref_idx.min()    if ref_idx is not None else None,
+        "end_diff":  idx.max() != ref_idx.max()    if ref_idx is not None else None,
+    }
 
 
 def compare_models(true_series, dict_pred_series,
                    dict_baseline_series: Dict[str, List[float]] or None,
                    list_pred_meta: List[List[float]], subset: str="", unit:str="",
-                   max_RMSE: float = 7,
+                   max_RMSE: float = 4,
                    verbose: int = 0) -> pd.DataFrame:
     # if verbose < 1: return  # this function does nothing if it cannot display
 
@@ -378,10 +366,13 @@ def compare_models(true_series, dict_pred_series,
                 print(f"meta {i+1}: {_pred_meta.shape}")
                 #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
 
-    df_eval = pd.DataFrame({
-        "true": true_series,
-        "nn"  : dict_pred_series.get("q50")
-    })
+    names_models = []
+
+    df_eval = pd.DataFrame({"true": true_series})
+
+    if dict_pred_series is not None:
+        df_eval['nn'] = dict_pred_series.get("q50")
+        names_models += ['nn']
 
     # baselines (LR, RF)
     list_baselines = []
@@ -398,7 +389,7 @@ def compare_models(true_series, dict_pred_series,
 
     df_eval.dropna(inplace=True)
 
-    names_models = ['nn'] + list_baselines
+    names_models += list_baselines
 
     # print("pred_meta:", pred_meta)
     if list_pred_meta is not None:
@@ -437,7 +428,7 @@ def compare_models(true_series, dict_pred_series,
             plt.scatter(df_metrics.loc[model, 'bias'],
                         df_metrics.loc[model, 'RMSE'], label=model)
         plt.xlabel(subset + ' bias [GW]'); plt.xlim(-0.5, 1.5)
-        plt.ylabel(subset + ' RMSE [GW]'); plt.ylim( 0.,  5. ) # plt.ylim(bottom=0.)
+        plt.ylabel(subset + ' RMSE [GW]'); plt.ylim( 0., max_RMSE) # plt.ylim(bottom=0.)
         plt.legend()
         plt.show()
 

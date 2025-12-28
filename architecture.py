@@ -209,8 +209,8 @@ def make_X_and_y(series, dates,
 
 
     # DAY-AHEAD PATH (SCALED, DELEGATED)
-    assert pred_length == 48,\
-        f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
+    # assert pred_length == 48,\
+    #     f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
 
     def build_day_ahead(data_subset, date_slice):
         return DayAheadDataset(
@@ -374,7 +374,7 @@ class PatchEmbedding(nn.Module):
 
 class TimeSeriesTransformer(nn.Module):
     def __init__(self, num_features:int, dim_model:int, nhead:int, num_layers:int,
-                 input_len:int, patch_len:int, stride:int, pred_len:int,
+                 input_length:int, patch_length:int, stride:int, pred_length:int,
                  features_in_future: bool,
                  dropout:float, ffn_mult:int, num_quantiles:int,
                  num_geo_blocks, geo_block_ratio):
@@ -382,20 +382,20 @@ class TimeSeriesTransformer(nn.Module):
 
         self.num_features   = num_features
         self.dim_model      = dim_model
-        self.pred_len       = pred_len
+        self.pred_length    = pred_length
         self.num_quantiles  = num_quantiles
 
-        self.input_len      = input_len
+        self.input_length   = input_length
         self.features_in_future=int(features_in_future)
-        self.patch_len      = patch_len
+        self.patch_length   = patch_length
         self.stride         = stride
-        self.num_patches    = ((input_len+self.features_in_future*pred_len) \
-                               - patch_len) // stride + 1
+        self.num_patches    = ((input_length+self.features_in_future*pred_length) \
+                               - patch_length) // stride + 1
 
-        total_covered = ((input_len - patch_len) // stride) * stride + patch_len
-        self.pad_len  = input_len - total_covered
+        total_covered = ((input_length-patch_length) // stride) * stride + patch_length
+        self.pad_length  = input_length - total_covered
 
-        self.patch_embed = PatchEmbedding(patch_len, stride, num_features, dim_model)
+        self.patch_embed = PatchEmbedding(patch_length, stride, num_features, dim_model)
         self.layers = nn.ModuleList([
             TransformerEncoderLayerWithAttn(dim_model, nhead, dropout, ffn_mult)
             for _ in range(num_layers)
@@ -429,7 +429,7 @@ class TimeSeriesTransformer(nn.Module):
         self.fc_out = nn.Sequential(
             nn.Linear(2 * dim_model, dim_model),
             nn.GELU(),
-            nn.Linear(dim_model, pred_len * num_quantiles)
+            nn.Linear(dim_model, pred_length * num_quantiles)
         )
         # self.fc_out = nn.Linear(dim_model, pred_len)
 
@@ -437,15 +437,15 @@ class TimeSeriesTransformer(nn.Module):
 
     def forward(self, X, *args, **kwargs):
         B, L_plus_H, F = X.shape      # x: (B, L+H, F)
-        L = L_plus_H - self.features_in_future*self.pred_len  # (L+H) - H
-        assert L == self.input_len,    (L, self.input_len)
+        L = L_plus_H - self.features_in_future*self.pred_length  # (L+H) - H
+        assert L == self.input_length, (L, self.input_length)
         assert F == self.num_features, (F, self.num_features)
 
         # guaranteeing: last patch ends exactly at t = L
-        if self.pad_len > 0:
+        if self.pad_length > 0:
             X = torch.nn.functional.pad(
                 X,
-                pad  = (0, 0, 0, self.pad_len),  # pad time dimension on the right
+                pad  = (0, 0, 0, self.pad_length),  # pad time dimension on the right
                 mode = "constant",
                 value= 0.
         )
@@ -486,7 +486,7 @@ class TimeSeriesTransformer(nn.Module):
         )
 
         z = self.fc_out(h_final)                 # (B, H*Q  )
-        z = z.view(z.shape[0], self.pred_len, self.num_quantiles) # (B, H, Q)
+        z = z.view(z.shape[0], self.pred_length, self.num_quantiles) # (B, H, Q)
         return z   # .unsqueeze(-1)
 
 
@@ -636,6 +636,7 @@ def subset_evolution_torch(
         device        : torch.device,
         # input_length  : int,
         # pred_length   : int,
+        valid_length  : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -665,8 +666,13 @@ def subset_evolution_torch(
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(X_scaled_dev)
+
+            # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
+
+            # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
             loss_quantile_scaled_dev = losses.quantile_torch(
-                pred_scaled_dev, y_scaled_dev, quantiles,
+                pred_scaled_dev[:, -valid_length:, :],
+                y_scaled_dev   [:, -valid_length:, :], quantiles,
                 lambda_cross, lambda_coverage, lambda_deriv,
                 lambda_median, smoothing_cross)
 
@@ -693,6 +699,7 @@ def subset_evolution_numpy(
         device        : torch.device,
         # input_length  : int,
         # pred_length   : int,
+        valid_length  : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
         lambda_coverage:float,
@@ -715,14 +722,18 @@ def subset_evolution_numpy(
     # main loop
     for (X_scaled, y_scaled, _, _) in subset_loader:
         X_scaled_dev = X_scaled.to(device)
-        y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()  # (B, H)
+        y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()      # (B, H)
 
         # NN forward
         pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
 
+        # assert y_scaled_cpu.shape[1] == pred_scaled_cpu.shape[1] == pred_length
+
+        # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
         # loss
         loss_quantile_scaled_cpu = losses.quantile_numpy(
-            pred_scaled_cpu, y_scaled_cpu, quantiles,
+            pred_scaled_cpu[:, -valid_length:],
+            y_scaled_cpu   [:, -valid_length:], quantiles,
             lambda_cross, lambda_coverage, lambda_deriv,
             lambda_median, smoothing_cross)
         loss_quantile_scaled += loss_quantile_scaled_cpu

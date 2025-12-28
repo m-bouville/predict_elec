@@ -1,5 +1,5 @@
 import gc
-# import sys
+import sys
 # from   typing import Dict  # List
 
 # from datetime import datetime
@@ -12,9 +12,10 @@ import numpy  as np
 import pandas as pd
 
 
-# from   constants import *  # Spyder annoyingly complains: "may be defined in constants"
+# from constants import * # Spyder annoyingly complains: "may be defined in constants"
 from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
-           INPUT_LENGTH,PRED_LENGTH, BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
+           INPUT_LENGTH, PRED_LENGTH, VALID_LENGTH,
+           BATCH_SIZE, EPOCHS, MODEL_DIM, NUM_HEADS, FFN_SIZE,
            NUM_LAYERS, PATCH_LEN, STRIDE, FEATURES_IN_FUTURE,
            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN,
            SMOOTHING_CROSS, QUANTILES, NUM_GEO_BLOCKS, GEO_BLOCK_RATIO,
@@ -29,9 +30,10 @@ import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 
 
 # system dimensions
-# B = batch size
-# L = input length
-# H = prediction horizon  = PRED_LENGTH
+# B = BATCH_SIZE
+# L = INPUT_LENGTH
+# H = prediction horizon  =  PRED_LENGTH
+# H = validation horizon  = VALID_LENGTH
 # Q = number of quantiles = len(quantiles)
 
 
@@ -41,7 +43,7 @@ import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 #   - [done] Linear meta-learner per horizon (fast, interpretable)
 #   - Small MLP or ridge regression trained on validation OOF predictions
 # TODO Add public holidays to features
-# TODO make PRED_LENGTH == 36h and validate h+12 to h+36
+# TODO (in progress) make PRED_LENGTH == 36h and validate h+12 to h+36
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
 
@@ -155,7 +157,7 @@ if __name__ == "__main__":
         IO.print_model_summary(
                 MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
                 num_time_steps, feature_cols,
-                INPUT_LENGTH, PRED_LENGTH, FEATURES_IN_FUTURE,
+                INPUT_LENGTH, PRED_LENGTH, VALID_LENGTH, FEATURES_IN_FUTURE,
                 BATCH_SIZE, EPOCHS,
                 LEARNING_RATE, WEIGHT_DECAY, DROPOUT, WARMUP_STEPS,
                 PATIENCE, MIN_DELTA,
@@ -227,6 +229,29 @@ for name, series in baseline_features_GW.items():
 # print(df['consumption_regression'].head(20))
 if VERBOSE >= 3:
     print(f"baseline_idx: {baseline_idx}")
+
+
+# rows = [];
+# rows.append(utils.index_summary("dates all",  dates))
+# rows.append(utils.index_summary("dates test", dates[TRAIN_SPLIT:]))
+# print(pd.DataFrame(rows).set_index("series"))
+
+# print("\nTesting metrics [GW]:")
+# y_true = df[target_col][TRAIN_SPLIT:]
+# utils.compare_models(y_true,  None,
+#                      {k: v.iloc[TRAIN_SPLIT:] for (k,v) in baseline_features_GW.items()},
+#                      None,
+#                      subset="test", unit="GW", verbose=VERBOSE)
+
+# y_true = df[target_col][(TRAIN_SPLIT+30*24*2):]
+# utils.compare_models(y_true,  None,
+#          {k: v.iloc[(TRAIN_SPLIT+30*24*2):] for (k,v) in baseline_features_GW.items()},
+#          None,
+#         subset="test", unit="GW", verbose=VERBOSE)
+# del rows, y_true
+
+
+# sys.exit()
 
 
 
@@ -335,9 +360,9 @@ model = architecture.TimeSeriesTransformer(
     dim_model   = MODEL_DIM,
     nhead       = NUM_HEADS,
     num_layers  = NUM_LAYERS,
-    input_len   = INPUT_LENGTH,
-    pred_len    = PRED_LENGTH,
-    patch_len   = PATCH_LEN,
+    input_length= INPUT_LENGTH,
+    pred_length = PRED_LENGTH,
+    patch_length= PATCH_LEN,
     stride      = STRIDE,
     features_in_future=FEATURES_IN_FUTURE,
     dropout     = DROPOUT,
@@ -399,8 +424,10 @@ def subset_predictions_day_ahead(X_subset_GW, subset_loader):
             device       = device,
             input_length = INPUT_LENGTH,
             pred_length  = PRED_LENGTH,
-            quantiles    = QUANTILES,
-            minutes_per_step=MINUTES_PER_STEP)
+            valid_length = VALID_LENGTH,
+            minutes_per_step=MINUTES_PER_STEP,
+            quantiles    = QUANTILES
+            )
 
 t_epoch_loop_start = time.perf_counter()
 for epoch in range(EPOCHS):
@@ -413,8 +440,9 @@ for epoch in range(EPOCHS):
             train_loader, train_dates, # scaler_y,
             # constants
             device, # INPUT_LENGTH, PRED_LENGTH,
-            QUANTILES,
-            LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV, LAMBDA_MEDIAN, SMOOTHING_CROSS
+            VALID_LENGTH, QUANTILES,
+            LAMBDA_CROSS, LAMBDA_COVERAGE,
+            LAMBDA_DERIV, LAMBDA_MEDIAN, SMOOTHING_CROSS
         )
     # print(f"train_loss_quantile_scaled = {train_loss_quantile_scaled} "
     #       f"meta_train_loss_quantile_scaled = {meta_train_loss_quantile_scaled}")
@@ -432,7 +460,8 @@ for epoch in range(EPOCHS):
                 model, valid_loader, valid_dates,  # scaler_y,
                 # constants
                 device, # INPUT_LENGTH, PRED_LENGTH,
-                QUANTILES, LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
+                VALID_LENGTH, QUANTILES,
+                LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
                 LAMBDA_MEDIAN, SMOOTHING_CROSS
             )
         # print("valid_loss_quantile_scaled:", valid_loss_quantile_scaled,
@@ -467,8 +496,8 @@ for epoch in range(EPOCHS):
 
 # plotting convergence for entire training
 plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
-                            list_of_lists[2], list_of_lists[3],
-                            partial=False, verbose=VERBOSE)
+                           list_of_lists[2], list_of_lists[3],
+                           partial=False, verbose=VERBOSE)
 
 
 t_metamodel_start = time.perf_counter()
@@ -483,7 +512,7 @@ _baselines_train.index   = train_dates
 
 
 # preparating training
-true_train_GW, dict_pred_train_GW, dict_baseline_train_GW = \
+true_train_GW, dict_pred_train_GW, dict_baseline_train_GW, _ = \
     subset_predictions_day_ahead(X_train_GW, train_loader)
 # print(_baselines_train)
 y_true_train = pd.Series(y_train_GW, name='y', index=train_dates)
@@ -501,7 +530,7 @@ y_train = df_train[['y']].squeeze()  #.to_numpy()
 
 
 # preparating validation
-true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW = \
+true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW, _ = \
     subset_predictions_day_ahead(X_valid_GW, valid_loader)
 _baselines_valid = _baselines[:TRAIN_SPLIT][-n_valid:]
 _baselines_valid.index = valid_dates
@@ -511,7 +540,7 @@ input_valid.columns = ['lr', 'rf', 'nn']
 
 
 # preparating testing
-true_test_GW, dict_pred_test_GW, dict_baseline_test_GW = \
+true_test_GW, dict_pred_test_GW, dict_baseline_test_GW, origin_times_test = \
     subset_predictions_day_ahead(X_test_GW, test_loader)
 _baselines_test = _baselines[TRAIN_SPLIT:]
 _baselines_test.index = test_dates
@@ -521,16 +550,16 @@ input_test.columns = ['lr', 'rf', 'nn']
 
 
 # metamodel
-weights_meta, pred_meta1_train, pred_meta1_valid, pred_meta1_test = \
+weights_meta1, pred_meta1_train, pred_meta1_valid, pred_meta1_test = \
     metamodel.weights_LR_metamodel(input_train, y_train, input_valid, input_test,
                             verbose=VERBOSE)
 if VERBOSE >= 1:
-    print(f"weights_meta [%]: "
-          f"{ {name: round(value*100, 1) for name, value in weights_meta.items()}}")
+    print(f"weights_meta1 [%]: "
+          f"{ {name: round(value*100, 1) for name, value in weights_meta1.items()}}")
 t_metamodel_end = time.perf_counter()
 # TODO very slow b/c of pandas, concat, etc. for alignment
 if VERBOSE >= 2:
-    print(f"metamodel  took: {time.perf_counter() - t_metamodel_start:.2f} s")
+    print(f"metamodel1 took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
 
@@ -553,7 +582,8 @@ if VERBOSE >= 2:
 #         f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
 
 #     # window-aligned dates (prediction at t = i + input_length)
-#     valid_dates_win = valid_dates #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
+#     valid_dates_win = valid_dates
+            #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
 
 #     dates_masked  = valid_dates_win        [has_pred]
 #     y_true_masked = y_valid_agg_scaled     [has_pred]
@@ -604,10 +634,6 @@ if VERBOSE >= 2:
 if VERBOSE >= 1:
     print("\nStarting test ...")  #"(baseline: {name_baseline})...")
 
-
-true_test_GW, dict_pred_test_GW, dict_baseline_test_GW = \
-    subset_predictions_day_ahead(X_test_GW, test_loader)
-
 # print("true_test_GW:\n",      true_test_GW.head())
 # print("dict_pred_test_GW:\n", {_name: _test.head() \
 #                     for (_name, _test) in dict_pred_test_GW.items()})
@@ -626,19 +652,32 @@ if VERBOSE >= 1:
 name_baseline =  'rf' if 'rf' in dict_baseline_test_GW else \
                 ('lr' if 'lr' in dict_baseline_test_GW else None)
 
-common_idx = true_test_GW.index.intersection(dict_pred_test_GW['q50'].index)
 
-for _name in ['rf']:  # 'lr',
+
+rows = []
+rows.append(utils.index_summary("test_dates", test_dates, None))
+
+rows.append({"series": "origin_times",
+        "start": origin_times_test[0].date(), "end": origin_times_test[1].date(),
+        "n": None, "n_common": None, "start_diff": None, "end_diff": None})
+
+common_idx = true_test_GW.index
+common_idx = common_idx.intersection(dict_pred_test_GW['q50'].index)
+rows.append(utils.index_summary("true",  true_test_GW            .index, common_idx))
+rows.append(utils.index_summary("nn_q50",dict_pred_test_GW["q50"].index, common_idx))
+
+for _name in ['lr', 'rf']:
     if _name in dict_baseline_test_GW:  # keep only those we trained
-        common_idx = common_idx.intersection(dict_baseline_test_GW[_name].index)
-# common_idx = (
-#     true_test.index
-#     .intersection(dict_pred_test['median'].index)
-#     .intersection(dict_baseline_test['rf'].index)
-# )
+        _baseline_test_idx = dict_baseline_test_GW[_name].index
+        common_idx = common_idx.intersection(_baseline_test_idx)
+        rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
 
-# assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
-# TODO reinstate assert
+rows.append(utils.index_summary("common", common_idx, common_idx))
+if VERBOSE >= 3:
+    print(pd.DataFrame(rows).set_index("series"))
+    print()
+
+assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
 
 
 true_test_GW = true_test_GW.loc[common_idx]
@@ -666,7 +705,7 @@ pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
          [X_train_GW,  X_valid_GW, X_test_GW],
          [y_train_GW,  y_valid_GW, y_test_GW],
          [train_dates, valid_dates,test_dates],
-        feature_cols, PRED_LENGTH,
+        feature_cols, VALID_LENGTH,
         #constants
         META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
         META_LR, META_WEIGHT_DECAY,
@@ -685,8 +724,8 @@ if VERBOSE >= 1:
                          subset="valid", unit="GW", verbose=VERBOSE)
 
     print("\nTesting metrics [GW]:")
-    utils.compare_models(true_test_GW, dict_pred_test_GW,
-                         dict_baseline_test_GW, [pred_meta1_test, pred_meta2_test],
+    utils.compare_models(true_test_GW,  dict_pred_test_GW,  dict_baseline_test_GW,
+                         [pred_meta1_test, pred_meta2_test],
                          subset="test", unit="GW", verbose=VERBOSE)
 
     print("Plotting test results...")
@@ -695,6 +734,13 @@ if VERBOSE >= 1:
 # print(dict_pred_test_GW['q50'])
 # print(dict_baseline_test_GW['rf'])
 # print(meta_test_GW)
+
+if VERBOSE >= 2:
+    plots.all_tests(true_train_GW, {'q50': dict_pred_train_GW['q50']},
+                    dict_baseline_train_GW, pred_meta2_train, name_baseline,
+                    Tavg_full.reindex(true_train_GW.index),
+                    NUM_STEPS_PER_DAY)
+
 
 plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
                 dict_baseline_test_GW, pred_meta2_test, name_baseline,

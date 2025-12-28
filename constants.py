@@ -1,5 +1,6 @@
 __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO', 'INPUT_LENGTH',
-           'PRED_LENGTH', 'BATCH_SIZE', 'EPOCHS', 'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
+           'PRED_LENGTH', 'VALID_LENGTH', 'BATCH_SIZE', 'EPOCHS',
+           'MODEL_DIM', 'NUM_HEADS', 'FFN_SIZE',
            'NUM_LAYERS', 'PATCH_LEN', 'STRIDE', 'FEATURES_IN_FUTURE',
            'LAMBDA_CROSS', 'LAMBDA_COVERAGE', 'LAMBDA_DERIV', 'LAMBDA_MEDIAN',
            'SMOOTHING_CROSS', 'QUANTILES', 'NUM_GEO_BLOCKS', 'GEO_BLOCK_RATIO',
@@ -26,7 +27,7 @@ def days_to_steps(num_days: float, num_steps_per_day=NUM_STEPS_PER_DAY) -> int:
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
+SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE','HUGE']
 
 SEED         =   0              # For reproducibility
 
@@ -37,7 +38,9 @@ VAL_RATIO    =   0.25           # validation from training set
 FORECAST_HOUR:int = 12          # 12: noon
 
 INPUT_LENGTH = days_to_steps(14)       # How many half-hours the model sees
-PRED_LENGTH  = days_to_steps( 1)       # BUG should be 36h  How many future half-hours to predict
+VALID_LENGTH = days_to_steps( 1)       # 24h: full day ahead
+PRED_LENGTH  = days_to_steps( 1 + (24.-FORECAST_HOUR)/24)
+    # start at noon, finish at midnight the next day
 
 BATCH_SIZE   =  64              # Training batch size
 EPOCHS       = [  2, 30, 60, 80] # Number of training epochs
@@ -80,7 +83,7 @@ PLOT_CONV_EVERY=10
 # INCR_STEPS_TEST=24                # only test every n half-hours
 
 # metamodel
-META_EPOCHS     = [  1, 10, 15, 20]
+META_EPOCHS     = [  1,  6, 10, 15]
 META_LR         =   5e-4  # learning rate
 META_WEIGHT_DECAY=  1e-5
 META_BATCH_SIZE = 256
