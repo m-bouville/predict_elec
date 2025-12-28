@@ -221,7 +221,7 @@ def subset_predictions_day_ahead(
         if f"consumption_{nm}" in feature_cols
     ]
     offset_steps = pred_length - valid_length + 1
-    print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
+    # print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
 
     records = []  # one record per (origin, horizon)
     min_origin_time =  np.inf

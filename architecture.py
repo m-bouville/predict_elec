@@ -631,11 +631,8 @@ def subset_evolution_torch(
         scheduler,
         subset_loader : DataLoader,
         subset_dates  : Sequence,
-        # scaler_y      : StandardScaler,
         # constants
         device        : torch.device,
-        # input_length  : int,
-        # pred_length   : int,
         valid_length  : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
@@ -652,14 +649,15 @@ def subset_evolution_torch(
 
     model.train()
 
-    loss_quantile_scaled     = 0.
+    loss_quantile_scaled_h = torch.zeros(valid_length, device=device)
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for (X_scaled, y_scaled, _, _) in subset_loader:
+    for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
         X_scaled_dev = X_scaled.to(device)   # (B, L, F)
         y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
 
-        # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
+        # origins_dev = [pd.Timestamp(t, unit='s')
+        #                for t in origin_unix.tolist()].to(device)
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
         # optimizer.zero_grad(set_to_none=True)
@@ -670,23 +668,25 @@ def subset_evolution_torch(
             # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
 
             # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
-            loss_quantile_scaled_dev = losses.quantile_torch(
+            loss_quantile_scaled_h_dev = losses.quantile_torch(
                 pred_scaled_dev[:, -valid_length:, :],
                 y_scaled_dev   [:, -valid_length:, :], quantiles,
                 lambda_cross, lambda_coverage, lambda_deriv,
                 lambda_median, smoothing_cross)
 
-        amp_scaler.scale(loss_quantile_scaled_dev).backward()       # full precision
+        amp_scaler.scale(loss_quantile_scaled_h_dev.mean()).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(optimizer)
         amp_scaler.update()
 
-        loss_quantile_scaled += loss_quantile_scaled_dev.item()
+        loss_quantile_scaled_h += loss_quantile_scaled_h_dev
+
+        # loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
     scheduler.step()
-    loss_quantile_scaled     /= len(subset_loader)
+    loss_quantile_scaled_h /= len(subset_loader)
 
-    return loss_quantile_scaled
+    return loss_quantile_scaled_h
 
 
 @torch.no_grad()
@@ -694,11 +694,8 @@ def subset_evolution_numpy(
         model         : nn.Module,
         subset_loader : DataLoader,
         subset_dates  : Sequence,
-        # scaler_y      : StandardScaler,
         # constants
         device        : torch.device,
-        # input_length  : int,
-        # pred_length   : int,
         valid_length  : int,
         quantiles     : Tuple[float, ...],
         lambda_cross  : float,
@@ -717,12 +714,14 @@ def subset_evolution_numpy(
     # Q = len(quantiles)
     # T = len(dates)
 
-    loss_quantile_scaled     = 0.
+    loss_quantile_scaled_h = np.zeros(valid_length)
 
     # main loop
-    for (X_scaled, y_scaled, _, _) in subset_loader:
+    for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
         X_scaled_dev = X_scaled.to(device)
         y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()      # (B, H)
+
+        # origins_cpu = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()].cpu()
 
         # NN forward
         pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
@@ -731,18 +730,15 @@ def subset_evolution_numpy(
 
         # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
         # loss
-        loss_quantile_scaled_cpu = losses.quantile_numpy(
+        loss_quantile_scaled_h_cpu = losses.quantile_numpy(
             pred_scaled_cpu[:, -valid_length:],
             y_scaled_cpu   [:, -valid_length:], quantiles,
             lambda_cross, lambda_coverage, lambda_deriv,
             lambda_median, smoothing_cross)
-        loss_quantile_scaled += loss_quantile_scaled_cpu
 
-        # print(f"X_scaled.shape:        {X_scaled.shape} -- theory: (B, L, F)")
-        # print(f"y_scaled.shape:        {y_scaled.shape}   -- theory: (B, H, 1)")
-        # print(f"pred_scaled_dev.shape: {pred_scaled_dev.shape}-- theory: (B, H, Q)")
+        loss_quantile_scaled_h += loss_quantile_scaled_h_cpu
 
-    loss_quantile_scaled     /= len(subset_loader)
+    loss_quantile_scaled_h /= len(subset_loader)
 
-    return loss_quantile_scaled
+    return loss_quantile_scaled_h
 

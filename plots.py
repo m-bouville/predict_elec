@@ -9,6 +9,7 @@ from   typing import Dict, Tuple, Optional  # List
 import matplotlib.pyplot as plt
 import matplotlib.dates  as mdates
 
+import numpy  as np
 import pandas as pd  # for types
 
 
@@ -73,6 +74,17 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
     plt.show()
 
 
+def loss_per_horizon(evolution_loss,
+                     minutes_per_step: int,
+                     title: Optional[str] = str):
+    hours_per_step = minutes_per_step/60.
+    plt.plot(np.arange(0, len(evolution_loss)*hours_per_step, step=hours_per_step), evolution_loss)
+    plt.xlabel("Horizon")
+    plt.ylabel("Loss")
+    plt.ylim(bottom=0.)
+    if title is not None:
+        plt.title(title)
+    plt.show()
 
 
 # --------------------------------------------------------

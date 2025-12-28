@@ -31,12 +31,16 @@ def quantile_with_crossing_torch(
     Joint quantile loss with crossing penalty.
     """
 
-    loss = 0.
+    B, V, Q = y_pred.shape
+    device  = y_pred.device
+
+    loss_h  = torch.zeros(V, device=device)
 
     for i, tau in enumerate(quantiles):
         diff = y_true - y_pred[..., i]
         pin = torch.maximum(tau * diff, -(1 - tau) * diff)
-        loss += pin.mean(dim=0).mean()   # mean per horizon
+
+        loss_h += pin.mean(dim=0)
         # loss += torch.mean(torch.maximum(tau * diff, -(1-tau) * diff))
 
         # Coverage penalty
@@ -55,16 +59,18 @@ def quantile_with_crossing_torch(
             err  = coverage_h - tau
             w    = torch.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
-            loss+= lambda_coverage * alpha * (w * err**2).mean()
+
+            loss_h += lambda_coverage * alpha * w * err**2
+            # loss+= lambda_coverage * alpha * (w * err**2).mean()
             # loss += lambda_coverage * alpha * (coverage - tau) ** 2
 
     # Crossing penalty
     if lambda_cross > 0.:
         penalty = torch.relu(y_pred[..., :-1] - y_pred[..., 1:])
-        loss   += lambda_cross * penalty.sum(dim=-1).mean()
+        loss_h += lambda_cross * penalty.sum(dim=-1).mean(dim=0)
+        # loss   += lambda_cross * penalty.sum(dim=-1).mean()
 
-
-    return loss
+    return loss_h
 
 
 def quantile_with_crossing_numpy(
@@ -76,7 +82,9 @@ def quantile_with_crossing_numpy(
         smoothing     : float
     ) -> float:
 
-    loss = 0.
+    B, V, Q = y_pred.shape
+
+    loss_h = np.zeros(V)
 
     def sigmoid(x: float) -> float:
         return 1. / (1. + np.exp(-x))
@@ -89,7 +97,7 @@ def quantile_with_crossing_numpy(
         # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}"
 
         pin = np.maximum(tau * diff, -(1 - tau) * diff)
-        loss += pin.mean(axis=0).mean()   # mean per horizon
+        loss_h += pin.mean(axis=0)
         # loss += np.mean(np.maximum(tau * diff, -(1-tau) * diff))
 
         # Coverage penalty
@@ -108,15 +116,18 @@ def quantile_with_crossing_numpy(
             err  = coverage_h - tau
             w    = np.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
-            loss+= lambda_coverage * alpha * (w * err**2).mean()
+
+            loss_h += lambda_coverage * alpha * w * err**2
             # loss += lambda_coverage * alpha * (coverage - tau) ** 2
 
     # Crossing penalty
     if lambda_cross > 0.:
         penalty = np.maximum(0., y_pred[..., :-1] - y_pred[..., 1:])
-        loss   += lambda_cross * np.mean(np.sum(penalty, axis=-1))
+        loss_h += lambda_cross * np.sum(penalty, axis=-1).mean(axis=0)
 
-    return float(loss)
+    return loss_h
+
+
 
 
 # losses with derivatives
@@ -142,22 +153,22 @@ def derivative_torch(
     Returns
     -------
     torch.Tensor
-        Scalar loss
+        Shape (V)
     """
-
-    # No horizon → no derivative loss
-    if y_pred.dim() < 2:
-        return y_pred.new_zeros(())
 
     # Ensure (B, V, Q)
     if y_pred.dim() == 2:
-        y_pred = y_pred.unsqueeze(-1)
+        y_pred = y_pred.unsqueeze(-1)    # (B, V, 1)
 
-    # Now we REQUIRE a horizon
-    if y_pred.shape[1] < 2:
-        return y_pred.new_zeros(())
+    B, V, Q = y_pred.shape
+    device  = y_pred.device
 
-    assert y_pred.shape[:2] == y_true.shape, (y_pred.shape, y_true.shape)
+    # No horizon → no derivative loss
+    if V < 2:
+        return torch.zeros(V, device=device)
+
+    assert y_true.shape == (B, V), (y_true.shape, B, V)
+
 
     # Temporal finite differences (within each sample)
     dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, V-1, Q)
@@ -166,13 +177,25 @@ def derivative_torch(
     # Broadcast true derivatives over quantiles
     dy_true = dy_true.unsqueeze(-1)                  # (B, V-1, 1)
 
-    return torch.mean((dy_pred - dy_true) ** 2)  # MSE on derivative mismatch
+    # print(f"(dy_pred - dy_true) ** 2: {((dy_pred - dy_true) ** 2).shape}")
+
+    # average over quantiles
+    deriv_err = ((dy_pred - dy_true) ** 2).mean(dim=-1)    # (B, V-1)
+
+    # average over batch
+    deriv_h = deriv_err.mean(dim=0)                  # (V-1,)
+
+    # Map to horizons: prepend zero for h=0
+    loss_h     = torch.zeros(V, device=device)
+    loss_h[1:] = deriv_h
+
+    return loss_h
 
 
 def derivative_numpy(
         y_pred: np.ndarray,
         y_true: np.ndarray,
-    ) -> float:
+    ) -> np.ndarray:
     """
     NumPy version of first-order finite-difference derivative loss.
     Returns 0. if no temporal dimension is present.
@@ -187,25 +210,21 @@ def derivative_numpy(
 
     Returns
     -------
-    float
-         Scalar loss
+    np.ndarray
+         Shape (V)
     """
-
-    # No horizon → no derivative loss
-    if y_pred.ndim < 2 or y_true.ndim < 2:
-        return 0.
 
     # Ensure (B, V, Q)
     if y_pred.ndim == 2:
         y_pred = y_pred[..., np.newaxis]   # (B, V, 1)
 
-    # Horizon must exist
-    if y_pred.shape[1] < 2:
-        return 0.
+    B, V, Q = y_pred.shape
 
-    assert y_pred.shape[:2] == y_true.shape, (
-        y_pred.shape, y_true.shape
-    )
+    # No horizon → no derivative loss
+    if V < 2:
+        return np.zeros(V)
+
+    assert y_true.shape == (B, V), (y_true.shape, B, V)
 
     # Temporal finite differences
     dy_pred = y_pred[:, 1:, :] - y_pred[:, :-1, :]   # (B, V-1, Q)
@@ -213,7 +232,17 @@ def derivative_numpy(
 
     dy_true = dy_true[..., np.newaxis]               # (B, V-1, 1)
 
-    return float(np.mean((dy_pred - dy_true) ** 2))
+    # average over quantiles
+    deriv_err = ((dy_pred - dy_true) ** 2).mean(axis=-1) # (B, V-1)
+
+    # average over batch
+    deriv_h = deriv_err.mean(axis=0)                  # (V-1,)
+
+    # Map to horizons: prepend zero for h=0
+    loss_h     = np.zeros(V)
+    loss_h[1:] = deriv_h
+
+    return loss_h
 
 
 # wrappers (add together all components to the loss)
@@ -236,7 +265,7 @@ def quantile_torch(
         y_true = y_true.squeeze(-1)
 
     # Base quantile + crossing loss
-    loss = quantile_with_crossing_torch(
+    loss_h = quantile_with_crossing_torch(
         y_pred       = y_pred,
         y_true       = y_true,
         quantiles    = quantiles,
@@ -248,13 +277,16 @@ def quantile_torch(
     # Optional derivative loss (per quantile)
     if lambda_deriv > 0.:
         # _y_true = y_true.squeeze(-1) if y_true.ndim == 3 else y_true
-        loss += lambda_deriv * derivative_torch(y_pred, y_true)
+        loss_h += lambda_deriv * derivative_torch(y_pred, y_true)
+        # loss += lambda_deriv * derivative_torch(y_pred, y_true)
 
     q50_pred = y_pred[..., len(quantiles)//2]
-    # print(f"shapes: {y_pred.shape} -> {q50_pred.shape}, {y_true.shape}")
-    loss += lambda_median * ((q50_pred - y_true).mean(dim=0)**2).mean()
+    loss_h += lambda_median * (q50_pred - y_true).mean(dim=0)**2
+    # loss += lambda_median * ((q50_pred - y_true).mean(dim=0)**2).mean()
 
-    return loss
+    # print(f"loss_h (torch): {loss_h.shape}: {loss_h}")
+
+    return loss_h
 
 
 def quantile_numpy(
@@ -275,7 +307,7 @@ def quantile_numpy(
     if y_true.ndim == 3:
         y_true = y_true.squeeze(-1)
 
-    loss = quantile_with_crossing_numpy(
+    loss_h = quantile_with_crossing_numpy(
         y_pred       = y_pred,
         y_true       = y_true,
         quantiles    = quantiles,
@@ -285,11 +317,13 @@ def quantile_numpy(
     )
 
     if lambda_deriv > 0.:
-        loss += lambda_deriv * derivative_numpy(y_pred, y_true)
+        loss_h += lambda_deriv * derivative_numpy(y_pred, y_true)
 
     q50_pred = y_pred[..., len(quantiles)//2]
-    loss += lambda_median * ((q50_pred - y_true).mean(axis=0)**2).mean()
+    loss_h += lambda_median * ((q50_pred - y_true).mean(axis=0)**2)
+    # loss += lambda_median * ((q50_pred - y_true).mean(axis=0)**2).mean()
 
-    return float(loss)
+    # print(f"loss_h (numpy): {loss_h.shape}: {loss_h}")
 
+    return loss_h
 
