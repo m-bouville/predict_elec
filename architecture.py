@@ -60,6 +60,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         self.input_length = input_length
         self.pred_length  = pred_length
         self.features_in_future=int(features_in_future)
+        self.future_length= self.features_in_future * self.pred_length
         self.forecast_hour= forecast_hour
         self.target_index = target_index
 
@@ -98,7 +99,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
         # Input: all features (=> excluding consumption) from past
         X = self.data_subset[idx_subset - self.input_length :
-                             idx_subset + self.features_in_future*self.pred_length]  # (L+H, F)
+                             idx_subset + self.future_length]  # (L+H, F)
         X = np.delete(X, self.target_index, axis=1)
 
         # Target: only consumption, future values (excluding present datetime)
@@ -144,11 +145,6 @@ def make_X_and_y(series, dates,
     valid_dates = train_dates[-n_valid:]
     train_dates = train_dates[:-n_valid]
 
-
-    # TODO: DayAheadDataset needs INPUT_LENGTH history before the first validation noon.
-    #    val_start = TRAIN_SPLIT - INPUT_LENGTH - PRED_LENGTH
-
-
     # Map column names -> column indices in train_data
     all_cols   = [target_col] + feature_cols
     col_to_idx = {col: i for i, col in enumerate(all_cols)}
@@ -163,11 +159,6 @@ def make_X_and_y(series, dates,
     # 1. Extract X and y using names
     X_GW = series[:, feature_idx];  y_GW = series[:, target_idx]
 
-    # if verbose >= 2:
-    #     print(f"y_train: mean{y_train_GW.mean():6.2f} GW, std{y_train_GW.std():6.2f} GW")
-    #     print(f"y_valid: mean{y_valid_GW.mean():6.2f} GW, std{y_valid_GW.std():6.2f} GW")
-
-
     # 2. Fit two different scalers (on training set)
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
@@ -177,6 +168,8 @@ def make_X_and_y(series, dates,
     scaler_x.fit(X_train_GW)
     scaler_y.fit(y_train_GW.reshape(-1, 1))
 
+    X_valid_GW = X_GW[:train_split][-n_valid:]  # for return only
+    y_valid_GW = y_GW[:train_split][-n_valid:]  # for return only
 
     # 3. Transform X and y separately
     X_scaled = scaler_x.transform(X_GW)
@@ -203,14 +196,10 @@ def make_X_and_y(series, dates,
     valid_scaled = train_scaled[-n_valid:]
     train_scaled = train_scaled[:-n_valid]
 
-    # print("len(X_scaled) [half-hours]", len(train_scaled),len(valid_scaled),len(test_scaled))
-    # print("len(X_dates)  [half-hours]", len(train_dates), len(valid_dates), len(test_dates))
+    # print("len(X_scaled)",len(train_scaled),len(valid_scaled),len(test_scaled))
+    # print("len(X_dates) ",len(train_dates), len(valid_dates), len(test_dates))
 
 
-
-    # DAY-AHEAD PATH (SCALED, DELEGATED)
-    # assert pred_length == 48,\
-    #     f"Day-ahead forecasting requires pred_length == 48, not {pred_length}"
 
     def build_day_ahead(data_subset, date_slice):
         return DayAheadDataset(
@@ -271,7 +260,7 @@ def make_X_and_y(series, dates,
         [train_dates, valid_dates, test_dates ],\
          scaler_y, [X_GW, y_GW],
          [X_train_GW, y_train_GW, train_dataset_scaled],
-         [X_GW[:train_split][-n_valid:], y_GW[:train_split][-n_valid:], valid_dataset_scaled],
+         [X_valid_GW, y_valid_GW, valid_dataset_scaled],
          [X_test_GW, y_test_GW, test_dataset_scaled],
          test_scaled[:, feature_idx]
     )
@@ -643,14 +632,16 @@ def subset_evolution_torch(
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Returns:
-        nn_loss_scaled   : float
-        meta_loss_scaled : float
+        loss_quantile_scaled_h: torch.tensor
+            shape (V, ), its average is used for gradients
+        dict_losses_h: Dict[str, torch.tensor]
+            components of the loss, each of shape (V, ): used for diagnostics
     """
 
     model.train()
 
     loss_quantile_scaled_h = torch.zeros(valid_length, device=device)
-    dict_losses_h = {'quantile_with_crossing': torch.zeros(valid_length, device=device),
+    dict_losses_h = {#'quantile_with_crossing':torch.zeros(valid_length,device=device),
                      'pinball':   torch.zeros(valid_length, device=device),
                      'coverage':  torch.zeros(valid_length, device=device),
                      'crossing':  torch.zeros(valid_length, device=device),
@@ -680,7 +671,7 @@ def subset_evolution_torch(
                 lambda_cross, lambda_coverage, lambda_deriv,
                 lambda_median, smoothing_cross)
 
-        amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()       # full precision
+        amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(optimizer)
         amp_scaler.update()
@@ -717,8 +708,10 @@ def subset_evolution_numpy(
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Returns:
-        nn_loss_scaled   : float
-        meta_loss_scaled : float
+        loss_quantile_scaled_h: np.ndarray
+            shape (V, ), its average is used for gradients
+        dict_losses_h: Dict[str, np.ndarray]
+            components of the loss, each of shape (V, ): used for diagnostics
     """
     model.eval()
 
@@ -726,7 +719,7 @@ def subset_evolution_numpy(
     # T = len(dates)
 
     loss_quantile_scaled_h = np.zeros(valid_length)
-    dict_losses_h = {'quantile_with_crossing': np.zeros(valid_length),
+    dict_losses_h = {#'quantile_with_crossing': np.zeros(valid_length),
             'pinball':   np.zeros(valid_length),
             'coverage':  np.zeros(valid_length), 'crossing':np.zeros(valid_length),
             'derivative':np.zeros(valid_length), 'median':  np.zeros(valid_length)}

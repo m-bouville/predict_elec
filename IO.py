@@ -99,7 +99,7 @@ def load_weights(path, verbose: int = 0) -> pd.Series:
 #   December  2, 2025 3:01 AM (data)
 
 def load_temperature(path, weights,
-                     # noise_std: float or Tuple [float] = 0.,  # realistic forecast error
+                     # noise_std: float or Tuple[float] = 0.,# realistic forecast error
                      verbose: int = 0):
     # temperature data
     df      = pd.read_csv(path, sep=';')
@@ -181,18 +181,26 @@ def load_temperature(path, weights,
     # # Regional spread (heterogeneity)
     # out["T_spread_degC"] = Tavg.max(axis=1) - Tavg.min(axis=1)
 
-    # for heating, we care only about T <= X °C
-    HEATING_REF_DEGC: int = 15
-    Tsat_local = Tavg.clip(upper=HEATING_REF_DEGC)
-    Tsat_local_3days = Tsat_local.rolling(3, min_periods=3).mean()
-    name = 'Tavg_sat'+str(HEATING_REF_DEGC)
-    out[name+'_degC']      = weighted_mean(Tsat_local)
-    out[name+'_3days_degC']= weighted_mean(Tsat_local_3days)
 
-    # fraction of the population heating
-    heating_on_r = (Tavg < HEATING_REF_DEGC).astype(int)
-    out[name+'_frac']      = heating_on_r.mul(weights, axis=1).sum(axis=1)
-    out[name+'_5days_frac']= out[name+'_frac'].rolling(5, min_periods=5).mean()
+    # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 2 °C
+    for heating_ref_degc in [15, 2]:
+        Tsat_local = Tavg.clip(upper=heating_ref_degc)
+        Tsat_local_3days = Tsat_local.rolling(3, min_periods=3).mean()
+        name = 'Tavg_sat'+str(heating_ref_degc)
+        out[name+'_degC']      = weighted_mean(Tsat_local)
+        out[name+'_3days_degC']= weighted_mean(Tsat_local_3days)
+
+        # fraction of the population heating
+        heating_on_r = (Tavg < heating_ref_degc).astype(int)
+        out[name+'_frac']      = heating_on_r.mul(weights, axis=1).sum(axis=1)
+        out[name+'_5days_frac']= out[name+'_frac'].rolling(5, min_periods=5).mean()
+
+    # air-conditioning days: T_avg >= 22 °C
+    AC_REF_DEGC: int = 22
+    out['Tavg_sat'+str(AC_REF_DEGC)+'_degC'] = \
+        weighted_mean(Tavg.clip(lower=AC_REF_DEGC))
+
+
 
     # para-dates
     out['year']     = out.index.year
@@ -625,7 +633,7 @@ def print_model_summary(
     print(f"{'WEIGHT_DECAY':17s} ={weight_decay*1e6:8.2f}e-6")
     print(f"{'DROPOUT'     :17s} ={dropout*100:5.0f}%")
 
-    warmup_epochs = warmup_steps / steps_per_epoch if steps_per_epoch > 0 else float("inf")
+    warmup_epochs = warmup_steps/steps_per_epoch if steps_per_epoch > 0 else float("inf")
     print(f"{'WARMUP_STEPS':17s} ={warmup_steps:5n} steps =  {warmup_epochs:.2f} epochs")
 
     print(f"{'PATIENCE'    :17s} ={patience:5n} epochs")
@@ -686,7 +694,7 @@ def print_model_summary(
     out_head_params = d * h + h
 
     param_count = int(
-        (patch_embed_params + pos_embed_params + encoder_params + out_head_params) * 1.10
+        (patch_embed_params + pos_embed_params + encoder_params + out_head_params) * 1.1
     )
 
     params_per_sample = param_count / n
@@ -701,8 +709,8 @@ def print_model_summary(
         print(f"/!\\ steps_per_epoch ({steps_per_epoch:n}) but should be in [100, 2000]")
 
     if not (2 <= warmup_epochs <= 5):
-        print(f"/!\\ WARMUP_STEPS ({warmup_steps}) / steps_per_epoch ({steps_per_epoch:n}) = "
-              f"{warmup_epochs:.2f}, but should be in [2, 5]")
+        print(f"/!\\ WARMUP_STEPS ({warmup_steps}) / steps_per_epoch ({steps_per_epoch:n})"
+              f" = {warmup_epochs:.2f}, but should be in [2, 5]")
 
     if num_samples < 300:
         print(f"/!\\ Only {num_samples} training windows — transformers typically require "

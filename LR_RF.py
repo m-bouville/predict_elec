@@ -269,13 +269,13 @@ def regression_and_forest(
 
 
     # most relevant features
-    if verbose >= 3 and {"lr", "rf"} <= models.keys():
+    if verbose >= -3 and {"lr", "rf"} <= models.keys():
 
         ridge = pd.Series(
             models["lr"].coef_ * 100.,
             index=feature_cols,
             name="ridge_coef_pc"
-        ).round(2)
+        ).astype(np.float32).round(2)
 
         rf = pd.Series(
             models["rf"].feature_importances_ * 100.,
@@ -283,17 +283,18 @@ def regression_and_forest(
             name="rf_importance_pc"
         )
 
-        df_imp = pd.concat([ridge, rf], axis=1)
+        df_imp = pd.concat([ridge, rf], axis=1).astype(np.float32).round(2)
 
         # Normalize for comparability
         _source = df_imp["ridge_coef_pc"].abs()
-        df_imp["ridge_norm"] = _source / _source.max()
+        df_imp["ridge_norm"] = (_source / _source.max())
 
         _source = df_imp["rf_importance_pc"]
         df_imp["rf_norm"]    = _source / _source.max()
 
         # Overall relevance score
-        df_imp["score_pc"] = 100. * df_imp[["ridge_norm", "rf_norm"]].mean(axis=1)
+        df_imp["score_pc"] = (100. * df_imp[["ridge_norm", "rf_norm"]])\
+            .mean(axis=1).astype(np.float32).round(2)
 
         # Final ordering
         df_imp = (

@@ -294,7 +294,7 @@ def quantile_torch(
     loss_h = loss_quantile_with_crossing_h + loss_deriv_h + loss_median_h
     # print(f"loss_h (torch): {loss_h.shape}: {loss_h}")
 
-    return loss_h, dict({'quantile_with_crossing': loss_quantile_with_crossing_h,
+    return loss_h, dict({#'quantile_with_crossing': loss_quantile_with_crossing_h,
                          'derivative': loss_deriv_h, 'median': loss_median_h},
                         **dict_loss_quantile_with_crossing_h)
 
@@ -341,7 +341,7 @@ def quantile_numpy(
     loss_h = loss_quantile_with_crossing_h + loss_deriv_h + loss_median_h
     # print(f"loss_h (numpy): {loss_h.shape}: {loss_h}")
 
-    return loss_h, dict({'quantile_with_crossing': loss_quantile_with_crossing_h,
+    return loss_h, dict({#'quantile_with_crossing': loss_quantile_with_crossing_h,
                          'derivative': loss_deriv_h, 'median': loss_median_h},
                         **dict_loss_quantile_with_crossing_h)
 

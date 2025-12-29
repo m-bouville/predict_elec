@@ -51,10 +51,11 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
     plt.figure(figsize=(10,6))
 
     # neural net
-    plt.plot(range(1, length+1), list_train_loss    [:], label="train",    color="black")
-    plt.plot(range(1, length+1), list_min_train_loss[:], label="train min",color="black",alpha=0.4)
-    plt.plot(range(1, length+1), list_valid_loss    [:], label="valid",    color="red")
-    plt.plot(range(1, length+1), list_min_valid_loss[:], label="valid min",color="red", alpha=0.4)
+    x = range(1, length+1)
+    plt.plot(x, list_train_loss    [:], label="train",    color="black")
+    plt.plot(x, list_min_train_loss[:], label="train min",color="black",alpha=0.4)
+    plt.plot(x, list_valid_loss    [:], label="valid",    color="red")
+    plt.plot(x, list_min_valid_loss[:], label="valid min",color="red",  alpha=0.4)
 
     # plt.xscale('log')
     plt.yscale('log')
@@ -202,7 +203,7 @@ def test_scatter(
          x_axis_series:  pd.Series,
          resample:       Optional[str] = None,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
-         ylim: [float, float] or None = None,
+         xlim: [float, float] or None = None, ylim: [float, float] or None = None,
          alpha: Optional[float] = 1.) -> None:
 
     # resample
@@ -264,6 +265,7 @@ def test_scatter(
         plt.scatter(x_axis_series, meta_series.loc[common_idx].values,
                     label="meta", color="blue", alpha=alpha)
 
+    if xlim   is not None:  plt.xlim  (xlim)
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
     if ylabel is not None:  plt.ylabel(ylabel)
@@ -295,7 +297,7 @@ def all_tests(true_series:         pd.Series,
     # SMA_residual    = [2*2,  num_steps_per_day]
     # days_zoom:           int | Tuple[int] = [8, 61]
 
-    ylim: Tuple[Tuple[float, float], Tuple[float, float]] = [[40, 60], [-2.5, 3.5]]
+    ylim: Tuple[Tuple[float, float], Tuple[float, float]] = [[40, 60], [-2., 3.5]]
 
     # for _idx, _zoom in enumerate(days_zoom):
     #     # zoom
@@ -348,28 +350,41 @@ def all_tests(true_series:         pd.Series,
 
     # plot consumption over a week
     test(true_series, dict_pred_series, baseline_series, meta_series,
-         name_baseline, xlabel="day of week", ylabel="consumption [GW]",
+         name_baseline, xlabel="day of week (0 is Monday)", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)
     test(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
-         name_baseline, xlabel="day of week", ylabel="consumption difference [GW]",
+         name_baseline, xlabel="day of week (0 is Monday)",
+         ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)  # smoothing a little
 
 
     # as a function of temperature
     if Tavg is not None:
-        Tavg = Tavg[Tavg.index.month.isin([10, 11, 12, 1, 2, 3, 4])]
+        Tavg_winter = Tavg[(Tavg.index.month <= 5) | (Tavg.index.month >= 9)]
         test_scatter(true_series, dict_pred_series, baseline_series, meta_series,
-            name_baseline, Tavg, ylim=[ylim[0][0], ylim[0][1]+25],
-            resample='D', alpha=0.3,
+            name_baseline, Tavg_winter, ylim=[ylim[0][0]-5, ylim[0][1]+22],
+            xlim=[-5, 20], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]", ylabel="consumption [GW]")
         test_scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
-            name_baseline, Tavg, ylim=[-6,10], resample='D', alpha=0.3,
+            name_baseline, Tavg_winter, xlim=[-5, 20], ylim=[-6,10], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]",
             ylabel="consumption difference [GW]")
+
+        Tavg_summer = Tavg[(Tavg.index.month >= 5) & (Tavg.index.month <= 9)]
+        test_scatter(true_series, dict_pred_series, baseline_series, meta_series,
+            name_baseline, Tavg_summer, ylim=[ylim[0][0]-10, ylim[0][1]-5],
+            xlim=[15, 30], resample='D', alpha=0.3,
+            xlabel="(summer) average temperature [°C]", ylabel="consumption [GW]")
+        test_scatter(residual_true_series, dict_residual_pred_series,
+                     residual_baseline_series, residual_meta_series,
+            name_baseline, Tavg_summer, xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
+            xlabel="(summer) average temperature [°C]",
+            ylabel="consumption difference [GW]")
+
 
 
 

@@ -131,8 +131,8 @@ def prepare_meta_data(
     # Add context features
     df_features = pd.DataFrame(X_features_GW, index=dates, columns=feature_cols)
     if 'horizon' not in df_features.columns:
-        df_features['horizon'] = \
-            (df_features.index.hour*2 + df_features.index.minute/30).round().astype(np.int16)
+        df_features['horizon']= (df_features.index.hour*2 + \
+                                 df_features.index.minute/30).round().astype(np.int16)
 
     df = pd.concat([df, df_features], axis=1)
 
@@ -462,9 +462,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
           f"LR={avg_weights_test[1]*100:.1f}%, RF={avg_weights_test[2]*100:.1f}%")
 
 
-    pred_meta2_train= pd.Series(pred_meta2_train.cpu().numpy(), index=df_meta_train.index)
-    pred_meta2_valid= pd.Series(pred_meta2_valid.cpu().numpy(), index=df_meta_valid.index)
-    pred_meta2_test = pd.Series(pred_meta2_test .cpu().numpy(), index=df_meta_test .index)
+    return (pd.Series(pred_meta2_train.cpu().numpy(), index=df_meta_train.index),
+            pd.Series(pred_meta2_valid.cpu().numpy(), index=df_meta_valid.index),
+            pd.Series(pred_meta2_test .cpu().numpy(), index=df_meta_test .index))
 
-
-    return pred_meta2_train, pred_meta2_valid, pred_meta2_test

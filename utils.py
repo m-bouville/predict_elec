@@ -17,7 +17,11 @@ import pandas as pd
 
 # from   sklearn.model_selection import TimeSeriesSplit
 
+
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+import holidays
 
 
 import IO  # losses, architecture,  plots
@@ -48,23 +52,35 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     # df['cos_1wk']  = np.cos(2*np.pi*df['dow_norm'])
     # df['sin_12mo']  = np.sin(2*np.pi*df['doy_norm'])
     df['cos_12mo'] = np.cos(2*np.pi*df['doy_norm'])
-    # df['cos_6mo']  = np.cos(4*np.pi*df['doy_norm'])  # 2 periods per year
+    df['cos_6mo']  = np.cos(4*np.pi*df['doy_norm'])  # 2 periods per year
 
     # remove temporary variables
     df.drop(columns=['hour_norm', 'dow_norm', 'doy_norm'], inplace=True)
 
-    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16)   # (0: Monday)
+
+    # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
+    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. for morning
+    df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
+    df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
+    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. for evening
     df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
     df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
-    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # for morning
 
-    df['is_evening' ] = (df.index.hour >= 21).astype(np.int16)
+    df['is_evening' ] = (df.index.hour     >= 21).astype(np.int16)
         # there is a peak of coverage loss between about 9pm and midninght, UTC
 
-    df['is_August'  ] = ((df.index.month     == 8) \
-                         & (df.index.day >= 5) & (df.index.day >= 25)).astype(np.int16)
-    df['is_Christmas']= (((df.index.month ==12) & (df.index.day >=23)) | \
-                         ((df.index.month == 1) & (df.index.day <= 4))).astype(np.int16)
+    df['is_August'  ] = ((df.index.month    == 8) \
+                    & (df.index.day >= 5) & (df.index.day <= 25)).astype(np.int16)
+    # df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
+    #                     ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
+            # redundent with school holiday
+
+
+    # public holidays for France
+    fr_holidays = holidays.France(years=range(2012, 2027))
+    dates_holidays = set(fr_holidays.keys())
+    df['is_holiday'] = np.isin(df.index.date, list(dates_holidays)).astype(np.int16)
+
 
     if verbose >= 3:
         print(df.head().to_string())
@@ -528,11 +544,12 @@ def display_evolution(
 # -------------------------------------------------------
 
 def worst_days_by_loss(
-    y_true: np.ndarray,   # shape (T,)
-    y_pred: np.ndarray,   # shape (T,)
-    temperature,
-    num_steps_per_day,
-    top_n=10
+    y_true     : np.ndarray,   # shape (T,)
+    y_pred     : np.ndarray,   # shape (T,)
+    temperature: np.ndarray,
+    holidays   : np.ndarray,
+    num_steps_per_day: int,
+    top_n: int =10
 ):
     """
     Returns DataFrame of worst days by mean loss
@@ -541,40 +558,78 @@ def worst_days_by_loss(
     diff    = y_true - y_pred
     ts_loss = np.maximum(0.5 * diff, -0.5 * diff)  # 0.5: median
 
-    df_aligned = pd.concat([ts_loss, temperature], axis=1, join='inner')
-    df_aligned.columns = ['ts_loss', 'temperature']
+    df_aligned = pd.concat([ts_loss, temperature, holidays], axis=1, join='inner')
+    df_aligned.columns = ['ts_loss', 'temperature', 'holidays']
 
     df = pd.DataFrame({
         'date':      df_aligned.index.normalize(),  # midnight per day
-        'loss_pc':  (df_aligned['ts_loss'] * 100).astype(np.float32).round(2),
-        'Tavg_degC': df_aligned['temperature']   .astype(np.float32),
+        'loss':      df_aligned['ts_loss']    .astype(np.float32).round(2),
+        'Tavg_degC': df_aligned['temperature'].astype(np.float32),
+        'holiday':   df_aligned['holidays']   .astype(np.int16),
     })
 
     daily = (
         df.groupby('date', as_index=False)
           .agg(
-              mean_loss_pc= ('loss_pc',  "mean"),
-              max_loss_pc = ('loss_pc',  "max" ),
-              ramp_pc     = ("loss_pc", lambda x: np.max(np.abs(np.diff(x))) if len(x) > 1 else np.nan),
-              n_points    = ('loss_pc',  "size"),
-              Tavg_degC   = ('Tavg_degC',"mean"),
+              avg_loss = ('loss',      "mean"),
+              max_loss = ('loss',      "max" ),
+              ramp     = ("loss", lambda x: np.max(np.abs(np.diff(x)))
+                             if len(x) > 1 else np.nan),
+              n_points = ('loss',      "size"),
+              Tavg_degC= ('Tavg_degC', "mean"),
+              holiday  = ('holiday',   "mean"),
           )
-          .sort_values('mean_loss_pc', ascending=False)
+          .sort_values('avg_loss', ascending=False)
     )
 
     daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
 
-    daily['day_name'] = daily['date'].dt.day_name()
-    daily['day'     ] = daily['date'].dt.day
-    daily['month'   ] = daily['date'].dt.month
-    daily['year'    ] = daily['date'].dt.year
+    daily['day_name' ] = daily['date'].dt.day_name()
+    daily['day'      ] = daily['date'].dt.day
+    daily['month'    ] = daily['date'].dt.month
+    daily['year'     ] = daily['date'].dt.year
 
-    daily['mean_loss_pc'] = daily['mean_loss_pc'].astype(np.float32).round()
-    daily[ 'max_loss_pc'] = daily[ 'max_loss_pc'].astype(np.float32).round()
-    daily['ramp_pc'     ] = daily['ramp_pc'     ].astype(np.float32).round()
-    daily['Tavg_degC'   ] = daily['Tavg_degC'   ].astype(np.float32).round(1)
+    daily['avg_loss' ] = daily['avg_loss' ].astype(np.float32).round(2)
+    daily['max_loss' ] = daily['max_loss' ].astype(np.float32).round(2)
+    daily['ramp'     ] = daily['ramp'     ].astype(np.float32).round(2)
+    daily['Tavg_degC'] = daily['Tavg_degC'].astype(np.float32).round(1)
+    daily['holiday'  ] = daily['holiday'  ].astype(np.int16)
+
+    daily = daily[['day_name', 'day', 'month', 'year', 'holiday', 'Tavg_degC',
+                   'avg_loss', 'max_loss', 'ramp']].head(top_n)
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=daily, x='month', bins=12, discrete=True)
+    plt.title('Histogram of Months for Bad Days')
+    plt.xlabel('Month')
+    plt.ylabel('Frequency')
+    plt.xticks(range(1, 13))
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=daily, x='year', bins=len(daily['year'].unique()), discrete=True)
+    plt.title('Histogram of Years for Bad Days')
+    plt.xlabel('Year')
+    plt.ylabel('Frequency')
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=daily, x='Tavg_degC', bins=20, kde=True)
+    plt.title('Histogram of Average Temperature for Bad Days')
+    plt.xlabel('Average Temperature (°C)')
+    plt.ylabel('Frequency')
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=daily, x='day_name', shrink=0.8)
+    plt.title('Histogram of Days of the Week for Bad Days')
+    plt.xlabel('Day of the Week')
+    plt.ylabel('Frequency')
+    plt.xticks(rotation=45)
+    plt.show()
 
 
-    return daily[['day_name', 'day', 'month', 'year', 'Tavg_degC',
-                  'mean_loss_pc', 'max_loss_pc', 'ramp_pc']].head(top_n)
+
+
+    return daily
 

@@ -126,8 +126,9 @@ if __name__ == "__main__":
         print("  NA:", df.index[df.isna().any(axis=1)].tolist())
 
     # Keep date separately for plotting later
-    dates     = df.index
-    Tavg_full = df["Tavg_degC"]   # for plots and worst days
+    dates       = df.index
+    Tavg_full   = df["Tavg_degC"]   # for plots and worst days
+    holiday_full= df['is_holiday']   # for worst days
 
     df = df.reset_index(drop=True)
 
@@ -589,19 +590,24 @@ if VERBOSE >= 2:
 
 
 
-if VERBOSE >= -2:
+if VERBOSE >= 2:
 
+    print("\nBad days during training")
     top_bad_days_train = utils.worst_days_by_loss(
-        y_true    = true_train_GW,
-        y_pred    = dict_pred_train_GW['q50'],
-        temperature=Tavg_full[:TRAIN_SPLIT][:-n_valid],
+        y_true      = true_train_GW,
+        y_pred      = dict_pred_train_GW['q50'],
+        temperature = Tavg_full   [:TRAIN_SPLIT][:-n_valid],
+        holidays    = holiday_full[:TRAIN_SPLIT][:-n_valid],
         num_steps_per_day=NUM_STEPS_PER_DAY,
-        top_n     = 25,
+        top_n       = 50,
     )
+
+    # print("\nBad days during Validation")
     # top_bad_days_valid = utils.worst_days_by_loss(
     #     y_true    = true_valid_GW,
     #     y_pred    = dict_pred_valid_GW['q50'],
-    #     temperature=Tavg_full[:TRAIN_SPLIT][-n_valid:],
+    #     temperature=Tavg_full   [:TRAIN_SPLIT][-n_valid:],
+    #     holidays  = holiday_full[:TRAIN_SPLIT][-n_valid:],
     #     num_steps_per_day=NUM_STEPS_PER_DAY,
     #     top_n     = 25,
     # )
