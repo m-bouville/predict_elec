@@ -58,10 +58,13 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
     df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # for morning
 
+    df['is_evening' ] = (df.index.hour >= 21).astype(np.int16)
+        # there is a peak of coverage loss between about 9pm and midninght, UTC
+
     df['is_August'  ] = ((df.index.month     == 8) \
                          & (df.index.day >= 5) & (df.index.day >= 25)).astype(np.int16)
-    df['is_Christmas']= (((df.index.month == 12) & (df.index.day >= 24)) | \
-                         ((df.index.month ==  1) & (df.index.day <=  2))).astype(np.int16)
+    df['is_Christmas']= (((df.index.month ==12) & (df.index.day >=23)) | \
+                         ((df.index.month == 1) & (df.index.day <= 4))).astype(np.int16)
 
     if verbose >= 3:
         print(df.head().to_string())
@@ -128,10 +131,10 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
 
 
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
-    dates_df["start"] = (dates_df["start"] + pd.Timedelta(hours=2)).dt.floor("D").dt.date
-    dates_df["end"]   =  dates_df["end"  ].dt.date
+    dates_df["start"]= (dates_df["start"] + pd.Timedelta(hours=2)).dt.floor("D").dt.date
+    dates_df["end"]  =  dates_df["end"  ].dt.date
 
-    # df['date'] = df.index.year - 2000 + df.index.dayofyear / 365  # for long-term drift
+    # df['date'] = df.index.year - 2000 + df.index.dayofyear/365  # for long-term drift
 
     if verbose >= 3:
         # print(df.head().to_string())
@@ -149,53 +152,6 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
     return df, dates_df
 
 
-# ----------------------------------------------------------------------
-# Metamodel: prediction (losses are in architecture.py)
-# ----------------------------------------------------------------------
-
-# /!\ These two MUST remain equivalent.
-#    When making modifications, we modify both in parallel.
-
-def compute_meta_prediction_torch(
-        pred_scaled   : torch.Tensor,   # (B, H, Q)
-        x_scaled      : torch.Tensor,   # (B, L, F)
-        baseline_idx  : Dict[str, int],
-        weights_meta  : Dict[str, float],
-        idx_median    : int
-    ) -> torch.Tensor:                  # (B, Q)
-    """
-    Median-only metamodel prediction.
-
-    Returns:
-        y_meta_scaled : torch.Tensor, shape (B, Q)
-    """
-
-    pred_scaled1 = dict()
-    # Baseline predictions from input features
-    # First horizon only (t+1)
-    for _name in ['lr', 'rf']:
-        if _name in baseline_idx:
-            pred_scaled1[_name]= x_scaled[:, -1, baseline_idx[_name]]
-        elif weights_meta[_name] == 0:
-            pred_scaled1[_name]= 0
-        else:
-            raise ValueError(f"{_name} not in baseline_idx, "
-                             f"yet weight == {weights_meta[_name]} != 0")
-
-    # B, _, _ = x_scaled.shape
-
-    pred_scaled1['nn'] = pred_scaled[:, 0, idx_median]   # (B,)
-
-    # Weighted meta prediction
-    pred_meta_scaled = (
-        weights_meta['nn'] * pred_scaled1['nn'] +
-        weights_meta['lr'] * pred_scaled1.get('lr', 0) +
-        weights_meta['rf'] * pred_scaled1.get('rf', 0)
-    )
-
-    return pred_meta_scaled
-
-
 
 # -------------------------------------------------------
 # Testing
@@ -208,7 +164,7 @@ def subset_predictions_day_ahead(
     feature_cols, device,
     input_length: int, pred_length: int, valid_length: int, minutes_per_step: int,
     quantiles: Tuple[float, ...]
-) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray], Tuple]:
+) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Tuple]:
     # subset: train, valid ot test
 
     # print(f"X_subset_GW.shape = {X_subset_GW.shape}")
@@ -357,7 +313,8 @@ def compare_models(true_series, dict_pred_series,
 
     if verbose >= 3:
         print("shapes:")
-        print(f"true: {true_series.shape} ({true_series.index.min()} -> {true_series.index.max()})")
+        print(f"true: {true_series.shape} ({true_series.index.min()}"
+              f" -> {true_series.index.max()})")
         print(f"nn:   {dict_pred_series.get('q50').shape} "
               f"({dict_pred_series.get('q50').index.min()} -> "
               f"{dict_pred_series.get('q50').index.max()})")
@@ -504,7 +461,7 @@ def compare_models(true_series, dict_pred_series,
 
 def display_evolution(
         epoch: int, t_epoch_start,
-        train_loss_scaled: float, valid_loss_scaled: float,
+        train_loss: float, valid_loss: float,
         list_of_min_losses: List[float], list_of_lists: List[List[float]],
         # constants
         num_epochs: int, display_every: int, plot_conv_every: int,
@@ -512,22 +469,22 @@ def display_evolution(
             -> [[float, float, float],
                 [List[float], List[float], List[float], List[float]]]:
 
-    (min_train_loss_scaled,  min_valid_loss_scaled, min_loss_display_scaled) = \
+    (min_train_loss,  min_valid_loss, min_loss_display) = \
         list_of_min_losses
 
-    (list_train_loss_scaled, list_min_train_loss_scaled,
-    list_valid_loss_scaled, list_min_valid_loss_scaled) = list_of_lists
+    (list_train_loss, list_min_train_loss,
+    list_valid_loss, list_min_valid_loss) = list_of_lists
 
     if ((epoch+1) % display_every == 0) | (epoch == 0):
         # comparing latest loss to lowest so far
-        if valid_loss_scaled <= min_loss_display_scaled - min_delta:
+        if valid_loss <= min_loss_display - min_delta:
             is_better = '**'
-        elif valid_loss_scaled <= min_loss_display_scaled:
+        elif valid_loss <= min_loss_display:
             is_better = '*'
         else:
             is_better = ''
 
-        min_loss_display_scaled = min_valid_loss_scaled
+        min_loss_display = min_valid_loss
 
         t_epoch = time.perf_counter() - t_epoch_start
 
@@ -535,33 +492,33 @@ def display_evolution(
             print(f"{epoch+1:3n} /{num_epochs:3n} ={(epoch+1)/num_epochs*100:3.0f}%,"
                   f"{t_epoch/60*(num_epochs/(epoch+1)-1)+.5:3.0f} min left, "
                   f"loss (1e-3): "
-                  f"train{train_loss_scaled*1000:5.0f} (best{min_train_loss_scaled*1000:5.0f}), "
-                  f"valid{valid_loss_scaled*1000:5.0f} ({    min_valid_loss_scaled*1000:5.0f})"
+                  f"train{train_loss*1000:5.0f} (best{min_train_loss*1000:5.0f}), "
+                  f"valid{valid_loss*1000:5.0f} ({    min_valid_loss*1000:5.0f})"
                   f" {is_better}")
 
-    min_train_loss_scaled = min(min_train_loss_scaled, train_loss_scaled)
-    list_train_loss_scaled    .append(train_loss_scaled)
-    list_min_train_loss_scaled.append(min_train_loss_scaled)
+    min_train_loss = min(min_train_loss, train_loss)
+    list_train_loss    .append(train_loss)
+    list_min_train_loss.append(min_train_loss)
 
-    min_valid_loss_scaled = min(min_valid_loss_scaled, valid_loss_scaled)
-    list_valid_loss_scaled    .append(valid_loss_scaled)
-    list_min_valid_loss_scaled.append(min_valid_loss_scaled)
+    min_valid_loss = min(min_valid_loss, valid_loss)
+    list_valid_loss    .append(valid_loss)
+    list_min_valid_loss.append(min_valid_loss)
 
 
     # if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
     #         & (epoch < num_epochs-2):
-    #     plots.convergence(list_train_loss_scaled, list_min_train_loss_scaled,
-    #                       list_valid_loss_scaled, list_min_valid_loss_scaled,
-    #                       baseline_losses_scaled,
+    #     plots.convergence(list_train_loss, list_min_train_loss,
+    #                       list_valid_loss, list_min_valid_loss,
+    #                       baseline_losses,
     #                       None, None, None, None,
-    #                       # list_meta_train_loss_scaled, list_meta_min_train_loss_scaled,
-    #                       # list_meta_valid_loss_scaled, list_meta_min_valid_loss_scaled,
+    #                       # list_meta_train_loss, list_meta_min_train_loss,
+    #                       # list_meta_valid_loss, list_meta_min_valid_loss,
     #                       partial=True, verbose=verbose)
 
-    return ((min_train_loss_scaled, min_valid_loss_scaled, min_loss_display_scaled),
+    return ((min_train_loss, min_valid_loss, min_loss_display),
             # list of lists
-            (list_train_loss_scaled, list_min_train_loss_scaled,
-            list_valid_loss_scaled, list_min_valid_loss_scaled)
+            (list_train_loss, list_min_train_loss,
+            list_valid_loss, list_min_valid_loss)
             )
 
 
@@ -570,32 +527,9 @@ def display_evolution(
 # Diagnosing outliers
 # -------------------------------------------------------
 
-def per_timestamp_loss_after_aggregation(
-    y_true,           # shape (T,)
-    y_pred,           # shape (T, Q) or (T,) if median only
-    quantiles,
-):
-    """
-    Returns per-timestamp pinball loss (T,)
-    """
-    if y_pred.ndim == 1:  # median only
-        q50_idx = quantiles.index(0.5)
-        y_pred = y_pred[:, None]
-        quantiles = [0.5]
-
-    losses = []
-    for q, tau in enumerate(quantiles):
-        e = y_true - y_pred[:, q]
-        losses.append(np.maximum(tau * e, (tau - 1) * e))
-
-    return np.mean(np.stack(losses, axis=1), axis=1)  # (T,)
-
-
 def worst_days_by_loss(
-    dates,
-    y_true,
-    y_pred,
-    quantiles,
+    y_true: np.ndarray,   # shape (T,)
+    y_pred: np.ndarray,   # shape (T,)
     temperature,
     num_steps_per_day,
     top_n=10
@@ -603,22 +537,25 @@ def worst_days_by_loss(
     """
     Returns DataFrame of worst days by mean loss
     """
-    ts_loss = per_timestamp_loss_after_aggregation(
-        y_true, y_pred, quantiles
-    )
+
+    diff    = y_true - y_pred
+    ts_loss = np.maximum(0.5 * diff, -0.5 * diff)  # 0.5: median
+
+    df_aligned = pd.concat([ts_loss, temperature], axis=1, join='inner')
+    df_aligned.columns = ['ts_loss', 'temperature']
 
     df = pd.DataFrame({
-        'date':      dates.normalize(),  # midnight per day
-        'loss_pc':   (ts_loss * 100).round(2),
-        'Tavg_degC': temperature,
+        'date':      df_aligned.index.normalize(),  # midnight per day
+        'loss_pc':  (df_aligned['ts_loss'] * 100).astype(np.float32).round(2),
+        'Tavg_degC': df_aligned['temperature']   .astype(np.float32),
     })
 
     daily = (
         df.groupby('date', as_index=False)
           .agg(
               mean_loss_pc= ('loss_pc',  "mean"),
-              max_loss_pc = ('loss_pc',  "max"),
-              ramp_pc     = ("loss_pc", lambda x: np.max(np.abs(np.diff(x)))),
+              max_loss_pc = ('loss_pc',  "max" ),
+              ramp_pc     = ("loss_pc", lambda x: np.max(np.abs(np.diff(x))) if len(x) > 1 else np.nan),
               n_points    = ('loss_pc',  "size"),
               Tavg_degC   = ('Tavg_degC',"mean"),
           )
@@ -632,10 +569,12 @@ def worst_days_by_loss(
     daily['month'   ] = daily['date'].dt.month
     daily['year'    ] = daily['date'].dt.year
 
-    daily['mean_loss_pc'] = daily['mean_loss_pc'].round(1)
-    daily['Tavg_degC'   ] = daily['Tavg_degC'   ].round(1)
+    daily['mean_loss_pc'] = daily['mean_loss_pc'].astype(np.float32).round()
+    daily[ 'max_loss_pc'] = daily[ 'max_loss_pc'].astype(np.float32).round()
+    daily['ramp_pc'     ] = daily['ramp_pc'     ].astype(np.float32).round()
+    daily['Tavg_degC'   ] = daily['Tavg_degC'   ].astype(np.float32).round(1)
 
 
-    return daily[['day_name', 'day', 'month', 'year',
-                  'mean_loss_pc', 'max_loss_pc', 'ramp_pc', 'Tavg_degC']].head(top_n)
+    return daily[['day_name', 'day', 'month', 'year', 'Tavg_degC',
+                  'mean_loss_pc', 'max_loss_pc', 'ramp_pc']].head(top_n)
 

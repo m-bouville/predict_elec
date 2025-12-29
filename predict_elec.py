@@ -33,17 +33,14 @@ import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 # B = BATCH_SIZE
 # L = INPUT_LENGTH
 # H = prediction horizon  =  PRED_LENGTH
-# H = validation horizon  = VALID_LENGTH
+# V = validation horizon  = VALID_LENGTH
 # Q = number of quantiles = len(quantiles)
+# F = number of features
 
 
-# [done] account for known future: sines, WE, T° (as forecast: _add noise_), etc.
-# TODO make future T° noisy
-# TODO trained metamodel (NN + RF)
-#   - [done] Linear meta-learner per horizon (fast, interpretable)
-#   - Small MLP or ridge regression trained on validation OOF predictions
+# TODO make future T° noisy to mimic the uncertainty of forecasts
 # TODO Add public holidays to features
-# TODO (in progress) make PRED_LENGTH == 36h and validate h+12 to h+36
+# [done] make PRED_LENGTH == 36h and validate h+12 to h+36
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
 
@@ -519,9 +516,10 @@ test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
         LAMBDA_MEDIAN, SMOOTHING_CROSS
     )
 
-# print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
-#                         **dict_test_loss_quantile_h)
-#                    ).round(2).to_string())
+if VERBOSE >= 3:
+    print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
+                            **dict_test_loss_quantile_h)
+                       ).round(2).to_string())
 plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
                              **dict_test_loss_quantile_h), MINUTES_PER_STEP,
                        "test loss")
@@ -591,42 +589,24 @@ if VERBOSE >= 2:
 
 
 
-# if VERBOSE >= 2:
-#     y_valid_agg_scaled, y_valid_pred_agg_scaled, _, has_pred =\
-#         utils.aggregate_day_ahead(
-#             model        = model,
-#             loader       = valid_loader,
-#             dates        = valid_dates,
-#             scaler_y     = scaler_y,
-#             baseline_idx = baseline_idx,
-#             device       = device,
-#             input_length = INPUT_LENGTH,
-#             weights_meta = WEIGHTS_META,
-#             quantiles    = QUANTILES,
-#         )
-#     assert has_pred.dtype == bool, has_pred.dtype
-#     assert has_pred.shape[0] == len(valid_dates), \
-#         f"has_pred.shape[0] ({has_pred.shape[0]}) != len(dates) ({len(dates)})"
+if VERBOSE >= -2:
 
-#     # window-aligned dates (prediction at t = i + input_length)
-#     valid_dates_win = valid_dates
-            #[INPUT_LENGTH : INPUT_LENGTH + len(valid_loader.dataset)]
+    top_bad_days_train = utils.worst_days_by_loss(
+        y_true    = true_train_GW,
+        y_pred    = dict_pred_train_GW['q50'],
+        temperature=Tavg_full[:TRAIN_SPLIT][:-n_valid],
+        num_steps_per_day=NUM_STEPS_PER_DAY,
+        top_n     = 25,
+    )
+    # top_bad_days_valid = utils.worst_days_by_loss(
+    #     y_true    = true_valid_GW,
+    #     y_pred    = dict_pred_valid_GW['q50'],
+    #     temperature=Tavg_full[:TRAIN_SPLIT][-n_valid:],
+    #     num_steps_per_day=NUM_STEPS_PER_DAY,
+    #     top_n     = 25,
+    # )
 
-#     dates_masked  = valid_dates_win        [has_pred]
-#     y_true_masked = y_valid_agg_scaled     [has_pred]
-#     y_pred_masked = y_valid_pred_agg_scaled[has_pred]
-
-#     top_bad_days = utils.worst_days_by_loss(
-#         dates     = dates_masked,
-#         y_true    = y_true_masked,
-#         y_pred    = y_pred_masked,
-#         quantiles = QUANTILES,
-#         temperature=Tavg_full[TRAIN_SPLIT-n_valid : TRAIN_SPLIT][has_pred],
-#         num_steps_per_day=NUM_STEPS_PER_DAY,
-#         top_n     = 25,
-#     )
-
-#     print(top_bad_days.to_string())
+    print(top_bad_days_train.to_string())
 
 
 #     # import matplotlib.pyplot as plt
