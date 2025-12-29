@@ -3,11 +3,12 @@
 # ----------------------------------------------------------------------
 
 
-from   typing import Tuple  # Dict, Sequence  #, List, Optional
+from   typing import Dict, Tuple  # Sequence  #, List, Optional
 
 import torch
 
 import numpy  as np
+# import pandas as pd
 
 
 # import utils
@@ -26,7 +27,7 @@ def quantile_with_crossing_torch(
     lambda_cross:   float,
     lambda_coverage:float,
     smoothing     : float
-) -> torch.Tensor:
+) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Joint quantile loss with crossing penalty.
     """
@@ -34,43 +35,42 @@ def quantile_with_crossing_torch(
     B, V, Q = y_pred.shape
     device  = y_pred.device
 
-    loss_h  = torch.zeros(V, device=device)
+    loss_pinball_h  = torch.zeros(V, device=device)
+    loss_coverage_h = torch.zeros(V, device=device)
+    loss_crossing_h = torch.zeros(V, device=device)
 
     for i, tau in enumerate(quantiles):
         diff = y_true - y_pred[..., i]
         pin = torch.maximum(tau * diff, -(1 - tau) * diff)
-
-        loss_h += pin.mean(dim=0)
-        # loss += torch.mean(torch.maximum(tau * diff, -(1-tau) * diff))
+        loss_pinball_h += pin.mean(dim=0)
 
         # Coverage penalty
         if lambda_coverage > 0.:
             # scale per horizon using target variability
             scale_h    = torch.std(y_true, dim=0, unbiased=False)  # (V,)
             tau_smooth = smoothing * scale_h.clamp_min(1e-3)       # (V,)
-            # tau_smooth = smoothing * torch.std(y_true)
 
-            z = (y_pred[..., i] - y_true) / tau_smooth   # broadcast over B
+            z = -diff / tau_smooth   # broadcast over B
             z = torch.clamp(z, -20., 20.)  # preventing overflow
             soft_ind   = torch.sigmoid(z)         # (B, V)
             coverage_h = soft_ind.mean(dim=0)     # (V,)
-            # coverage = torch.sigmoid(z).mean()
 
             err  = coverage_h - tau
             w    = torch.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_h += lambda_coverage * alpha * w * err**2
-            # loss+= lambda_coverage * alpha * (w * err**2).mean()
-            # loss += lambda_coverage * alpha * (coverage - tau) ** 2
+            loss_coverage_h += lambda_coverage * alpha * w * err**2
 
     # Crossing penalty
     if lambda_cross > 0.:
         penalty = torch.relu(y_pred[..., :-1] - y_pred[..., 1:])
-        loss_h += lambda_cross * penalty.sum(dim=-1).mean(dim=0)
-        # loss   += lambda_cross * penalty.sum(dim=-1).mean()
+        loss_crossing_h += lambda_cross * penalty.sum(dim=-1).mean(dim=0)
 
-    return loss_h
+    loss_h = loss_pinball_h + loss_coverage_h + loss_crossing_h
+
+    return loss_h, {'pinball':  loss_pinball_h,
+                    'coverage': loss_coverage_h, 'crossing': loss_crossing_h}
+
 
 
 def quantile_with_crossing_numpy(
@@ -80,11 +80,13 @@ def quantile_with_crossing_numpy(
         lambda_cross  : float,
         lambda_coverage:float,
         smoothing     : float
-    ) -> float:
+    ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
 
     B, V, Q = y_pred.shape
 
-    loss_h = np.zeros(V)
+    loss_pinball_h  = np.zeros(V)
+    loss_coverage_h = np.zeros(V)
+    loss_crossing_h = np.zeros(V)
 
     def sigmoid(x: float) -> float:
         return 1. / (1. + np.exp(-x))
@@ -93,39 +95,41 @@ def quantile_with_crossing_numpy(
     # print(f"[quantile_loss_with_crossing_numpy] y_true.shape = {y_true.shape}")
 
     for i, tau in enumerate(quantiles):
-        diff = y_true - y_pred[..., i]
+        diff = y_true - y_pred[..., i]      # (B, V)
         # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}"
 
         pin = np.maximum(tau * diff, -(1 - tau) * diff)
-        loss_h += pin.mean(axis=0)
-        # loss += np.mean(np.maximum(tau * diff, -(1-tau) * diff))
+        loss_pinball_h += pin.mean(axis=0)   # (V,)
 
         # Coverage penalty
         if lambda_coverage > 0.:
             # scale per horizon using target variability
-            scale_h    = np.std(y_true, axis=0, correction=0)     # (V,)
+            scale_h    = np.std(y_true, axis=0, correction=0)      # (V,)
             tau_smooth = smoothing * np.clip(scale_h, 1e-3, None)  # (V,)
-            # tau_smooth = smoothing * np.std(y_true)
 
-            z = (y_pred[..., i] - y_true) / tau_smooth
+            z = -diff / tau_smooth                # (B, V)
             z = np.clip(z, -20., 20.)  # preventing overflow
-            soft_ind   = sigmoid(z)
+            soft_ind   = sigmoid(z)              # (B, V)
             coverage_h = soft_ind.mean(axis=0)   # (V,)
-            # coverage = sigmoid(z).mean()
 
-            err  = coverage_h - tau
+            err  = coverage_h - tau              # (V,)
             w    = np.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_h += lambda_coverage * alpha * w * err**2
-            # loss += lambda_coverage * alpha * (coverage - tau) ** 2
+            loss_coverage_h += lambda_coverage * alpha * w * err**2       # (V,)
 
     # Crossing penalty
     if lambda_cross > 0.:
-        penalty = np.maximum(0., y_pred[..., :-1] - y_pred[..., 1:])
-        loss_h += lambda_cross * np.sum(penalty, axis=-1).mean(axis=0)
+        penalty = np.maximum(0., y_pred[..., :-1] - y_pred[..., 1:])  # (B, V, Q-1)
+        loss_crossing_h += lambda_cross * np.sum(penalty, axis=-1).mean(axis=0) # (V,)
 
-    return loss_h
+    loss_h = loss_pinball_h + loss_coverage_h + loss_crossing_h
+    # print(pd.DataFrame({'quantile_with_crossing': loss_h, 'pinball': loss_pinball_h,
+    #        'coverage': loss_coverage_h, 'crossing': loss_crossing_h}).round(2))
+
+
+    return loss_h, {'pinball':  loss_pinball_h,
+                    'coverage': loss_coverage_h, 'crossing': loss_crossing_h}
 
 
 
@@ -257,7 +261,7 @@ def quantile_torch(
         lambda_deriv  : float,
         lambda_median : float,
         smoothing_cross:float
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Torch loss wrapper for quantile forecasts.
     """
@@ -265,28 +269,34 @@ def quantile_torch(
         y_true = y_true.squeeze(-1)
 
     # Base quantile + crossing loss
-    loss_h = quantile_with_crossing_torch(
-        y_pred       = y_pred,
-        y_true       = y_true,
-        quantiles    = quantiles,
-        lambda_cross = lambda_cross,
-        lambda_coverage=lambda_coverage,
-        smoothing    = smoothing_cross
-    )
+    loss_quantile_with_crossing_h, dict_loss_quantile_with_crossing_h = \
+        quantile_with_crossing_torch(
+            y_pred       = y_pred,
+            y_true       = y_true,
+            quantiles    = quantiles,
+            lambda_cross = lambda_cross,
+            lambda_coverage=lambda_coverage,
+            smoothing    = smoothing_cross
+        )
 
     # Optional derivative loss (per quantile)
     if lambda_deriv > 0.:
-        # _y_true = y_true.squeeze(-1) if y_true.ndim == 3 else y_true
-        loss_h += lambda_deriv * derivative_torch(y_pred, y_true)
-        # loss += lambda_deriv * derivative_torch(y_pred, y_true)
+        loss_deriv_h = lambda_deriv * derivative_torch(y_pred, y_true)
+    else:
+        loss_deriv_h = torch.zeros_like(loss_quantile_with_crossing_h)
 
-    q50_pred = y_pred[..., len(quantiles)//2]
-    loss_h += lambda_median * (q50_pred - y_true).mean(dim=0)**2
-    # loss += lambda_median * ((q50_pred - y_true).mean(dim=0)**2).mean()
+    if lambda_median > 0.:
+        q50_pred = y_pred[..., len(quantiles)//2]
+        loss_median_h = lambda_median * (q50_pred - y_true).mean(dim=0)**2
+    else:
+        loss_median_h = torch.zeros_like(loss_quantile_with_crossing_h)
 
+    loss_h = loss_quantile_with_crossing_h + loss_deriv_h + loss_median_h
     # print(f"loss_h (torch): {loss_h.shape}: {loss_h}")
 
-    return loss_h
+    return loss_h, dict({'quantile_with_crossing': loss_quantile_with_crossing_h,
+                         'derivative': loss_deriv_h, 'median': loss_median_h},
+                        **dict_loss_quantile_with_crossing_h)
 
 
 def quantile_numpy(
@@ -298,7 +308,7 @@ def quantile_numpy(
         lambda_deriv  : float,
         lambda_median : float,
         smoothing_cross:float
-    ) -> float:
+    ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     NumPy loss wrapper for quantile forecasts.
     MUST match torch version exactly.
@@ -307,23 +317,31 @@ def quantile_numpy(
     if y_true.ndim == 3:
         y_true = y_true.squeeze(-1)
 
-    loss_h = quantile_with_crossing_numpy(
-        y_pred       = y_pred,
-        y_true       = y_true,
-        quantiles    = quantiles,
-        lambda_cross = lambda_cross,
-        lambda_coverage=lambda_coverage,
-        smoothing    = smoothing_cross
-    )
+    loss_quantile_with_crossing_h, dict_loss_quantile_with_crossing_h = \
+        quantile_with_crossing_numpy(
+            y_pred       = y_pred,
+            y_true       = y_true,
+            quantiles    = quantiles,
+            lambda_cross = lambda_cross,
+            lambda_coverage=lambda_coverage,
+            smoothing    = smoothing_cross
+        )
 
     if lambda_deriv > 0.:
-        loss_h += lambda_deriv * derivative_numpy(y_pred, y_true)
+        loss_deriv_h = lambda_deriv * derivative_numpy(y_pred, y_true)
+    else:
+        loss_deriv_h = np.zeros_like(loss_quantile_with_crossing_h)
 
-    q50_pred = y_pred[..., len(quantiles)//2]
-    loss_h += lambda_median * ((q50_pred - y_true).mean(axis=0)**2)
-    # loss += lambda_median * ((q50_pred - y_true).mean(axis=0)**2).mean()
+    if lambda_median > 0.:
+        q50_pred = y_pred[..., len(quantiles)//2]
+        loss_median_h = lambda_median * ((q50_pred - y_true).mean(axis=0)**2)
+    else:
+        loss_median_h = np.zeros_like(loss_quantile_with_crossing_h)
 
+    loss_h = loss_quantile_with_crossing_h + loss_deriv_h + loss_median_h
     # print(f"loss_h (numpy): {loss_h.shape}: {loss_h}")
 
-    return loss_h
+    return loss_h, dict({'quantile_with_crossing': loss_quantile_with_crossing_h,
+                         'derivative': loss_deriv_h, 'median': loss_median_h},
+                        **dict_loss_quantile_with_crossing_h)
 

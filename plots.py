@@ -74,16 +74,23 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
     plt.show()
 
 
-def loss_per_horizon(evolution_loss,
-                     minutes_per_step: int,
+def loss_per_horizon(dict_evolution_loss: Dict[str, np.ndarray],
+                     minutes_per_step   : int,
                      title: Optional[str] = str):
     hours_per_step = minutes_per_step/60.
-    plt.plot(np.arange(0, len(evolution_loss)*hours_per_step, step=hours_per_step), evolution_loss)
+    x = np.arange(0, len(next(iter(dict_evolution_loss.values()))) * hours_per_step,
+                  step=hours_per_step)
+
+    for key, loss_array in dict_evolution_loss.items():
+        plt.plot(x, loss_array, label=key)
+
+    # plt.plot(np.arange(0, len(evolution_loss)*hours_per_step, step=hours_per_step), evolution_loss)
     plt.xlabel("Horizon")
     plt.ylabel("Loss")
     plt.ylim(bottom=0.)
     if title is not None:
         plt.title(title)
+    plt.legend()
     plt.show()
 
 

@@ -1,5 +1,5 @@
 
-from   typing import Tuple, List, Sequence  #, Dict, Optional
+from   typing import Tuple, List, Dict, Sequence  #, Optional
 # from   collections import defaultdict
 
 import torch
@@ -640,7 +640,7 @@ def subset_evolution_torch(
         lambda_deriv  : float,
         lambda_median : float,
         smoothing_cross:float
-    ) -> Tuple[float, float]:
+    ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Returns:
         nn_loss_scaled   : float
@@ -650,6 +650,12 @@ def subset_evolution_torch(
     model.train()
 
     loss_quantile_scaled_h = torch.zeros(valid_length, device=device)
+    dict_losses_h = {'quantile_with_crossing': torch.zeros(valid_length, device=device),
+                     'pinball':   torch.zeros(valid_length, device=device),
+                     'coverage':  torch.zeros(valid_length, device=device),
+                     'crossing':  torch.zeros(valid_length, device=device),
+                     'derivative':torch.zeros(valid_length, device=device),
+                     'median':    torch.zeros(valid_length, device=device)}
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
     for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
@@ -668,25 +674,30 @@ def subset_evolution_torch(
             # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
 
             # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
-            loss_quantile_scaled_h_dev = losses.quantile_torch(
+            loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
                 pred_scaled_dev[:, -valid_length:, :],
                 y_scaled_dev   [:, -valid_length:, :], quantiles,
                 lambda_cross, lambda_coverage, lambda_deriv,
                 lambda_median, smoothing_cross)
 
-        amp_scaler.scale(loss_quantile_scaled_h_dev.mean()).backward()       # full precision
+        amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()       # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(optimizer)
         amp_scaler.update()
 
-        loss_quantile_scaled_h += loss_quantile_scaled_h_dev
+        loss_quantile_scaled_h += loss_quantile_scaled_h_batch
+        dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
+                         for key in dict_losses_h}
 
         # loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
     scheduler.step()
-    loss_quantile_scaled_h /= len(subset_loader)
 
-    return loss_quantile_scaled_h
+    loss_quantile_scaled_h /= len(subset_loader)
+    dict_losses_h = {key: value / len(subset_loader)
+                     for (key, value) in dict_losses_h.items()}
+
+    return loss_quantile_scaled_h, dict_losses_h
 
 
 @torch.no_grad()
@@ -703,7 +714,7 @@ def subset_evolution_numpy(
         lambda_deriv  : float,
         lambda_median : float,
         smoothing_cross:float
-    ) -> Tuple[float, float]:
+    ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Returns:
         nn_loss_scaled   : float
@@ -715,6 +726,12 @@ def subset_evolution_numpy(
     # T = len(dates)
 
     loss_quantile_scaled_h = np.zeros(valid_length)
+    dict_losses_h = {'quantile_with_crossing': np.zeros(valid_length),
+            'pinball':   np.zeros(valid_length),
+            'coverage':  np.zeros(valid_length), 'crossing':np.zeros(valid_length),
+            'derivative':np.zeros(valid_length), 'median':  np.zeros(valid_length)}
+    # print("initial:\n", loss_quantile_scaled_h.round(2))
+    # print("initial:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
     # main loop
     for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
@@ -730,15 +747,29 @@ def subset_evolution_numpy(
 
         # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
         # loss
-        loss_quantile_scaled_h_cpu = losses.quantile_numpy(
+        loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_numpy(
             pred_scaled_cpu[:, -valid_length:],
             y_scaled_cpu   [:, -valid_length:], quantiles,
             lambda_cross, lambda_coverage, lambda_deriv,
             lambda_median, smoothing_cross)
 
-        loss_quantile_scaled_h += loss_quantile_scaled_h_cpu
+        # print("batch:\n", loss_quantile_scaled_h_batch.round(2))
+
+        # print("previous total:\n", pd.DataFrame(dict_losses_h).round(2).head())
+        # print("batch:\n", pd.DataFrame(dict_losses_h_batch).round(2).head())
+
+        loss_quantile_scaled_h += loss_quantile_scaled_h_batch
+        dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
+                         for key in dict_losses_h}
+
+        # print("running total:\n", loss_quantile_scaled_h.round(2))
+        # print("running total:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
     loss_quantile_scaled_h /= len(subset_loader)
+    dict_losses_h = {key: value / len(subset_loader)
+                     for (key, value) in dict_losses_h.items()}
 
-    return loss_quantile_scaled_h
+    # print("after norm:\n", pd.DataFrame(dict_losses_h).round(2).head())
+
+    return loss_quantile_scaled_h, dict_losses_h
 

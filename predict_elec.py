@@ -435,14 +435,19 @@ for epoch in range(EPOCHS):
     # Training
     t_train_start = time.perf_counter()
 
-    train_loss_quantile_h_scaled = architecture.subset_evolution_torch(
+    train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
+        architecture.subset_evolution_torch(
             model, amp_scaler, optimizer, scheduler,
             train_loader, train_dates,
             # constants
             device, VALID_LENGTH, QUANTILES,
             LAMBDA_CROSS, LAMBDA_COVERAGE,
             LAMBDA_DERIV, LAMBDA_MEDIAN, SMOOTHING_CROSS
-        ).detach().cpu().numpy()
+        )
+    train_loss_quantile_h_scaled= train_loss_quantile_h_scaled.detach().cpu().numpy()
+    dict_train_loss_quantile_h  = {k: v.detach().cpu().numpy()
+                                   for k, v in dict_train_loss_quantile_h.items()}
+
     # print(f"train_loss_quantile_scaled = {train_loss_quantile_scaled} "
     #       f"meta_train_loss_quantile_scaled = {meta_train_loss_quantile_scaled}")
 
@@ -455,7 +460,8 @@ for epoch in range(EPOCHS):
     if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
 
         t_valid_start     = time.perf_counter()
-        valid_loss_quantile_h_scaled = architecture.subset_evolution_numpy(
+        valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
+            architecture.subset_evolution_numpy(
                 model, valid_loader, valid_dates,
                 # constants
                 device, VALID_LENGTH, QUANTILES,
@@ -498,20 +504,27 @@ plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                            list_of_lists[2], list_of_lists[3],
                            partial=False, verbose=VERBOSE)
 
-plots.loss_per_horizon(valid_loss_quantile_h_scaled, MINUTES_PER_STEP,
+plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
+                       **dict_valid_loss_quantile_h), MINUTES_PER_STEP,
                        "validation loss")
 
 
-# # test loss
-# test_loss_quantile_h_scaled = architecture.subset_evolution_numpy(
-#         model, test_loader, test_dates,
-#         # constants
-#         device, VALID_LENGTH, QUANTILES,
-#         LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
-#         LAMBDA_MEDIAN, SMOOTHING_CROSS
-#     )
-# plots.loss_per_horizon(test_loss_quantile_h_scaled, MINUTES_PER_STEP, "test loss")
+# test loss
+test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
+   architecture.subset_evolution_numpy(
+        model, test_loader, test_dates,
+        # constants
+        device, VALID_LENGTH, QUANTILES,
+        LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
+        LAMBDA_MEDIAN, SMOOTHING_CROSS
+    )
 
+# print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
+#                         **dict_test_loss_quantile_h)
+#                    ).round(2).to_string())
+plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
+                             **dict_test_loss_quantile_h), MINUTES_PER_STEP,
+                       "test loss")
 
 
 t_metamodel_start = time.perf_counter()
