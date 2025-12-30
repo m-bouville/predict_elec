@@ -323,7 +323,7 @@ def train_meta_model(
 
 
 
-def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
+def metamodel_NN(data_train, data_valid, data_test,
                 feature_cols,
                 #constants
                 # pred_length : int,
@@ -338,34 +338,26 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
                 batch_size  : int,
                 device):
 
-    [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW] = list_dict_pred
-    [dict_baseline_train_GW,dict_baseline_valid_GW,dict_baseline_test_GW] = \
-        list_dict_baseline
-    [X_train_GW,  X_valid_GW, X_test_GW] = list_X
-    [y_train_GW,  y_valid_GW, y_test_GW] = list_y
-    [train_dates, valid_dates,test_dates]= list_dates
-
-
     _feature_cols = feature_cols + ['horizon']
 
     # Prepare data
     df_meta_train = prepare_meta_data(
         "train",
-        dict_pred_train_GW,
-        dict_baseline_train_GW,
-        X_train_GW,
-        y_train_GW,
-        train_dates,
+        data_train.dict_preds_NN,
+        data_train.dict_preds_ML,
+        data_train.X_dev,
+        data_train.y_dev,
+        data_train.dates,
         feature_cols  # /!\ 'horizon' will be added inside
     )
 
     df_meta_valid = prepare_meta_data(
         "valid",
-        dict_pred_valid_GW,
-        dict_baseline_valid_GW,
-        X_valid_GW,
-        y_valid_GW,
-        valid_dates,
+        data_valid.dict_preds_NN,
+        data_valid.dict_preds_ML,
+        data_valid.X_dev,
+        data_valid.y_dev,
+        data_valid.dates,
         feature_cols  # /!\ 'horizon' will be added inside
     )
 
@@ -392,11 +384,11 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
     # Test
     df_meta_test = prepare_meta_data(
         "test",
-        dict_pred_test_GW,
-        dict_baseline_test_GW,
-        X_test_GW,
-        y_test_GW,
-        test_dates,
+        data_test.dict_preds_NN,
+        data_test.dict_preds_ML,
+        data_test.X_dev,
+        data_test.y_dev,
+        data_test.dates,
         feature_cols  # /!\ 'horizon' will be added inside
     )
 
@@ -425,7 +417,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
             if idx.any():
                 y_hat, w = net(
                     context_train[idx].to(device),
-                    preds_train[idx].to(device)
+                    preds_train  [idx].to(device)
                 )
                 pred_meta2_train[idx] = y_hat
                 weights_train_all.append(w.cpu())
@@ -435,7 +427,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
             if idx.any():
                 y_hat, w = net(
                     context_valid[idx].to(device),
-                    preds_valid[idx].to(device)
+                    preds_valid  [idx].to(device)
                 )
                 pred_meta2_valid[idx] = y_hat
                 weights_valid_all.append(w.cpu())
@@ -445,7 +437,7 @@ def metamodel_NN(list_dict_pred, list_dict_baseline, list_X, list_y, list_dates,
             if idx.any():
                 y_hat, w = net(
                     context_test[idx].to(device),
-                    preds_test[idx].to(device)
+                    preds_test  [idx].to(device)
                 )
                 pred_meta2_test[idx] = y_hat
                 weights_test_all.append(w.cpu())

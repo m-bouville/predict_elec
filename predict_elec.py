@@ -43,6 +43,8 @@ import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 # [done] make PRED_LENGTH == 36h and validate h+12 to h+36
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
+# TODO Boost
+# TODO refactoring: create dict or pd.df to keep together the different preds
 
 
 
@@ -229,29 +231,6 @@ if VERBOSE >= 3:
     print(f"baseline_idx: {baseline_idx}")
 
 
-# rows = [];
-# rows.append(utils.index_summary("dates all",  dates))
-# rows.append(utils.index_summary("dates test", dates[TRAIN_SPLIT:]))
-# print(pd.DataFrame(rows).set_index("series"))
-
-# print("\nTesting metrics [GW]:")
-# y_true = df[target_col][TRAIN_SPLIT:]
-# utils.compare_models(y_true,  None,
-#                      {k: v.iloc[TRAIN_SPLIT:] for (k,v) in baseline_features_GW.items()},
-#                      None,
-#                      subset="test", unit="GW", verbose=VERBOSE)
-
-# y_true = df[target_col][(TRAIN_SPLIT+30*24*2):]
-# utils.compare_models(y_true,  None,
-#          {k: v.iloc[(TRAIN_SPLIT+30*24*2):] for (k,v) in baseline_features_GW.items()},
-#          None,
-#         subset="test", unit="GW", verbose=VERBOSE)
-# del rows, y_true
-
-
-# sys.exit()
-
-
 
 # ---- Construct final matrix: target first, then features ----
 
@@ -317,12 +296,12 @@ assert INPUT_LENGTH + 60 < test_months,\
 # ============================================================
 
 
-[train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates],\
-        scaler_y, [X_GW, y_GW], \
-        [X_train_GW, y_train_GW, train_dataset_scaled], \
-        [X_valid_GW, y_valid_GW, valid_dataset_scaled], \
-        [X_test_GW,  y_test_GW,  test_dataset_scaled ], X_test_scaled =\
-    architecture.make_X_and_y(
+# [train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates],\
+#         scaler_y, [X_GW, y_GW], \
+#         [X_train_GW, y_train_GW, train_dataset_scaled], \
+#         [X_valid_GW, y_valid_GW, valid_dataset_scaled], \
+#         [X_test_GW,  y_test_GW,  test_dataset_scaled ], X_test_scaled =\
+data, X_test_scaled = architecture.make_X_and_y(
         series, dates, TRAIN_SPLIT, n_valid,
         feature_cols, target_col,
         input_length=INPUT_LENGTH, pred_length=PRED_LENGTH,
@@ -331,10 +310,10 @@ assert INPUT_LENGTH + 60 < test_months,\
         verbose=VERBOSE)
 
 if VERBOSE >= 2:
-    print(f"Train mean:{scaler_y.mean_ [0]:6.2f} GW")
-    print(f"Train std :{scaler_y.scale_[0]:6.2f} GW")
-    print(f"Valid mean:{y_valid_GW.mean() :6.2f} GW")
-    print(f"Test mean :{y_test_GW.mean()  :6.2f} GW")
+    print(f"Train mean:{data.scaler_y.mean_ [0]:6.2f} GW")
+    print(f"Train std :{data.scaler_y.scale_[0]:6.2f} GW")
+    print(f"Valid mean:{data.valid.y_dev.mean():6.2f} GW")
+    print(f"Test mean :{data.test .y_dev.mean():6.2f} GW")
 
 
 # Free heavy CPU-side arrays that are no longer needed.
@@ -385,7 +364,7 @@ optimizer = torch.optim.Adam(model.parameters(),
 # )
 
 def my_lr_warmup_cosine(step):
-    return architecture.lr_warmup_cosine(step, WARMUP_STEPS, EPOCHS, len(train_loader))
+    return architecture.lr_warmup_cosine(step, WARMUP_STEPS, EPOCHS, len(data.train))
 scheduler = torch.optim.lr_scheduler.LambdaLR(
     optimizer,
     lr_lambda=my_lr_warmup_cosine
@@ -417,7 +396,7 @@ amp_scaler = torch.amp.GradScaler(device=device)
 
 def subset_predictions_day_ahead(X_subset_GW, subset_loader):
     return utils.subset_predictions_day_ahead(
-            X_subset_GW, subset_loader, model, scaler_y,
+            X_subset_GW, subset_loader, model, data.scaler_y,
             feature_cols = feature_cols,
             device       = device,
             input_length = INPUT_LENGTH,
@@ -436,7 +415,7 @@ for epoch in range(EPOCHS):
     train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
         architecture.subset_evolution_torch(
             model, amp_scaler, optimizer, scheduler,
-            train_loader, train_dates,
+            data.train.loader, data.train.dates,
             # constants
             device, VALID_LENGTH, QUANTILES,
             LAMBDA_CROSS, LAMBDA_COVERAGE,
@@ -460,7 +439,7 @@ for epoch in range(EPOCHS):
         t_valid_start     = time.perf_counter()
         valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
             architecture.subset_evolution_numpy(
-                model, valid_loader, valid_dates,
+                model, data.valid.loader, data.valid.dates,
                 # constants
                 device, VALID_LENGTH, QUANTILES,
                 LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
@@ -510,7 +489,7 @@ plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
 # test loss
 test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
    architecture.subset_evolution_numpy(
-        model, test_loader, test_dates,
+        model, data.test.loader, data.test.dates,
         # constants
         device, VALID_LENGTH, QUANTILES,
         LAMBDA_CROSS, LAMBDA_COVERAGE, LAMBDA_DERIV,
@@ -533,21 +512,21 @@ _baselines = pd.concat([
          baseline_features_GW['lr'],
          baseline_features_GW['rf']], axis=1)
 _baselines.columns = ['lr', 'rf']
-_baselines_train = _baselines[:TRAIN_SPLIT][:-n_valid]
-_baselines_train.index   = train_dates
+_baselines_train = _baselines.iloc[data.train.idx]
+_baselines_train.index   = data.train.dates
 
 
 # preparating training
-true_train_GW, dict_pred_train_GW, dict_baseline_train_GW, _ = \
-    subset_predictions_day_ahead(X_train_GW, train_loader)
+data.train.true_GW, data.train.dict_preds_NN, data.train.dict_preds_ML, _ = \
+    subset_predictions_day_ahead(data.train.X_dev, data.train.loader)
 # print(_baselines_train)
-y_true_train = pd.Series(y_train_GW, name='y', index=train_dates)
+y_true_train = pd.Series(data.train.y_dev, name='y', index=data.train.dates)
 # print("true values [GW] at these times", y_true_train[missing_indices].round(2))
 
 df_train = pd.concat([
         y_true_train,
         _baselines_train,
-        dict_pred_train_GW['q50']
+        data.train.dict_preds_NN['q50']
     ], axis=1, join="inner").astype(np.float32)
 # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
 df_train.columns = ['y', 'lr', 'rf', 'nn']
@@ -556,48 +535,51 @@ y_train = df_train[['y']].squeeze()  #.to_numpy()
 
 
 # preparating validation
-true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW, _ = \
-    subset_predictions_day_ahead(X_valid_GW, valid_loader)
-_baselines_valid = _baselines[:TRAIN_SPLIT][-n_valid:]
-_baselines_valid.index = valid_dates
-input_valid = pd.concat([_baselines_valid, dict_pred_valid_GW['q50']],
+data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML, _ = \
+    subset_predictions_day_ahead(data.valid.X_dev, data.valid.loader)
+_baselines_valid = _baselines.iloc[data.valid.idx]
+_baselines_valid.index = data.valid.dates
+input_valid = pd.concat([_baselines_valid, data.valid.dict_preds_NN['q50']],
                      axis=1, join="inner").astype('float32')
 input_valid.columns = ['lr', 'rf', 'nn']
 
 
 # preparating testing
-true_test_GW, dict_pred_test_GW, dict_baseline_test_GW, origin_times_test = \
-    subset_predictions_day_ahead(X_test_GW, test_loader)
-_baselines_test = _baselines[TRAIN_SPLIT:]
-_baselines_test.index = test_dates
-input_test = pd.concat([_baselines_test, dict_pred_test_GW['q50']],
+data.test.true_GW, data.test.dict_preds_NN, data.test.dict_preds_ML, data.test.origin_times = \
+    subset_predictions_day_ahead(data.test.X_dev, data.test.loader)
+_baselines_test = _baselines.iloc[data.test.idx]
+_baselines_test.index = data.test.dates
+input_test = pd.concat([_baselines_test, data.test.dict_preds_NN['q50']],
                      axis=1, join="inner").astype('float32')
 input_test.columns = ['lr', 'rf', 'nn']
 
 
 # metamodel
-weights_meta1, pred_meta1_train, pred_meta1_valid, pred_meta1_test = \
+(data.weights_meta_LR,
+data.train.dict_preds_meta['meta_LR'],
+data.valid.dict_preds_meta['meta_LR'],
+data.test .dict_preds_meta['meta_LR']) = \
     metamodel.weights_LR_metamodel(input_train, y_train, input_valid, input_test,
                             verbose=VERBOSE)
 if VERBOSE >= 1:
-    print(f"weights_meta1 [%]: "
-          f"{ {name: round(value*100, 1) for name, value in weights_meta1.items()}}")
+    print(f"weights_meta_LR [%]: "
+      f"{ {name: round(value*100, 1) for name, value in data.weights_meta_LR.items()}}")
 t_metamodel_end = time.perf_counter()
 # TODO very slow b/c of pandas, concat, etc. for alignment
 if VERBOSE >= 2:
-    print(f"metamodel1 took: {time.perf_counter() - t_metamodel_start:.2f} s")
+    print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
 
 
-if VERBOSE >= 2:
+if VERBOSE >= 3:
 
     print("\nBad days during training")
     top_bad_days_train = utils.worst_days_by_loss(
-        y_true      = true_train_GW,
-        y_pred      = dict_pred_train_GW['q50'],
-        temperature = Tavg_full   [:TRAIN_SPLIT][:-n_valid],
-        holidays    = holiday_full[:TRAIN_SPLIT][:-n_valid],
+        y_true      = data.train.true_GW,
+        y_pred      = data.train.dict_preds_NN['q50'],
+        temperature = Tavg_full   [data.train.idx],
+        holidays    = holiday_full[data.train.idx],
         num_steps_per_day=NUM_STEPS_PER_DAY,
         top_n       = 50,
     )
@@ -606,8 +588,8 @@ if VERBOSE >= 2:
     # top_bad_days_valid = utils.worst_days_by_loss(
     #     y_true    = true_valid_GW,
     #     y_pred    = dict_pred_valid_GW['q50'],
-    #     temperature=Tavg_full   [:TRAIN_SPLIT][-n_valid:],
-    #     holidays  = holiday_full[:TRAIN_SPLIT][-n_valid:],
+    #     temperature=Tavg_full   [data.test.idx][-n_valid:],
+    #     holidays  = holiday_full[data.test.idx][-n_valid:],
     #     num_steps_per_day=NUM_STEPS_PER_DAY,
     #     top_n     = 25,
     # )
@@ -657,31 +639,31 @@ if VERBOSE >= 1:
     print("\nTesting quantiles")
     for tau in QUANTILES:
         key = f"q{int(100*tau)}"
-        cov = utils.quantile_coverage(true_test_GW, dict_pred_test_GW[key])
+        cov = utils.quantile_coverage(data.test.true_GW, data.test.dict_preds_NN[key])
         print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
               f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
     print()
 
-name_baseline =  'rf' if 'rf' in dict_baseline_test_GW else \
-                ('lr' if 'lr' in dict_baseline_test_GW else None)
+name_baseline =  'rf' if 'rf' in data.test.dict_preds_ML else \
+                ('lr' if 'lr' in data.test.dict_preds_ML else None)
 
 
 
 rows = []
-rows.append(utils.index_summary("test_dates", test_dates, None))
+rows.append(utils.index_summary("test_dates", data.test.dates, None))
 
 rows.append({"series": "origin_times",
-        "start": origin_times_test[0].date(), "end": origin_times_test[1].date(),
+        "start": data.test.origin_times[0].date(), "end": data.test.origin_times[1].date(),
         "n": None, "n_common": None, "start_diff": None, "end_diff": None})
 
-common_idx = true_test_GW.index
-common_idx = common_idx.intersection(dict_pred_test_GW['q50'].index)
-rows.append(utils.index_summary("true",  true_test_GW            .index, common_idx))
-rows.append(utils.index_summary("nn_q50",dict_pred_test_GW["q50"].index, common_idx))
+common_idx = data.test.true_GW.index
+common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
+rows.append(utils.index_summary("true",  data.test.true_GW            .index, common_idx))
+rows.append(utils.index_summary("nn_q50",data.test.dict_preds_NN["q50"].index, common_idx))
 
 for _name in ['lr', 'rf']:
-    if _name in dict_baseline_test_GW:  # keep only those we trained
-        _baseline_test_idx = dict_baseline_test_GW[_name].index
+    if _name in data.test.dict_preds_ML:  # keep only those we trained
+        _baseline_test_idx = data.test.dict_preds_ML[_name].index
         common_idx = common_idx.intersection(_baseline_test_idx)
         rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
 
@@ -693,11 +675,11 @@ if VERBOSE >= 3:
 assert len(common_idx) > 0, "No common timestamps between truth and predictions!"
 
 
-true_test_GW = true_test_GW.loc[common_idx]
-for k in dict_pred_test_GW:
-    dict_pred_test_GW    [k] = dict_pred_test_GW    [k].loc[common_idx]
-for k in dict_baseline_test_GW:
-    dict_baseline_test_GW[k] = dict_baseline_test_GW[k].loc[common_idx]
+true_test_GW = data.test.true_GW.loc[common_idx]
+for k in data.test.dict_preds_NN:
+    data.test.dict_preds_NN[k] = data.test.dict_preds_NN[k].loc[common_idx]
+for k in data.test.dict_preds_ML:
+    data.test.dict_preds_ML[k] = data.test.dict_preds_ML[k].loc[common_idx]
 
 
 
@@ -711,13 +693,11 @@ for k in dict_baseline_test_GW:
 # NN metamodel
 # ============================================================
 
-pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
+(data.train.dict_preds_meta['meta_NN'],
+ data.valid.dict_preds_meta['meta_NN'],
+ data.test .dict_preds_meta['meta_NN']) = \
     metamodel.metamodel_NN(
-        [dict_pred_train_GW, dict_pred_valid_GW, dict_pred_test_GW],
-         [dict_baseline_train_GW,dict_baseline_valid_GW,dict_baseline_test_GW],
-         [X_train_GW,  X_valid_GW, X_test_GW],
-         [y_train_GW,  y_valid_GW, y_test_GW],
-         [train_dates, valid_dates,test_dates],
+        data.train, data.valid, data.test,
         feature_cols, VALID_LENGTH,
         #constants
         META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
@@ -727,18 +707,18 @@ pred_meta2_train, pred_meta2_valid, pred_meta2_test = \
 
 if VERBOSE >= 1:
     print("\nTraining metrics [GW]:")
-    utils.compare_models(true_train_GW, dict_pred_train_GW, dict_baseline_train_GW,
-                         [pred_meta1_train, pred_meta2_train],
+    utils.compare_models(data.train.true_GW, data.train.dict_preds_NN, data.train.dict_preds_ML,
+                         data.train.dict_preds_meta,
                          subset="train", unit="GW", verbose=VERBOSE)
 
     print("\nvalidation metrics [GW]:")
-    utils.compare_models(true_valid_GW, dict_pred_valid_GW, dict_baseline_valid_GW,
-                         [pred_meta1_valid, pred_meta2_valid],
+    utils.compare_models(data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML,
+                         data.valid.dict_preds_meta,
                          subset="valid", unit="GW", verbose=VERBOSE)
 
     print("\nTesting metrics [GW]:")
-    utils.compare_models(true_test_GW,  dict_pred_test_GW,  dict_baseline_test_GW,
-                         [pred_meta1_test, pred_meta2_test],
+    utils.compare_models(data.test.true_GW,  data.test.dict_preds_NN,  data.test.dict_preds_ML,
+                         data.test.dict_preds_meta,
                          subset="test", unit="GW", verbose=VERBOSE)
 
     print("Plotting test results...")
@@ -749,15 +729,15 @@ if VERBOSE >= 1:
 # print(meta_test_GW)
 
 if VERBOSE >= 2:
-    plots.all_tests(true_train_GW, {'q50': dict_pred_train_GW['q50']},
-                    dict_baseline_train_GW, pred_meta2_train, name_baseline,
-                    Tavg_full.reindex(true_train_GW.index),
+    plots.all_tests(data.train.true_GW, {'q50': data.train.dict_preds_NN['q50']},
+                    data.train.dict_preds_ML, data.train.dict_preds_meta['meta_NN'],
+                    name_baseline, Tavg_full.reindex(data.train.true_GW.index),
                     NUM_STEPS_PER_DAY)
 
 
-plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
-                dict_baseline_test_GW, pred_meta2_test, name_baseline,
-                Tavg_full.reindex(true_test_GW.index),
+plots.all_tests(true_test_GW, {'q50': data.test.dict_preds_NN['q50']},
+                data.test.dict_preds_ML, data.test.dict_preds_meta['meta_NN'],
+                name_baseline, Tavg_full.reindex(true_test_GW.index),
                 NUM_STEPS_PER_DAY)
 
 
@@ -775,12 +755,7 @@ plots.all_tests(true_test_GW, {'q50': dict_pred_test_GW['q50']},
 
 # final cleanup to free pinned memory and intermediate arrays
 try:
-    del valid_loader, test_loader, test_dataset_scaled
-    # del train_dataset, valid_dataset
-    del true_train_GW, dict_pred_train_GW, pred_meta1_train, pred_meta2_train
-    del true_valid_GW, dict_pred_valid_GW, pred_meta1_valid, pred_meta2_valid
-    del true_test_GW,  dict_pred_test_GW,  pred_meta1_test,  pred_meta2_test
-    # del baseline_losses_quantile_scaled,
+    del data
 except NameError:
     pass
 

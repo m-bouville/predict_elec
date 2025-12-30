@@ -2,7 +2,7 @@
 
 
 ## Introduction
-The purpose of this project is to forecast electricity consumption. On top of historical consumption data, other information (temperature, school holidays) is used to provide context.
+The purpose of this project is to forecast electricity consumption. On top of historical consumption data, other information (temperature, public and school holidays) is used to provide context.
 
 The neural network (NN) model predicts not only the median consumption but also other quantiles (e.g. quartiles, deciles) in order to estimate the precision of the forecast median.
 
@@ -21,15 +21,15 @@ The focus is currently on the half-hourly national French consumption (average: 
 ### Choice of application
 In Europe, prices are set daily at noon for the next day (day-ahead price). Producers and consumers must let the market know what their 48 half-hourly consumptions will be, from _h_ + 12 to _h_ + 36. 
 
-Gearing the model toward this specific case has two advantages:
+Gearing the model toward this specific case has two (advantageous) consequences:
 - the goal is univocal: one compares each of the 48 half-hourly predictions to 48 actual consumptions (no issue of aggregation);
 - the consumption at _t_ is predicted only once: the day before at noon, not _H_ times.
 
 
 ### A note on the system size
 - The number of samples drops by nearly a factor of 50, but this number is artificially high:
-  - noon-only: 3 650 _non-overlapping_ training samples in ten years;
-  - all origins: 175 000 _overlapping_ training samples.
+  - 3 650 _non-overlapping_ daily samples in ten years;
+  - 175 000 _overlapping_ half-hourly samples.
 - Training only from _h_ + 12 to _h_ + 36 lets the model rely on the fact that time step number 24 is always midnight. No need for a decoder or extra degrees of freedom to get this pattern right.
 
 
@@ -98,10 +98,9 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
   
 ---
 
-## Issues in the current model
+## Issues and plans
 - **Systematic bias in predictions**
   - Bias is visible in LR, RF and NN in validation and testing (but not training).
-  - Adding moving averages as features (see above) halved the bias.
 
 - **Median vs mean ambiguity**
   - The neural network is trained with a quantile loss, so `q50` is a conditional median.
@@ -109,5 +108,3 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
   - Using `q50` as a point forecast mixes these two objectives and can lead to persistent bias.
   - The Transformer is simultaneously responsible for learning uncertainty structure (quantiles) and producing a usable point forecast; any change improving point RMSE can degrade quantile calibration (and vice versa).
 
-- **Remote prdiction**
-  - The model currently predicts _h_ to _h_ + 24: it must be allowed to skip the first 12 hours in validation -- run from _h_ to _h_ + 36 but vaidate on _h_ + 12 to _h_ + 36 only.

@@ -315,11 +315,13 @@ def index_summary(name   : str,
     }
 
 
-def compare_models(true_series, dict_pred_series,
-                   dict_baseline_series: Dict[str, List[float]] or None,
-                   list_pred_meta: List[List[float]], subset: str="", unit:str="",
+def compare_models(true_series:     pd.Series,
+                   dict_pred_series:        Dict[str, pd.Series],
+                   dict_preds_ML:  Optional[Dict[str, pd.Series]] = None,
+                   dict_preds_meta:Optional[Dict[str, pd.Series]] = None,
+                   subset:   str   = "", unit: str = "",
                    max_RMSE: float = 4,
-                   verbose: int = 0) -> pd.DataFrame:
+                   verbose:  int   = 0) -> pd.DataFrame:
     # if verbose < 1: return  # this function does nothing if it cannot display
 
     def rmse(a,b): return round(np.sqrt(np.mean((a-b)**2)),2)
@@ -334,9 +336,9 @@ def compare_models(true_series, dict_pred_series,
         print(f"nn:   {dict_pred_series.get('q50').shape} "
               f"({dict_pred_series.get('q50').index.min()} -> "
               f"{dict_pred_series.get('q50').index.max()})")
-        if list_pred_meta is not None:
-            for (i, _pred_meta) in enumerate(list_pred_meta):
-                print(f"meta {i+1}: {_pred_meta.shape}")
+        if dict_preds_meta is not None:
+            for (_name, _pred_meta) in dict_preds_meta.items():
+                print(f"{_name}: {_pred_meta.shape}")
                 #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
 
     names_models = []
@@ -349,15 +351,15 @@ def compare_models(true_series, dict_pred_series,
 
     # baselines (LR, RF)
     list_baselines = []
-    if dict_baseline_series is not None:
+    if dict_preds_ML is not None:
         for _name in ['lr', 'rf', 'oracle']:
-            if _name in dict_baseline_series:  # keep only those we trained
+            if _name in dict_preds_ML:  # keep only those we trained
                 if verbose >= 3:
-                    print(f"{_name}:   {dict_baseline_series.get(_name).shape} "
-                          f"({dict_baseline_series.get(_name).index.min()} -> "
-                          f"{dict_baseline_series.get(_name).index.max()})")
+                    print(f"{_name}:   {dict_preds_ML.get(_name).shape} "
+                          f"({dict_preds_ML.get(_name).index.min()} -> "
+                          f"{dict_preds_ML.get(_name).index.max()})")
                 list_baselines.append(_name)
-                df_eval[_name] = dict_baseline_series.get(_name)
+                df_eval[_name] = dict_preds_ML.get(_name)
         # print("list_baselines:", list_baselines)
 
     df_eval.dropna(inplace=True)
@@ -365,9 +367,8 @@ def compare_models(true_series, dict_pred_series,
     names_models += list_baselines
 
     # print("pred_meta:", pred_meta)
-    if list_pred_meta is not None:
-        for (i, _pred_meta) in enumerate(list_pred_meta):
-            _name = "meta" if len(list_pred_meta) == 1 else f"meta{i+1}"
+    if dict_preds_meta is not None:
+        for (_name, _pred_meta) in dict_preds_meta.items():
             df_eval[_name] = _pred_meta.reindex(df_eval.index)
             names_models += [_name]
 
@@ -400,7 +401,7 @@ def compare_models(true_series, dict_pred_series,
         for model in df_metrics.index:
             plt.scatter(df_metrics.loc[model, 'bias'],
                         df_metrics.loc[model, 'RMSE'], label=model)
-        plt.xlabel(subset + ' bias [GW]'); plt.xlim(-0.5, 1.5)
+        plt.xlabel(subset + ' bias [GW]'); plt.xlim(-0.5, 1.75)
         plt.ylabel(subset + ' RMSE [GW]'); plt.ylim( 0., max_RMSE) # plt.ylim(bottom=0.)
         plt.legend()
         plt.show()

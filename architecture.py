@@ -13,7 +13,7 @@ import numpy  as np
 import pandas as pd
 
 
-import losses  # utils
+import losses, containers  # utils
 
 
 
@@ -140,20 +140,30 @@ def make_X_and_y(series, dates,
     # print(f"batch_size:  {batch_size  :4n}")
     # print()
 
-    train_dates = dates[:train_split]
-    test_dates  = dates[train_split:]
-    valid_dates = train_dates[-n_valid:]
-    train_dates = train_dates[:-n_valid]
+    #indices
+    idx_all   = pd.RangeIndex(len(dates))
+    idx_train = idx_all[:train_split]
+    idx_test  = idx_all[train_split:]
+
+    idx_valid = idx_train[-n_valid:]
+    idx_train = idx_train[:-n_valid]
+
+
+    # dates
+    train_dates = dates[idx_train]
+    valid_dates = dates[idx_valid]
+    test_dates  = dates[idx_test ]
+
 
     # Map column names -> column indices in train_data
-    all_cols   = [target_col] + feature_cols
-    col_to_idx = {col: i for i, col in enumerate(all_cols)}
+    all_cols    = [target_col] + feature_cols
+    col_to_idx  = {col: i for i, col in enumerate(all_cols)}
 
-    feature_idx= [col_to_idx[c] for c in feature_cols]
-    target_idx =  col_to_idx[target_col]
+    feature_idx = [col_to_idx[c] for c in feature_cols]
+    target_idx  =  col_to_idx[target_col]
 
-    test_data  = series[train_split:]
-    X_test_GW  = test_data[:, feature_idx];  y_test_GW  = test_data [:, target_idx]
+    test_data   = series[idx_test]
+    X_test_GW   = test_data[:, feature_idx];  y_test_GW = test_data [:, target_idx]
 
 
     # 1. Extract X and y using names
@@ -163,13 +173,13 @@ def make_X_and_y(series, dates,
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
 
-    X_train_GW = X_GW[:train_split][:-n_valid]
-    y_train_GW = y_GW[:train_split][:-n_valid]
+    X_train_GW = X_GW[idx_train]
+    y_train_GW = y_GW[idx_train]
     scaler_x.fit(X_train_GW)
     scaler_y.fit(y_train_GW.reshape(-1, 1))
 
-    X_valid_GW = X_GW[:train_split][-n_valid:]  # for return only
-    y_valid_GW = y_GW[:train_split][-n_valid:]  # for return only
+    X_valid_GW = X_GW[idx_valid]  # for return only
+    y_valid_GW = y_GW[idx_valid]  # for return only
 
     # 3. Transform X and y separately
     X_scaled = scaler_x.transform(X_GW)
@@ -190,7 +200,7 @@ def make_X_and_y(series, dates,
     # 4. Rebuild scaled arrays for your pipeline
     #    (target in column 0, features after)
     train_scaled = df_scaled[:train_split]
-    test_scaled  = df_scaled[train_split:]
+    test_scaled  = df_scaled[idx_test]
 
      # validation
     valid_scaled = train_scaled[-n_valid:]
@@ -255,15 +265,27 @@ def make_X_and_y(series, dates,
         # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
-    return (
-        [train_loader,valid_loader,test_loader], \
-        [train_dates, valid_dates, test_dates ],\
-         scaler_y, [X_GW, y_GW],
-         [X_train_GW, y_train_GW, train_dataset_scaled],
-         [X_valid_GW, y_valid_GW, valid_dataset_scaled],
-         [X_test_GW, y_test_GW, test_dataset_scaled],
-         test_scaled[:, feature_idx]
-    )
+    train = containers.DataSplit("train", idx_train, X_train_GW, y_train_GW, train_dates,
+                      loader=train_loader, dataset_scaled=train_dataset_scaled)
+    valid = containers.DataSplit("valid", idx_valid, X_valid_GW, y_valid_GW, valid_dates,
+                      loader=valid_loader, dataset_scaled=valid_dataset_scaled)
+    test  = containers.DataSplit("test",  idx_test,  X_test_GW,  y_test_GW,  test_dates,
+                      loader=test_loader,  dataset_scaled=test_dataset_scaled)
+
+    data = containers.DatasetBundle(train, valid, test,
+                                   scaler_y=scaler_y, X=X_GW, y=y_GW)
+
+    return data, test_scaled[:, feature_idx]
+
+    # return (
+    #     [train_loader,valid_loader,test_loader], \
+    #     [train_dates, valid_dates, test_dates ],\
+    #      scaler_y, [X_GW, y_GW],
+    #      [X_train_GW, y_train_GW, train_dataset_scaled],
+    #      [X_valid_GW, y_valid_GW, valid_dataset_scaled],
+    #      [X_test_GW, y_test_GW, test_dataset_scaled],
+    #      test_scaled[:, feature_idx]
+    # )
 
 
 
