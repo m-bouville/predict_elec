@@ -8,7 +8,7 @@ import numpy  as np
 import pandas as pd
 
 
-import utils, metamodel
+import utils, metamodel, plots
 
 
 @dataclass
@@ -60,19 +60,46 @@ class DataSplit:
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
     def worst_days_by_loss(self,
-                           temperature_full: np.ndarray,
-                           holidays_full   : np.ndarray,
+                           temperature_full: pd.Series,
+                           holidays_full   : pd.Series,
                            num_steps_per_day:int,
                            top_n           : int) -> pd.DataFrame:
         return utils.worst_days_by_loss(
             y_true      = self.true_GW,
             y_pred      = self.dict_preds_NN['q50'],
-            temperature = temperature_full[self.idx],
-            holidays    = holidays_full   [self.idx],
+            temperature = temperature_full.iloc[self.idx],
+            holidays    = holidays_full   .iloc[self.idx],
             num_steps_per_day=num_steps_per_day,
             top_n       = top_n,
         )
 
+        # import matplotlib.pyplot as plt
+        # day = top_bad_days.iloc[0]["date"]
+
+        # q50_idx = QUANTILES.index(0.5)
+
+        # day = top_bad_days.iloc[0]["date"]
+        # mask_day = dates_masked.normalize() == day
+
+        # # inverse-scale for plotting
+        # y_true_day_GW = scaler_y.inverse_transform(
+        #     y_true_masked.reshape(-1, 1)
+        # ).ravel()
+
+        # y_pred_day_GW = scaler_y.inverse_transform(
+        #     y_pred_masked[:, q50_idx].reshape(-1, 1)
+        # ).ravel()
+
+        # plt.figure(figsize=(10, 4))
+        # plt.plot(dates_masked, y_true_day_GW, label="true")
+        # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
+        # plt.legend()
+        # plt.title(f"Worst training day: {day}")
+        # plt.show()
+
+
+
+    # Metamodel LR
     def calculate_input_metamodel_LR(self) -> None:
         _y_true = pd.Series(self.y_dev, name='y', index=self.dates)
 
@@ -86,6 +113,22 @@ class DataSplit:
         if self.name == 'train':
             self.y_metamodel_LR = _input[['y']].squeeze()  #.to_numpy()
 
+    # compare models
+    def compare_models(self, unit: str = "GW", verbose: int = 0):
+        utils.compare_models(self.true_GW,      self.dict_preds_NN,
+                             self.dict_preds_ML,self.dict_preds_meta,
+                             subset=self.name, unit=unit, verbose=verbose)
+
+
+    # plotting
+    def plots_diagnostics(self,
+                          name_baseline:     str,
+                          temperature_full:  pd.Series,
+                          num_steps_per_day: int):
+        plots.diagnostics(self.true_GW, {'q50': self.dict_preds_NN['q50']},
+                self.dict_preds_ML, self.dict_preds_meta['meta_NN'],
+                name_baseline, temperature_full.iloc[self.idx],
+                num_steps_per_day)
 
 
 
@@ -123,11 +166,10 @@ class DatasetBundle:
                 model, scaler_y, feature_cols, device,
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
-    # Metamodel LR
+    # Metamodels
     def calculate_inputs_metamodel_LR(self) -> None:
         for (_split, _data_split) in self.items():
             _data_split.calculate_input_metamodel_LR()
-
 
     def calculate_metamodel_LR(self, verbose: int=0) -> None:
         self.calculate_inputs_metamodel_LR()
@@ -141,3 +183,29 @@ class DatasetBundle:
                                            self.valid.input_metamodel_LR,
                                            self.test .input_metamodel_LR,
                                            verbose=verbose)
+
+    def calculate_metamodel_NN(self,
+                    feature_cols: List[str],
+                    valid_length: int,
+                    dropout     : float,
+                    num_cells   : int,
+                    epochs      : int,
+                    lr          : float,
+                    weight_decay: float,
+                    patience    : int,
+                    factor      : float,
+                    batch_size  : int,
+                    device) -> None:
+        (self.train.dict_preds_meta['meta_NN'],
+         self.valid.dict_preds_meta['meta_NN'],
+         self.test .dict_preds_meta['meta_NN']) = \
+            metamodel.metamodel_NN(
+                self.train, self.valid, self.test,
+                feature_cols, valid_length,
+                #constants
+                dropout, num_cells, epochs,
+                lr, weight_decay,
+                patience, factor,
+                batch_size, device)
+
+

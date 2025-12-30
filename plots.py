@@ -132,7 +132,7 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
 
 
 
-def test(true_series     : pd.Series,
+def curves(true_series     : pd.Series,
          dict_pred_series: Dict[str, pd.Series],
          baseline_series : pd.Series or None,
          meta_series     : pd.Series,
@@ -194,7 +194,7 @@ def test(true_series     : pd.Series,
 
 
 
-def test_scatter(
+def scatter(
          true_series     : pd.Series,
          dict_pred_series: Dict[str, pd.Series],
          baseline_series : pd.Series or None,
@@ -276,7 +276,7 @@ def test_scatter(
 
 
 
-def all_tests(true_series:         pd.Series,
+def diagnostics(true_series:         pd.Series,
               dict_pred_series:    Dict[str, pd.Series],
               dict_baseline_series:Dict[str, pd.Series],
               meta_series:         pd.Series,
@@ -327,11 +327,11 @@ def all_tests(true_series:         pd.Series,
 
 
     # plot seasonal consumption by date, SMA 1 week
-    test(true_series, dict_pred_series, baseline_series, meta_series,
+    curves(true_series, dict_pred_series, baseline_series, meta_series,
          name_baseline, xlabel="date of year", ylabel="consumption [GW]",
          ylim=[ylim[0][0], ylim[0][1]+15], date_range=None,
          moving_average=num_steps_per_day*7, groupby='dateofyear')
-    test(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
          name_baseline, xlabel="date of year", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, # [zoom_start, zoom_end]
@@ -339,21 +339,21 @@ def all_tests(true_series:         pd.Series,
 
 
     # plot consumption by hour, over a day
-    test(true_series, dict_pred_series, baseline_series, meta_series,
+    curves(true_series, dict_pred_series, baseline_series, meta_series,
          name_baseline, xlabel="time of day", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=None, groupby='timeofday')
-    test(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
          name_baseline, xlabel="time of day", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, groupby='timeofday')
 
 
     # plot consumption over a week
-    test(true_series, dict_pred_series, baseline_series, meta_series,
+    curves(true_series, dict_pred_series, baseline_series, meta_series,
          name_baseline, xlabel="day of week (0 is Monday)", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)
-    test(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
          name_baseline, xlabel="day of week (0 is Monday)",
          ylabel="consumption difference [GW]",
@@ -364,22 +364,22 @@ def all_tests(true_series:         pd.Series,
     # as a function of temperature
     if Tavg is not None:
         Tavg_winter = Tavg[(Tavg.index.month <= 5) | (Tavg.index.month >= 9)]
-        test_scatter(true_series, dict_pred_series, baseline_series, meta_series,
+        scatter(true_series, dict_pred_series, baseline_series, meta_series,
             name_baseline, Tavg_winter, ylim=[ylim[0][0]-5, ylim[0][1]+22],
             xlim=[-5, 20], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]", ylabel="consumption [GW]")
-        test_scatter(residual_true_series, dict_residual_pred_series,
+        scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
             name_baseline, Tavg_winter, xlim=[-5, 20], ylim=[-6,10], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]",
             ylabel="consumption difference [GW]")
 
         Tavg_summer = Tavg[(Tavg.index.month >= 5) & (Tavg.index.month <= 9)]
-        test_scatter(true_series, dict_pred_series, baseline_series, meta_series,
+        scatter(true_series, dict_pred_series, baseline_series, meta_series,
             name_baseline, Tavg_summer, ylim=[ylim[0][0]-10, ylim[0][1]-5],
             xlim=[15, 30], resample='D', alpha=0.3,
             xlabel="(summer) average temperature [°C]", ylabel="consumption [GW]")
-        test_scatter(residual_true_series, dict_residual_pred_series,
+        scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
             name_baseline, Tavg_summer, xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
             xlabel="(summer) average temperature [°C]",
@@ -390,7 +390,7 @@ def all_tests(true_series:         pd.Series,
 
 
 
-def plot_quantile_fan(
+def quantiles(
     true_series: pd.Series,
     pred_quantiles: Dict[str, pd.Series],
     *,
@@ -400,6 +400,7 @@ def plot_quantile_fan(
     baseline_series: Optional[Dict[str, pd.Series]] = None,
     title:  str = "Forecast with uncertainty",
     ylabel: str = "consumption [GW]",
+    dates: Optional[pd.DatetimeIndex] = None,
     figsize=(10, 6),
 ) -> None:
     """
@@ -424,16 +425,18 @@ def plot_quantile_fan(
     idx = true_series.index
     idx = idx.intersection(pred_quantiles[q_med].index)
 
+    if dates is not None:
+        idx = idx.intersection(dates)
     if q_low in pred_quantiles:
         idx = idx.intersection(pred_quantiles[q_low].index)
     if q_high in pred_quantiles:
         idx = idx.intersection(pred_quantiles[q_high].index)
 
     true = true_series.loc[idx]
-    qmed = pred_quantiles[q_med].loc[idx]
+    qmed = pred_quantiles[q_med] .loc[idx]
 
-    qlo = pred_quantiles[q_low] .loc[idx] if q_low  in pred_quantiles else None
-    qhi = pred_quantiles[q_high].loc[idx] if q_high in pred_quantiles else None
+    qlo  = pred_quantiles[q_low] .loc[idx] if q_low  in pred_quantiles else None
+    qhi  = pred_quantiles[q_high].loc[idx] if q_high in pred_quantiles else None
 
     # ------------------------
     # Plot

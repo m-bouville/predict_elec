@@ -26,7 +26,7 @@ from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
            META_EPOCHS, META_LR, META_WEIGHT_DECAY, META_BATCH_SIZE,
            META_DROPOUT, META_NUM_CELLS, META_PATIENCE, META_FACTOR)
 
-import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
+import architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
 
 # system dimensions
@@ -44,7 +44,7 @@ import architecture, utils, metamodel, LR_RF, IO, plots  # losses,
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
 # TODO Boost
-# TODO refactoring: create dict or pd.df to keep together the different preds
+# [done] refactoring: create dict or pd.df to keep together the different preds
 
 
 
@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
     # Keep date separately for plotting later
     dates       = df.index
-    Tavg_full   = df["Tavg_degC"]   # for plots and worst days
+    Tavg_full   = df["Tavg_degC"]    # for plots and worst days
     holiday_full= df['is_holiday']   # for worst days
 
     df = df.reset_index(drop=True)
@@ -295,12 +295,6 @@ assert INPUT_LENGTH + 60 < test_months,\
 # 4. NORMALIZE PREDICTORS ONLY (not the log-target)
 # ============================================================
 
-
-# [train_loader, valid_loader, test_loader], [train_dates, valid_dates, test_dates],\
-#         scaler_y, [X_GW, y_GW], \
-#         [X_train_GW, y_train_GW, train_dataset_scaled], \
-#         [X_valid_GW, y_valid_GW, valid_dataset_scaled], \
-#         [X_test_GW,  y_test_GW,  test_dataset_scaled ], X_test_scaled =\
 data, X_test_scaled = architecture.make_X_and_y(
         series, dates, TRAIN_SPLIT, n_valid,
         feature_cols, target_col,
@@ -493,15 +487,6 @@ plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
 
 
 t_metamodel_start = time.perf_counter()
-# small LR for meta-model weights
-
-_baselines = pd.concat([
-         baseline_features_GW['lr'],
-         baseline_features_GW['rf']], axis=1)
-_baselines.columns = ['lr', 'rf']
-_baselines_train = _baselines.iloc[data.train.idx]
-_baselines_train.index   = data.train.dates
-
 
 data.predictions_day_ahead(
         model, data.scaler_y,
@@ -514,51 +499,9 @@ data.predictions_day_ahead(
         quantiles    = QUANTILES
         )
 
-# preparating training
-# y_true_train = pd.Series(data.train.y_dev, name='y', index=data.train.dates)
-# # print("true values [GW] at these times", y_true_train[missing_indices].round(2))
-
-# df_train = pd.concat([
-#         y_true_train,
-#         _baselines_train,
-#         data.train.dict_preds_NN['q50']
-#     ], axis=1, join="inner").astype(np.float32)
-# # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
-# df_train.columns = ['y', 'lr', 'rf', 'nn']
-# input_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
-# y_train = df_train[['y']].squeeze()  #.to_numpy()
-
-
-
-
-# # preparating validation
-# # data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML,
-# _baselines_valid = _baselines.iloc[data.valid.idx]
-# _baselines_valid.index = data.valid.dates
-# input_valid = pd.concat([_baselines_valid, data.valid.dict_preds_NN['q50']],
-#                      axis=1, join="inner").astype('float32')
-# input_valid.columns = ['lr', 'rf', 'nn']
-
-
-# # preparating testing
-# _baselines_test = _baselines.iloc[data.test.idx]
-# _baselines_test.index = data.test.dates
-# input_test = pd.concat([_baselines_test, data.test.dict_preds_NN['q50']],
-#                      axis=1, join="inner").astype('float32')
-# input_test.columns = ['lr', 'rf', 'nn']
-
-
 # metamodel
 data.calculate_metamodel_LR(VERBOSE)
-# (data.weights_meta_LR,
-# data.train.dict_preds_meta['meta_LR'],
-# data.valid.dict_preds_meta['meta_LR'],
-# data.test .dict_preds_meta['meta_LR']) = \
-#     metamodel.weights_LR_metamodel(data.train.input_metamodel_LR,
-#                                    data.train.    y_metamodel_LR,
-#                                    data.valid.input_metamodel_LR,
-#                                    data.test .input_metamodel_LR,
-#                                    verbose=VERBOSE)
+
 if VERBOSE >= 1:
     print(f"weights_meta_LR [%]: "
       f"{ {name: round(value*100, 1) for name, value in data.weights_meta_LR.items()}}")
@@ -591,29 +534,6 @@ if VERBOSE >= 3:
     # print(top_bad_days_valid.to_string())
 
 
-#     # import matplotlib.pyplot as plt
-#     # day = top_bad_days.iloc[0]["date"]
-
-#     # q50_idx = QUANTILES.index(0.5)
-
-#     # day = top_bad_days.iloc[0]["date"]
-#     # mask_day = dates_masked.normalize() == day
-
-#     # # inverse-scale for plotting
-#     # y_true_day_GW = scaler_y.inverse_transform(
-#     #     y_true_masked.reshape(-1, 1)
-#     # ).ravel()
-
-#     # y_pred_day_GW = scaler_y.inverse_transform(
-#     #     y_pred_masked[:, q50_idx].reshape(-1, 1)
-#     # ).ravel()
-
-#     # plt.figure(figsize=(10, 4))
-#     # plt.plot(dates_masked, y_true_day_GW, label="true")
-#     # plt.plot(dates_masked, y_pred_day_GW, label="pred (q50)")
-#     # plt.legend()
-#     # plt.title(f"Worst training day: {day}")
-#     # plt.show()
 
 
 # ============================================================
@@ -687,64 +607,41 @@ for k in data.test.dict_preds_ML:
 # NN metamodel
 # ============================================================
 
-(data.train.dict_preds_meta['meta_NN'],
- data.valid.dict_preds_meta['meta_NN'],
- data.test .dict_preds_meta['meta_NN']) = \
-    metamodel.metamodel_NN(
-        data.train, data.valid, data.test,
+data.calculate_metamodel_NN(
         feature_cols, VALID_LENGTH,
         #constants
         META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
-        META_LR, META_WEIGHT_DECAY,
-        META_PATIENCE, META_FACTOR,
-        META_BATCH_SIZE, device)
+        META_LR, META_WEIGHT_DECAY, META_PATIENCE, META_FACTOR, META_BATCH_SIZE, device)
 
 if VERBOSE >= 1:
     print("\nTraining metrics [GW]:")
-    utils.compare_models(data.train.true_GW, data.train.dict_preds_NN, data.train.dict_preds_ML,
-                         data.train.dict_preds_meta,
-                         subset="train", unit="GW", verbose=VERBOSE)
+    data.train.compare_models(unit="GW", verbose=VERBOSE)
 
     print("\nvalidation metrics [GW]:")
-    utils.compare_models(data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML,
-                         data.valid.dict_preds_meta,
-                         subset="valid", unit="GW", verbose=VERBOSE)
+    data.valid.compare_models(unit="GW", verbose=VERBOSE)
 
     print("\nTesting metrics [GW]:")
-    utils.compare_models(data.test.true_GW,  data.test.dict_preds_NN,  data.test.dict_preds_ML,
-                         data.test.dict_preds_meta,
-                         subset="test", unit="GW", verbose=VERBOSE)
+    data.test .compare_models(unit="GW", verbose=VERBOSE)
+
 
     print("Plotting test results...")
-
-# print(true_test_GW)
-# print(dict_pred_test_GW['q50'])
-# print(dict_baseline_test_GW['rf'])
-# print(meta_test_GW)
-
 if VERBOSE >= 2:
-    plots.all_tests(data.train.true_GW, {'q50': data.train.dict_preds_NN['q50']},
-                    data.train.dict_preds_ML, data.train.dict_preds_meta['meta_NN'],
-                    name_baseline, Tavg_full.reindex(data.train.true_GW.index),
-                    NUM_STEPS_PER_DAY)
+    data.train.plots_diagnostics(name_baseline, Tavg_full, NUM_STEPS_PER_DAY)
 
-
-plots.all_tests(true_test_GW, {'q50': data.test.dict_preds_NN['q50']},
-                data.test.dict_preds_ML, data.test.dict_preds_meta['meta_NN'],
-                name_baseline, Tavg_full.reindex(true_test_GW.index),
-                NUM_STEPS_PER_DAY)
+data.test.plots_diagnostics(name_baseline, Tavg_full, NUM_STEPS_PER_DAY)
 
 
 
-# plots.plot_quantile_fan(
-#     true_series_GW,
-#     dict_pred_series_GW,
-#     q_low = "q10",
-#     q_med = "q50",
-#     q_high= "q90",
-#     baseline_series=dict_baseline_series_GW,
-#     title="Electricity consumption forecast (NN quantiles)"
-# )
+plots.quantiles(
+    data.test.true_GW,
+    data.test.dict_preds_NN,
+    q_low = "q10",
+    q_med = "q50",
+    q_high= "q90",
+    baseline_series=data.test.dict_preds_ML,
+    title = "Electricity consumption forecast (NN quantiles), test",
+    dates = data.test.dates[-(8*NUM_STEPS_PER_DAY):]
+)
 
 
 # final cleanup to free pinned memory and intermediate arrays

@@ -324,9 +324,8 @@ def train_meta_model(
 
 
 def metamodel_NN(data_train, data_valid, data_test,
-                feature_cols,
+                feature_cols:List[str],
                 #constants
-                # pred_length : int,
                 valid_length: int,
                 dropout     : float,
                 num_cells   : int,
@@ -395,7 +394,6 @@ def metamodel_NN(data_train, data_valid, data_test,
     preds_train, context_train, y_train = to_tensors(df_meta_train, _feature_cols)
     preds_valid, context_valid, y_valid = to_tensors(df_meta_valid, _feature_cols)
     preds_test,  context_test,  y_test =  to_tensors(df_meta_test,  _feature_cols)
-
 
 
     pred_meta2_train = torch.zeros(len(df_meta_train), device=device)

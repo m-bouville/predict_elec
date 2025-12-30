@@ -177,10 +177,11 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
 @torch.no_grad()
 def subset_predictions_day_ahead(
     X_subset_GW, subset_loader, model, scaler_y,
-    feature_cols, device,
+    feature_cols: List[str], device,
     input_length: int, pred_length: int, valid_length: int, minutes_per_step: int,
     quantiles: Tuple[float, ...]
-) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame], Dict[str, pd.DataFrame], Tuple]:
+) -> Tuple[pd.DataFrame, Dict[str, pd.Series], Dict[str, pd.Series],
+           Tuple[pd.Timestamp, pd.Timestamp]]:
     # subset: train, valid ot test
 
     # print(f"X_subset_GW.shape = {X_subset_GW.shape}")
@@ -550,8 +551,8 @@ def worst_days_by_loss(
     temperature: np.ndarray,
     holidays   : np.ndarray,
     num_steps_per_day: int,
-    top_n: int =10
-):
+    top_n      : int = 10
+) -> pd.DataFrame:
     """
     Returns DataFrame of worst days by mean loss
     """

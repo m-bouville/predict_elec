@@ -269,7 +269,7 @@ def regression_and_forest(
 
 
     # most relevant features
-    if verbose >= -3 and {"lr", "rf"} <= models.keys():
+    if verbose >= 3 and {"lr", "rf"} <= models.keys():
 
         ridge = pd.Series(
             models["lr"].coef_ * 100.,

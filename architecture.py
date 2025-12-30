@@ -229,11 +229,6 @@ def make_X_and_y(series, dates,
     # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
     #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
 
-    # print("DATASET TYPE:", type   (train_dataset_scaled))
-    # print("DATASET LEN :", len    (train_dataset_scaled))
-    # print("HAS __len__ :",   hasattr(train_dataset_scaled, "__len__"))
-    # print("HAS __getitem__:",hasattr(train_dataset_scaled, "__getitem__"))
-
 
     # if verbose >= 1:
     #     print("\n[make_X_and_y] Day-ahead mode (scaled)")
@@ -276,17 +271,6 @@ def make_X_and_y(series, dates,
                                    scaler_y=scaler_y, X=X_GW, y=y_GW)
 
     return data, test_scaled[:, feature_idx]
-
-    # return (
-    #     [train_loader,valid_loader,test_loader], \
-    #     [train_dates, valid_dates, test_dates ],\
-    #      scaler_y, [X_GW, y_GW],
-    #      [X_train_GW, y_train_GW, train_dataset_scaled],
-    #      [X_valid_GW, y_valid_GW, valid_dataset_scaled],
-    #      [X_test_GW, y_test_GW, test_dataset_scaled],
-    #      test_scaled[:, feature_idx]
-    # )
-
 
 
 
