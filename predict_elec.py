@@ -39,13 +39,9 @@ import architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
 
 # TODO make future T° noisy to mimic the uncertainty of forecasts
-# TODO Add public holidays to features
-# [done] make PRED_LENGTH == 36h and validate h+12 to h+36
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
-# TODO Boost
-# [done] refactoring: create dict or pd.df to keep together the different preds
-
+# TODO Boosting
 
 
 
@@ -128,9 +124,9 @@ if __name__ == "__main__":
         print("  NA:", df.index[df.isna().any(axis=1)].tolist())
 
     # Keep date separately for plotting later
-    dates       = df.index
-    Tavg_full   = df["Tavg_degC"]    # for plots and worst days
-    holiday_full= df['is_holiday']   # for worst days
+    dates        = df.index
+    Tavg_full    = df["Tavg_degC"]    # for plots and worst days
+    holidays_full= df['is_holiday']   # for worst days
 
     df = df.reset_index(drop=True)
 
@@ -314,10 +310,6 @@ if VERBOSE >= 2:
 # This reduces pinned memory and helps CUDA reclaim blocks.
 try:
     del series
-    # del train_scaled, valid_scaled
-    # del X_train, X_valid, y_train, y_valid
-    # del train_data, valid_data, test_data
-    # dataset objects keep what's needed; DataLoader will read from them
 except NameError:
     pass
 
@@ -499,8 +491,8 @@ data.predictions_day_ahead(
         quantiles    = QUANTILES
         )
 
-# metamodel
-data.calculate_metamodel_LR(VERBOSE)
+# metamodel LR
+data.calculate_metamodel_LR(min_weight=0.15, verbose=VERBOSE)
 
 if VERBOSE >= 1:
     print(f"weights_meta_LR [%]: "
@@ -517,21 +509,12 @@ if VERBOSE >= 3:
 
     print("\nBad days during training")
     top_bad_days_train = data.train.worst_days_by_loss(
-        temperature_full= Tavg_full,
-        holidays_full   = holiday_full,
-        num_steps_per_day=NUM_STEPS_PER_DAY,
-        top_n           = 50,
+        temperature_full = Tavg_full,
+        holidays_full    = holidays_full,
+        num_steps_per_day= NUM_STEPS_PER_DAY,
+        top_n            = 30,
     )
     print(top_bad_days_train.to_string())
-
-    # print("\nBad days during validation")
-    # top_bad_days_valid = data.valid.worst_days_by_loss(
-    #     temperature=Tavg_full,
-    #     holidays  = holiday_full],
-    #     num_steps_per_day=NUM_STEPS_PER_DAY,
-    #     top_n     = 25,
-    # )
-    # print(top_bad_days_valid.to_string())
 
 
 
@@ -558,9 +541,10 @@ if VERBOSE >= 1:
               f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
     print()
 
-name_baseline =  'rf' if 'rf' in data.test.dict_preds_ML else \
-                ('lr' if 'lr' in data.test.dict_preds_ML else None)
-
+name_baseline =  'gb' if 'gb' in data.test.dict_preds_ML else \
+                ('rf' if 'rf' in data.test.dict_preds_ML else \
+                ('lr' if 'lr' in data.test.dict_preds_ML else None))
+name_meta     = 'meta_LR'
 
 
 rows = []
@@ -575,7 +559,7 @@ common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
 rows.append(utils.index_summary("true",  data.test.true_GW            .index, common_idx))
 rows.append(utils.index_summary("nn_q50",data.test.dict_preds_NN["q50"].index, common_idx))
 
-for _name in ['lr', 'rf']:
+for _name in ['lr', 'rf', 'gb']:
     if _name in data.test.dict_preds_ML:  # keep only those we trained
         _baseline_test_idx = data.test.dict_preds_ML[_name].index
         common_idx = common_idx.intersection(_baseline_test_idx)
@@ -626,9 +610,10 @@ if VERBOSE >= 1:
 
     print("Plotting test results...")
 if VERBOSE >= 2:
-    data.train.plots_diagnostics(name_baseline, Tavg_full, NUM_STEPS_PER_DAY)
+    data.train.plots_diagnostics(
+        name_baseline, name_meta, Tavg_full, NUM_STEPS_PER_DAY)
 
-data.test.plots_diagnostics(name_baseline, Tavg_full, NUM_STEPS_PER_DAY)
+data.test.plots_diagnostics(name_baseline, name_meta, Tavg_full, NUM_STEPS_PER_DAY)
 
 
 

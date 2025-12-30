@@ -132,16 +132,17 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
 
 
 
-def curves(true_series     : pd.Series,
-         dict_pred_series: Dict[str, pd.Series],
-         baseline_series : pd.Series or None,
-         meta_series     : pd.Series,
-         name_baseline: str or None,
-         xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
-         ylim: [float, float] or None = None,
-         date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
-         moving_average: Optional[int] = None,
-         groupby:        Optional[str] = None) -> None:
+def curves( true_series     : pd.Series,
+            dict_pred_series: Dict[str, pd.Series],
+            baseline_series : pd.Series or None,
+            meta_series     : pd.Series,
+            name_baseline   : str or None,
+            name_meta       : str or None,
+            xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
+            ylim: [float, float] or None = None,
+            date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
+            moving_average: Optional[int] = None,
+            groupby:        Optional[str] = None) -> None:
 
     # preparation: range and/or SME
     _true_series    = _apply_range(_apply_groupby(_apply_moving_average(
@@ -151,7 +152,7 @@ def curves(true_series     : pd.Series,
             if name_baseline is not None else None
     _meta_series    = _apply_range(_apply_groupby(_apply_moving_average(
         meta_series,    moving_average), groupby), date_range) \
-            if meta_series   is not None else None
+            if name_meta   is not None else None
 
     _dict_pred_series = {}
     for name, series in dict_pred_series.items():
@@ -170,15 +171,15 @@ def curves(true_series     : pd.Series,
         plt.plot(series.index, series.values,
                  color="red",
                  alpha=0.7,
-                 label=f"forecast NN ({quantile})")
+                 label=f"NN ({quantile})")
 
 
     if name_baseline is not None:
         plt.plot(_baseline_series.index, _baseline_series.values,
-                 label=f"forecast {name_baseline}", color="green")
+                 label=name_baseline, color="green")
 
-    if _meta_series is not None:
-        plt.plot(_meta_series.index, _meta_series.values, label="meta", color="blue")
+    if name_meta is not None:
+        plt.plot(_meta_series.index, _meta_series.values, label=name_meta, color="blue")
 
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
@@ -199,8 +200,9 @@ def scatter(
          dict_pred_series: Dict[str, pd.Series],
          baseline_series : pd.Series or None,
          meta_series     : pd.Series,
-         name_baseline: str or None,
-         x_axis_series:  pd.Series,
+         name_baseline   : str or None,
+         name_meta       : str or None,
+         x_axis_series   : pd.Series,
          resample:       Optional[str] = None,
          xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
          xlim: [float, float] or None = None, ylim: [float, float] or None = None,
@@ -255,15 +257,15 @@ def scatter(
         plt.scatter(x_axis_series, series.loc[common_idx].values,
                  color="red",
                  alpha=alpha,
-                 label=f"forecast NN ({quantile})")
+                 label=f"NN ({quantile})")
 
     if name_baseline is not None:
         plt.scatter(x_axis_series, baseline_series.loc[common_idx].values,
-                 label=f"forecast {name_baseline}", color="green", alpha=alpha)
+                 label=name_baseline, color="green", alpha=alpha)
 
-    if meta_series is not None:
+    if name_meta is not None:
         plt.scatter(x_axis_series, meta_series.loc[common_idx].values,
-                    label="meta", color="blue", alpha=alpha)
+                    label=name_meta, color="blue", alpha=alpha)
 
     if xlim   is not None:  plt.xlim  (xlim)
     if ylim   is not None:  plt.ylim  (ylim)
@@ -277,12 +279,13 @@ def scatter(
 
 
 def diagnostics(true_series:         pd.Series,
-              dict_pred_series:    Dict[str, pd.Series],
-              dict_baseline_series:Dict[str, pd.Series],
-              meta_series:         pd.Series,
-              name_baseline:       str,
-              Tavg:                Optional[pd.Series],
-              num_steps_per_day:   int) -> None:
+                dict_pred_series:    Dict[str, pd.Series],
+                dict_baseline_series:Dict[str, pd.Series],
+                dict_meta_series:    Dict[str, pd.Series],
+                name_baseline:       str,
+                name_meta:           str,
+                Tavg:                Optional[pd.Series],
+                num_steps_per_day:   int) -> None:
     # print("latest date:")
     # print("true:", true_series.index[-1])
     # print("pred:", max([s.index[-1] for s in dict_pred_series]))
@@ -292,6 +295,8 @@ def diagnostics(true_series:         pd.Series,
 
     baseline_series = dict_baseline_series[name_baseline] \
         if name_baseline is not None else None
+    meta_series = dict_meta_series[name_meta] if name_meta is not None else None
+
 
     # SMA_consumption = [None, num_steps_per_day]
     # SMA_residual    = [2*2,  num_steps_per_day]
@@ -328,34 +333,39 @@ def diagnostics(true_series:         pd.Series,
 
     # plot seasonal consumption by date, SMA 1 week
     curves(true_series, dict_pred_series, baseline_series, meta_series,
-         name_baseline, xlabel="date of year", ylabel="consumption [GW]",
+         name_baseline, name_meta,
+         xlabel="date of year", ylabel="consumption [GW]",
          ylim=[ylim[0][0], ylim[0][1]+15], date_range=None,
          moving_average=num_steps_per_day*7, groupby='dateofyear')
     curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
-         name_baseline, xlabel="date of year", ylabel="consumption difference [GW]",
+         name_baseline, name_meta,
+         xlabel="date of year", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, # [zoom_start, zoom_end]
          moving_average=num_steps_per_day*7, groupby='dateofyear')
 
 
     # plot consumption by hour, over a day
     curves(true_series, dict_pred_series, baseline_series, meta_series,
-         name_baseline, xlabel="time of day", ylabel="consumption [GW]",
+         name_baseline, name_meta,
+         xlabel="time of day", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=None, groupby='timeofday')
     curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
-         name_baseline, xlabel="time of day", ylabel="consumption difference [GW]",
+         name_baseline, name_meta,
+         xlabel="time of day", ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, groupby='timeofday')
 
 
     # plot consumption over a week
     curves(true_series, dict_pred_series, baseline_series, meta_series,
-         name_baseline, xlabel="day of week (0 is Monday)", ylabel="consumption [GW]",
+         name_baseline, name_meta,
+         xlabel="day of week (0 is Monday)", ylabel="consumption [GW]",
          ylim=ylim[0], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)
     curves(residual_true_series, dict_residual_pred_series,
          residual_baseline_series, residual_meta_series,
-         name_baseline, xlabel="day of week (0 is Monday)",
+         name_baseline, name_meta, xlabel="day of week (0 is Monday)",
          ylabel="consumption difference [GW]",
          ylim=ylim[1], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)  # smoothing a little
@@ -365,23 +375,27 @@ def diagnostics(true_series:         pd.Series,
     if Tavg is not None:
         Tavg_winter = Tavg[(Tavg.index.month <= 5) | (Tavg.index.month >= 9)]
         scatter(true_series, dict_pred_series, baseline_series, meta_series,
-            name_baseline, Tavg_winter, ylim=[ylim[0][0]-5, ylim[0][1]+22],
+            name_baseline, name_meta, Tavg_winter,
+            ylim=[ylim[0][0]-5, ylim[0][1]+22],
             xlim=[-5, 20], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]", ylabel="consumption [GW]")
         scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
-            name_baseline, Tavg_winter, xlim=[-5, 20], ylim=[-6,10], resample='D', alpha=0.3,
+            name_baseline, name_meta, Tavg_winter,
+            xlim=[-5, 20], ylim=[-6,10], resample='D', alpha=0.3,
             xlabel="(winter) average temperature [°C]",
             ylabel="consumption difference [GW]")
 
         Tavg_summer = Tavg[(Tavg.index.month >= 5) & (Tavg.index.month <= 9)]
         scatter(true_series, dict_pred_series, baseline_series, meta_series,
-            name_baseline, Tavg_summer, ylim=[ylim[0][0]-10, ylim[0][1]-5],
+            name_baseline, name_meta, Tavg_summer,
+            ylim=[ylim[0][0]-10, ylim[0][1]-5],
             xlim=[15, 30], resample='D', alpha=0.3,
             xlabel="(summer) average temperature [°C]", ylabel="consumption [GW]")
         scatter(residual_true_series, dict_residual_pred_series,
                      residual_baseline_series, residual_meta_series,
-            name_baseline, Tavg_summer, xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
+            name_baseline, name_meta, Tavg_summer,
+            xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
             xlabel="(summer) average temperature [°C]",
             ylabel="consumption difference [GW]")
 

@@ -22,6 +22,7 @@ import pandas as pd
 
 from   sklearn.linear_model    import Ridge
 from   sklearn.ensemble        import RandomForestRegressor
+from   lightgbm                import LGBMRegressor
 
 # import matplotlib.pyplot as plt
 
@@ -62,8 +63,12 @@ def _build_model_from_cfg(cfg: Dict[str, dict]):
     elif model_type == "rf":
         return RandomForestRegressor(**cfg)
 
+    elif model_type == 'lgbm':
+        return LGBMRegressor(**cfg)
+
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
 
 baseline_cfg = [
     {  # 'DEBUG'
@@ -78,6 +83,23 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
+    'gb': {
+        "type":     "lgbm",
+        "objective": "regression",
+        "boosting_type": "gbdt",
+        "num_leaves": 15,             # Fewer leaves for simplicity
+        "max_depth": 4,               # Shallower trees
+        "learning_rate": 0.1,         # Learning rate
+        "n_estimators": 50,          # Fewer trees for faster training
+        "min_child_samples": 20,      # Minimum samples per leaf
+        "subsample": 0.8,             # Fraction of samples used for training each tree
+        "colsample_bytree": 0.8,       # Fraction of features used for training each tree
+        "reg_alpha": 0.1,             # L1 regularization
+        "reg_lambda": 0.1,            # L2 regularization
+        "random_state": 0,            # Seed for reproducibility
+        "n_jobs": 4,                  # Number of parallel jobs
+        "verbose": -1                 # Suppress output
+    }
 },
 
 {  # 'SMALL'
@@ -93,6 +115,23 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
+    "gb": {
+        "type":          "lgbm",
+        "objective":     "regression",
+        "boosting_type": "gbdt",
+        "num_leaves":       31,         # Default number of leaves
+        "max_depth":         6,         # Moderate tree depth
+        "learning_rate":     0.05,      # Lower learning rate for stability
+        "n_estimators":    250,         # Moderate number of trees
+        "min_child_samples":20,         # Minimum samples per leaf
+        "subsample":         0.8,       # Fraction of samples used for training each tree
+        "colsample_bytree":  0.8,       # Fraction of features used for training each tree
+        "reg_alpha":         0.1,       # L1 regularization
+        "reg_lambda":        0.1,       # L2 regularization
+        "random_state":      0,         # Seed for reproducibility
+        "n_jobs":            4,         # Number of parallel jobs
+        "verbose":          -1          # Suppress output
+    }
 },
 
 {  # 'LARGE'
@@ -107,6 +146,23 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
+    "gb": {
+        "type":     "lgbm",
+        "objective": "regression",
+        "boosting_type": "gbdt",
+        "num_leaves": 63,             # More leaves for complex patterns
+        "max_depth": 8,               # Deeper trees
+        "learning_rate": 0.02,        # Lower learning rate for precision
+        "n_estimators": 400,          # More trees for a robust model
+        "min_child_samples": 30,      # Minimum samples per leaf
+        "subsample": 0.7,             # Fraction of samples used for training each tree
+        "colsample_bytree": 0.7,       # Fraction of features used for training each tree
+        "reg_alpha": 0.2,             # Stronger L1 regularization
+        "reg_lambda": 0.2,            # Stronger L2 regularization
+        "random_state": 0,            # Seed for reproducibility
+        "n_jobs": 4,                  # Number of parallel jobs
+        "verbose": -1                 # Suppress output
+    }
 },
 
 {  # 'HUGE'
@@ -247,7 +303,14 @@ def regression_and_forest(
         preds_GW          [name] = pd.Series()
         # losses_quantile_GW[name] = dict()
 
-        if name != 'oracle':
+        if name == 'oracle':
+            warnings.warn("Using the oracle!")
+            models[name] = None # meaningless
+            pred_train_GW = y_train_GW
+            pred_valid_GW = y_valid_GW
+            pred_test_GW  = y_test_GW
+
+        else:
             models[name] = _build_model_from_cfg(cfg)
             models[name].fit(X_train_GW, y_train_GW)
 
@@ -255,12 +318,6 @@ def regression_and_forest(
             pred_valid_GW = models[name].predict(X_valid_GW)
             pred_test_GW  = models[name].predict(X_test_GW )
 
-        else:
-            warnings.warn("Using the oracle!")
-            models[name] = None # meaningless
-            pred_train_GW = y_train_GW
-            pred_valid_GW = y_valid_GW
-            pred_test_GW  = y_test_GW
 
         series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
