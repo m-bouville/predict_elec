@@ -393,19 +393,6 @@ amp_scaler = torch.amp.GradScaler(device=device)
 # first_step = True
 
 
-
-def subset_predictions_day_ahead(X_subset_GW, subset_loader):
-    return utils.subset_predictions_day_ahead(
-            X_subset_GW, subset_loader, model, data.scaler_y,
-            feature_cols = feature_cols,
-            device       = device,
-            input_length = INPUT_LENGTH,
-            pred_length  = PRED_LENGTH,
-            valid_length = VALID_LENGTH,
-            minutes_per_step=MINUTES_PER_STEP,
-            quantiles    = QUANTILES
-            )
-
 t_epoch_loop_start = time.perf_counter()
 for epoch in range(EPOCHS):
 
@@ -516,51 +503,62 @@ _baselines_train = _baselines.iloc[data.train.idx]
 _baselines_train.index   = data.train.dates
 
 
+data.predictions_day_ahead(
+        model, data.scaler_y,
+        feature_cols = feature_cols,
+        device       = device,
+        input_length = INPUT_LENGTH,
+        pred_length  = PRED_LENGTH,
+        valid_length = VALID_LENGTH,
+        minutes_per_step=MINUTES_PER_STEP,
+        quantiles    = QUANTILES
+        )
+
 # preparating training
-data.train.true_GW, data.train.dict_preds_NN, data.train.dict_preds_ML, _ = \
-    subset_predictions_day_ahead(data.train.X_dev, data.train.loader)
-# print(_baselines_train)
-y_true_train = pd.Series(data.train.y_dev, name='y', index=data.train.dates)
-# print("true values [GW] at these times", y_true_train[missing_indices].round(2))
+# y_true_train = pd.Series(data.train.y_dev, name='y', index=data.train.dates)
+# # print("true values [GW] at these times", y_true_train[missing_indices].round(2))
 
-df_train = pd.concat([
-        y_true_train,
-        _baselines_train,
-        data.train.dict_preds_NN['q50']
-    ], axis=1, join="inner").astype(np.float32)
-# print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
-df_train.columns = ['y', 'lr', 'rf', 'nn']
-input_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
-y_train = df_train[['y']].squeeze()  #.to_numpy()
+# df_train = pd.concat([
+#         y_true_train,
+#         _baselines_train,
+#         data.train.dict_preds_NN['q50']
+#     ], axis=1, join="inner").astype(np.float32)
+# # print(f"df_train:    {df_train.shape} ({df_train.index.min()} -> {df_train.index.max()})")
+# df_train.columns = ['y', 'lr', 'rf', 'nn']
+# input_train = df_train[['lr', 'rf', 'nn']]  #.to_numpy()
+# y_train = df_train[['y']].squeeze()  #.to_numpy()
 
 
-# preparating validation
-data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML, _ = \
-    subset_predictions_day_ahead(data.valid.X_dev, data.valid.loader)
-_baselines_valid = _baselines.iloc[data.valid.idx]
-_baselines_valid.index = data.valid.dates
-input_valid = pd.concat([_baselines_valid, data.valid.dict_preds_NN['q50']],
-                     axis=1, join="inner").astype('float32')
-input_valid.columns = ['lr', 'rf', 'nn']
 
 
-# preparating testing
-data.test.true_GW, data.test.dict_preds_NN, data.test.dict_preds_ML, data.test.origin_times = \
-    subset_predictions_day_ahead(data.test.X_dev, data.test.loader)
-_baselines_test = _baselines.iloc[data.test.idx]
-_baselines_test.index = data.test.dates
-input_test = pd.concat([_baselines_test, data.test.dict_preds_NN['q50']],
-                     axis=1, join="inner").astype('float32')
-input_test.columns = ['lr', 'rf', 'nn']
+# # preparating validation
+# # data.valid.true_GW, data.valid.dict_preds_NN, data.valid.dict_preds_ML,
+# _baselines_valid = _baselines.iloc[data.valid.idx]
+# _baselines_valid.index = data.valid.dates
+# input_valid = pd.concat([_baselines_valid, data.valid.dict_preds_NN['q50']],
+#                      axis=1, join="inner").astype('float32')
+# input_valid.columns = ['lr', 'rf', 'nn']
+
+
+# # preparating testing
+# _baselines_test = _baselines.iloc[data.test.idx]
+# _baselines_test.index = data.test.dates
+# input_test = pd.concat([_baselines_test, data.test.dict_preds_NN['q50']],
+#                      axis=1, join="inner").astype('float32')
+# input_test.columns = ['lr', 'rf', 'nn']
 
 
 # metamodel
-(data.weights_meta_LR,
-data.train.dict_preds_meta['meta_LR'],
-data.valid.dict_preds_meta['meta_LR'],
-data.test .dict_preds_meta['meta_LR']) = \
-    metamodel.weights_LR_metamodel(input_train, y_train, input_valid, input_test,
-                            verbose=VERBOSE)
+data.calculate_metamodel_LR(VERBOSE)
+# (data.weights_meta_LR,
+# data.train.dict_preds_meta['meta_LR'],
+# data.valid.dict_preds_meta['meta_LR'],
+# data.test .dict_preds_meta['meta_LR']) = \
+#     metamodel.weights_LR_metamodel(data.train.input_metamodel_LR,
+#                                    data.train.    y_metamodel_LR,
+#                                    data.valid.input_metamodel_LR,
+#                                    data.test .input_metamodel_LR,
+#                                    verbose=VERBOSE)
 if VERBOSE >= 1:
     print(f"weights_meta_LR [%]: "
       f"{ {name: round(value*100, 1) for name, value in data.weights_meta_LR.items()}}")
@@ -575,26 +573,22 @@ if VERBOSE >= 2:
 if VERBOSE >= 3:
 
     print("\nBad days during training")
-    top_bad_days_train = utils.worst_days_by_loss(
-        y_true      = data.train.true_GW,
-        y_pred      = data.train.dict_preds_NN['q50'],
-        temperature = Tavg_full   [data.train.idx],
-        holidays    = holiday_full[data.train.idx],
+    top_bad_days_train = data.train.worst_days_by_loss(
+        temperature_full= Tavg_full,
+        holidays_full   = holiday_full,
         num_steps_per_day=NUM_STEPS_PER_DAY,
-        top_n       = 50,
+        top_n           = 50,
     )
+    print(top_bad_days_train.to_string())
 
-    # print("\nBad days during Validation")
-    # top_bad_days_valid = utils.worst_days_by_loss(
-    #     y_true    = true_valid_GW,
-    #     y_pred    = dict_pred_valid_GW['q50'],
-    #     temperature=Tavg_full   [data.test.idx][-n_valid:],
-    #     holidays  = holiday_full[data.test.idx][-n_valid:],
+    # print("\nBad days during validation")
+    # top_bad_days_valid = data.valid.worst_days_by_loss(
+    #     temperature=Tavg_full,
+    #     holidays  = holiday_full],
     #     num_steps_per_day=NUM_STEPS_PER_DAY,
     #     top_n     = 25,
     # )
-
-    print(top_bad_days_train.to_string())
+    # print(top_bad_days_valid.to_string())
 
 
 #     # import matplotlib.pyplot as plt
