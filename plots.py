@@ -149,10 +149,10 @@ def curves( true_series     : pd.Series,
         true_series,    moving_average), groupby), date_range)
     _baseline_series= _apply_range(_apply_groupby(_apply_moving_average(
         baseline_series,moving_average), groupby), date_range) \
-            if name_baseline is not None else None
+            if baseline_series is not None else None
     _meta_series    = _apply_range(_apply_groupby(_apply_moving_average(
         meta_series,    moving_average), groupby), date_range) \
-            if name_meta   is not None else None
+            if meta_series   is not None else None
 
     _dict_pred_series = {}
     for name, series in dict_pred_series.items():
@@ -174,11 +174,11 @@ def curves( true_series     : pd.Series,
                  label=f"NN ({quantile})")
 
 
-    if name_baseline is not None:
+    if _baseline_series is not None:
         plt.plot(_baseline_series.index, _baseline_series.values,
                  label=name_baseline, color="green")
 
-    if name_meta is not None:
+    if _meta_series is not None:
         plt.plot(_meta_series.index, _meta_series.values, label=name_meta, color="blue")
 
     if ylim   is not None:  plt.ylim  (ylim)
@@ -259,11 +259,11 @@ def scatter(
                  alpha=alpha,
                  label=f"NN ({quantile})")
 
-    if name_baseline is not None:
+    if baseline_series is not None:
         plt.scatter(x_axis_series, baseline_series.loc[common_idx].values,
                  label=name_baseline, color="green", alpha=alpha)
 
-    if name_meta is not None:
+    if meta_series is not None:
         plt.scatter(x_axis_series, meta_series.loc[common_idx].values,
                     label=name_meta, color="blue", alpha=alpha)
 
@@ -295,7 +295,8 @@ def diagnostics(true_series:         pd.Series,
 
     baseline_series = dict_baseline_series[name_baseline] \
         if name_baseline is not None else None
-    meta_series = dict_meta_series[name_meta] if name_meta is not None else None
+    meta_series = dict_meta_series[name_meta] \
+        if (name_meta is not None and name_meta in dict_meta_series.keys()) else None
 
 
     # SMA_consumption = [None, num_steps_per_day]
@@ -398,8 +399,6 @@ def diagnostics(true_series:         pd.Series,
             xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
             xlabel="(summer) average temperature [°C]",
             ylabel="consumption difference [GW]")
-
-
 
 
 

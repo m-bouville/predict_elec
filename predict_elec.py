@@ -38,10 +38,11 @@ import architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 # F = number of features
 
 
-# TODO make future T° noisy to mimic the uncertainty of forecasts
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
-# TODO Boosting
+# TODO make future T° noisy to mimic the uncertainty of forecasts
+# TODO RF and Boosting generalize poorly
+# TODO make the metamodel reduce the bias
 
 
 
@@ -492,7 +493,7 @@ data.predictions_day_ahead(
         )
 
 # metamodel LR
-data.calculate_metamodel_LR(min_weight=0.15, verbose=VERBOSE)
+data.calculate_metamodel_LR(split_active='valid', min_weight=0.15, verbose=VERBOSE)
 
 if VERBOSE >= 1:
     print(f"weights_meta_LR [%]: "
@@ -592,10 +593,11 @@ for k in data.test.dict_preds_ML:
 # ============================================================
 
 data.calculate_metamodel_NN(
-        feature_cols, VALID_LENGTH,
+        feature_cols, VALID_LENGTH, 'valid',
         #constants
         META_DROPOUT, META_NUM_CELLS, META_EPOCHS,
-        META_LR, META_WEIGHT_DECAY, META_PATIENCE, META_FACTOR, META_BATCH_SIZE, device)
+        META_LR, META_WEIGHT_DECAY, META_PATIENCE, META_FACTOR, META_BATCH_SIZE,
+        device, VERBOSE)
 
 if VERBOSE >= 1:
     print("\nTraining metrics [GW]:")

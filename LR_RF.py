@@ -87,7 +87,7 @@ baseline_cfg = [
         "type":     "lgbm",
         "objective": "regression",
         "boosting_type": "gbdt",
-        "num_leaves": 15,             # Fewer leaves for simplicity
+        "num_leaves": 16-1,             # Fewer leaves for simplicity
         "max_depth": 4,               # Shallower trees
         "learning_rate": 0.1,         # Learning rate
         "n_estimators": 50,          # Fewer trees for faster training
@@ -107,8 +107,8 @@ baseline_cfg = [
     "lr": {"type": "ridge", "alpha": 1.0},
     "rf": {
         "type":            "rf",
-        "n_estimators":    250,
-        "max_depth":        10,
+        "n_estimators":    500,
+        "max_depth":        20,
         "min_samples_leaf": 15,
         "min_samples_split":20,
         "max_features":   "sqrt",
@@ -119,18 +119,18 @@ baseline_cfg = [
         "type":          "lgbm",
         "objective":     "regression",
         "boosting_type": "gbdt",
-        "num_leaves":       31,         # Default number of leaves
-        "max_depth":         6,         # Moderate tree depth
-        "learning_rate":     0.05,      # Lower learning rate for stability
-        "n_estimators":    250,         # Moderate number of trees
-        "min_child_samples":20,         # Minimum samples per leaf
-        "subsample":         0.8,       # Fraction of samples used for training each tree
-        "colsample_bytree":  0.8,       # Fraction of features used for training each tree
-        "reg_alpha":         0.1,       # L1 regularization
-        "reg_lambda":        0.1,       # L2 regularization
-        "random_state":      0,         # Seed for reproducibility
-        "n_jobs":            4,         # Number of parallel jobs
-        "verbose":          -1          # Suppress output
+        "num_leaves":       32-1,     # Default number of leaves
+        "max_depth":         5,       # Moderate tree depth
+        "learning_rate":     0.05,    # Lower learning rate for stability
+        "n_estimators":    500,       # More trees for a robust model
+        "min_child_samples":20,       # Minimum samples per leaf
+        "subsample":         0.8,     # Fraction of samples used for training each tree
+        "colsample_bytree":  0.8,     # Fraction of features used for training each tree
+        "reg_alpha":         0.1,     # L1 regularization
+        "reg_lambda":        0.1,     # L2 regularization
+        "random_state":      0,       # Seed for reproducibility
+        "n_jobs":            4,       # Number of parallel jobs
+        "verbose":          -1        # Suppress output
     }
 },
 
@@ -150,10 +150,10 @@ baseline_cfg = [
         "type":     "lgbm",
         "objective": "regression",
         "boosting_type": "gbdt",
-        "num_leaves": 63,             # More leaves for complex patterns
+        "num_leaves": 64-1,           # More leaves for complex patterns
         "max_depth": 8,               # Deeper trees
         "learning_rate": 0.02,        # Lower learning rate for precision
-        "n_estimators": 400,          # More trees for a robust model
+        "n_estimators": 500,          # More trees for a robust model
         "min_child_samples": 30,      # Minimum samples per leaf
         "subsample": 0.7,             # Fraction of samples used for training each tree
         "colsample_bytree": 0.7,       # Fraction of features used for training each tree

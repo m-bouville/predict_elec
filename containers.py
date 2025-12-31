@@ -23,6 +23,8 @@ class DataSplit:
     y_dev:          torch.Tensor
     dates:          pd.DatetimeIndex
 
+    X_columns:      Optional[List[str]]    = None
+
     # Scaled versions
     X_scaled_dev:   Optional[torch.Tensor] = None
     y_scaled_dev:   Optional[torch.Tensor] = None
@@ -31,7 +33,11 @@ class DataSplit:
     dataset_scaled: Optional[torch.utils.data.Dataset   ] = None
     loader:         Optional[torch.utils.data.DataLoader] = None
 
-    # predictions (colum: name/type of model) -- added later
+    # input to metamodels
+    input_metamodel_LR:Optional[Dict[str, pd.DataFrame]] = None
+    y_metamodel_LR:    Optional[Dict[str, pd.Series   ]] = None
+
+    # predictions (column: name/type of model) -- added later
     dict_preds_ML:  Optional[Dict[str, pd.Series]] = field(default_factory=dict)
     dict_preds_NN:  Optional[Dict[str, pd.Series]] = field(default_factory=dict)
     dict_preds_meta:Optional[Dict[str, pd.Series]] = field(default_factory=dict)
@@ -100,7 +106,7 @@ class DataSplit:
 
 
     # Metamodel LR
-    def calculate_input_metamodel_LR(self) -> None:
+    def calculate_input_metamodel_LR(self, split_active: str) -> None:
         _y_true = pd.Series(self.y_dev, name='y', index=self.dates)
 
         _input = pd.concat([_y_true,
@@ -110,7 +116,7 @@ class DataSplit:
         _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['nn']
         self.input_metamodel_LR = _input.drop(columns=['y'])
 
-        if self.name == 'train':
+        if self.name == split_active:
             self.y_metamodel_LR = _input[['y']].squeeze()  #.to_numpy()
 
     # compare models
@@ -123,11 +129,12 @@ class DataSplit:
     # plotting
     def plots_diagnostics(self,
                           name_baseline:     str,
+                          name_meta:         str,
                           temperature_full:  pd.Series,
                           num_steps_per_day: int):
         plots.diagnostics(self.true_GW, {'q50': self.dict_preds_NN['q50']},
-                self.dict_preds_ML, self.dict_preds_meta['meta_NN'],
-                name_baseline, temperature_full.iloc[self.idx],
+                self.dict_preds_ML, self.dict_preds_meta,
+                name_baseline, name_meta, temperature_full.iloc[self.idx],
                 num_steps_per_day)
 
 
@@ -145,8 +152,10 @@ class DatasetBundle:
     scaler_y: object
     scaler_X: Optional[object] = None
 
-    # added later
-    weights_meta_LR: Optional[List[float]] = None
+    # metamodels (added later)
+    weights_meta_LR:     Optional[str]        = None
+    split_active_meta_LR:Optional[List[float]]= None
+    weights_meta_NN:     Optional[str]        = None
 
 
     def items(self):
@@ -167,26 +176,41 @@ class DatasetBundle:
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
     # Metamodels
-    def calculate_inputs_metamodel_LR(self) -> None:
+    def calculate_metamodel_LR(self,
+                               split_active:str,
+                               min_weight:  float = 0.,
+                               verbose:     int   = 0) -> None:
+        assert split_active in ['train', 'valid'], split_active
+        self.weights_meta_LR = split_active
+
         for (_split, _data_split) in self.items():
-            _data_split.calculate_input_metamodel_LR()
+            _data_split.calculate_input_metamodel_LR(split_active=split_active)
+            print(_split, _data_split.input_metamodel_LR is not None,
+                          _data_split.    y_metamodel_LR is not None)
 
-    def calculate_metamodel_LR(self, verbose: int=0) -> None:
-        self.calculate_inputs_metamodel_LR()
+        if split_active == 'train':
+            (self.weights_meta_LR,
+            self.train.dict_preds_meta['meta_LR'],
+            self.valid.dict_preds_meta['meta_LR'],
+            self.test .dict_preds_meta['meta_LR'])= metamodel.weights_LR_metamodel(
+                    self.train.input_metamodel_LR, self.train.    y_metamodel_LR,
+                    self.valid.input_metamodel_LR, self.test .input_metamodel_LR,
+                    min_weight=min_weight, verbose=verbose)
+        else:  # on valid
+            (self.weights_meta_LR,
+            self.valid.dict_preds_meta['meta_LR'],
+            self.test .dict_preds_meta['meta_LR'], _) =\
+                metamodel.weights_LR_metamodel(
+                    self.valid.input_metamodel_LR, self.valid.y_metamodel_LR,
+                    self.test .input_metamodel_LR, None,
+                    min_weight=min_weight, verbose=verbose)
 
-        (self.weights_meta_LR,
-        self.train.dict_preds_meta['meta_LR'],
-        self.valid.dict_preds_meta['meta_LR'],
-        self.test .dict_preds_meta['meta_LR']) = \
-            metamodel.weights_LR_metamodel(self.train.input_metamodel_LR,
-                                           self.train.    y_metamodel_LR,
-                                           self.valid.input_metamodel_LR,
-                                           self.test .input_metamodel_LR,
-                                           verbose=verbose)
 
     def calculate_metamodel_NN(self,
                     feature_cols: List[str],
                     valid_length: int,
+                    split_active: str,
+                        # constants
                     dropout     : float,
                     num_cells   : int,
                     epochs      : int,
@@ -195,17 +219,35 @@ class DatasetBundle:
                     patience    : int,
                     factor      : float,
                     batch_size  : int,
-                    device) -> None:
-        (self.train.dict_preds_meta['meta_NN'],
-         self.valid.dict_preds_meta['meta_NN'],
-         self.test .dict_preds_meta['meta_NN']) = \
-            metamodel.metamodel_NN(
-                self.train, self.valid, self.test,
-                feature_cols, valid_length,
-                #constants
-                dropout, num_cells, epochs,
-                lr, weight_decay,
-                patience, factor,
-                batch_size, device)
+                    device,
+                    verbose     : int = 0) -> None:
+        assert split_active in ['train', 'valid'], split_active
+        self.weights_meta_NN = split_active
+
+        if split_active == 'train':
+            (self.train.dict_preds_meta['meta_NN'],
+             self.valid.dict_preds_meta['meta_NN'],
+             self.test .dict_preds_meta['meta_NN']) = \
+                metamodel.metamodel_NN(
+                    self.train, self.valid, self.test,
+                    feature_cols, valid_length,
+                    #constants
+                    dropout, num_cells, epochs,
+                    lr, weight_decay,
+                    patience, factor,
+                    batch_size, device, verbose)
+        else:  # on valid
+            # the second argumennt is actual validation (learning rate scheduling)
+            #   /!\ use train for that? or nothing?
+            (self.valid.dict_preds_meta['meta_NN'], _,
+             self.test .dict_preds_meta['meta_NN']) = \
+                metamodel.metamodel_NN(
+                    self.valid, self.train, self.test,
+                    feature_cols, valid_length,
+                    #constants
+                    dropout, num_cells, epochs,
+                    lr, weight_decay,
+                    patience, factor,
+                    batch_size, device, verbose)
 
 
