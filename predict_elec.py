@@ -41,8 +41,10 @@ import architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
 # TODO make future T° noisy to mimic the uncertainty of forecasts
-# TODO RF and Boosting generalize poorly
+# BUG RF and Boosting generalize poorly
 # TODO make the metamodel reduce the bias
+# TODO save RF and GB pickles separately
+# TODO? use lasso with LR to select features, and use only these with other models
 
 
 
@@ -196,7 +198,7 @@ cache_id = {
     # "split": "v1",   # optional: data split identifier
 }
 
-baseline_features_GW, baseline_models = \
+baseline_features_GW, baseline_models, df, feature_cols = \
     LR_RF.load_or_compute_regression_and_forest(
         compute_kwargs  = rf_params,
         cache_dir       = "cache",
@@ -206,6 +208,9 @@ baseline_features_GW, baseline_models = \
     )
 if VERBOSE >= 1:
     print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
+
+print(df)
+print(feature_cols)
 
 
 
@@ -499,21 +504,18 @@ if VERBOSE >= 1:
     print(f"weights_meta_LR [%]: "
       f"{ {name: round(value*100, 1) for name, value in data.weights_meta_LR.items()}}")
 t_metamodel_end = time.perf_counter()
-# TODO very slow b/c of pandas, concat, etc. for alignment
 if VERBOSE >= 2:
     print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
 
 
-if VERBOSE >= 3:
-
-    print("\nBad days during training")
+if VERBOSE >= -3:
     top_bad_days_train = data.train.worst_days_by_loss(
         temperature_full = Tavg_full,
         holidays_full    = holidays_full,
         num_steps_per_day= NUM_STEPS_PER_DAY,
-        top_n            = 30,
+        top_n            = 40,
     )
     print(top_bad_days_train.to_string())
 
@@ -552,13 +554,14 @@ rows = []
 rows.append(utils.index_summary("test_dates", data.test.dates, None))
 
 rows.append({"series": "origin_times",
-        "start": data.test.origin_times[0].date(), "end": data.test.origin_times[1].date(),
+        "start": data.test.origin_times[0].date(),
+        "end":   data.test.origin_times[1].date(),
         "n": None, "n_common": None, "start_diff": None, "end_diff": None})
 
 common_idx = data.test.true_GW.index
 common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
 rows.append(utils.index_summary("true",  data.test.true_GW            .index, common_idx))
-rows.append(utils.index_summary("nn_q50",data.test.dict_preds_NN["q50"].index, common_idx))
+rows.append(utils.index_summary("nn_q50",data.test.dict_preds_NN["q50"].index,common_idx))
 
 for _name in ['LR', 'RF', 'GB']:
     if _name in data.test.dict_preds_ML:  # keep only those we trained

@@ -20,7 +20,8 @@ from   typing import List, Tuple, Dict # Sequence, Optional
 import numpy  as np
 import pandas as pd
 
-from   sklearn.linear_model    import Ridge
+from   sklearn.preprocessing   import StandardScaler
+from   sklearn.linear_model    import Ridge, Lasso
 from   sklearn.ensemble        import RandomForestRegressor
 from   lightgbm                import LGBMRegressor
 
@@ -60,20 +61,22 @@ def _build_model_from_cfg(cfg: Dict[str, dict]):
     if model_type == "ridge":
         return Ridge(**cfg)
 
-    elif model_type == "rf":
+    if model_type == "lasso":
+        return Lasso(**cfg)
+
+    if model_type == "rf":
         return RandomForestRegressor(**cfg)
 
-    elif model_type == 'lgbm':
+    if model_type == 'lgbm':
         return LGBMRegressor(**cfg)
 
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
+    raise ValueError(f"Unknown model type: {model_type}")
 
 
 baseline_cfg = [
     {  # 'DEBUG'
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "ridge", "alpha": 1.0},
+    'LR': {"type": "lasso", "alpha": 5 / 100.},
     'RF': {
         "type":            "rf",
         "n_estimators":     50,     # was 300 -> fewer trees
@@ -104,7 +107,7 @@ baseline_cfg = [
 
 {  # 'SMALL'
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "ridge", "alpha": 1.0},
+    'LR': {"type": "lasso", "alpha": 2 / 100., 'max_iter': 2_000},
     'RF': {
         "type":            "rf",
         "n_estimators":    500,
@@ -124,8 +127,8 @@ baseline_cfg = [
         "learning_rate":     0.05,    # Lower learning rate for stability
         "n_estimators":    500,       # More trees for a robust model
         "min_child_samples":20,       # Minimum samples per leaf
-        "subsample":         0.8,     # Fraction of samples used for training each tree
-        "colsample_bytree":  0.8,     # Fraction of features used for training each tree
+        "subsample":         0.8,     # Fraction of samples used to train each tree
+        "colsample_bytree":  0.8,     # Fraction of features used for each tree
         "reg_alpha":         0.1,     # L1 regularization
         "reg_lambda":        0.1,     # L2 regularization
         "random_state":      0,       # Seed for reproducibility
@@ -135,7 +138,7 @@ baseline_cfg = [
 },
 
 {  # 'LARGE'
-    'LR': {"type": "ridge", "alpha": 1.0},
+    'LR': {"type": "lasso", "alpha": 0.5 / 100., 'max_iter': 5_000},
     'RF': {
         "type":            "rf",
         "n_estimators":    400,
@@ -155,8 +158,8 @@ baseline_cfg = [
         "learning_rate": 0.02,        # Lower learning rate for precision
         "n_estimators": 500,          # More trees for a robust model
         "min_child_samples": 30,      # Minimum samples per leaf
-        "subsample": 0.7,             # Fraction of samples used for training each tree
-        "colsample_bytree": 0.7,      # Fraction of features used for training each tree
+        "subsample": 0.7,             # Fraction of samples used to train each tree
+        "colsample_bytree": 0.7,      # Fraction of features used for each tree
         "reg_alpha": 0.2,             # Stronger L1 regularization
         "reg_lambda": 0.2,            # Stronger L2 regularization
         "random_state": 0,            # Seed for reproducibility
@@ -166,7 +169,7 @@ baseline_cfg = [
 },
 
 {  # 'HUGE'
-    'LR': {"type": "ridge", "alpha": 1.0},
+    'LR': {"type": "lasso", "alpha": 0.2 / 100., 'max_iter': 10_000},
     'RF': {
         "type":            "rf",
         "n_estimators":    500,
@@ -179,6 +182,62 @@ baseline_cfg = [
     },
 }
 ]
+
+def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
+
+    lr = pd.Series(
+        model_LR.coef_,
+        index=feature_cols,
+        name="LR_coef"
+    ).astype(np.float32)
+
+    rf = pd.Series(
+        model_RF.feature_importances_,
+        index=feature_cols,
+        name="RF_importance"
+    ).astype(np.float32)
+
+    df_imp = pd.concat([lr, rf], axis=1).astype(np.float32).round(3)
+
+    # Normalize for comparability
+    _source = df_imp["LR_coef"].abs()
+    df_imp["LR_norm_pc"] = (100.*_source/_source.quantile(0.95))
+
+    _source = df_imp["RF_importance"]
+    df_imp["RF_norm_pc"] = (100.*_source/_source.quantile(0.95))
+
+    # Overall relevance score
+    df_imp["score_pc"] = (df_imp[["LR_norm_pc", "RF_norm_pc"]]).mean(axis=1)
+
+
+    # reference for RF: the second-lowest value
+    rf_imp = df_imp["RF_norm_pc"]
+    min_rf = rf_imp.replace(0, np.nan).min() * 1.001 + .0001
+    rf_filtered = rf_imp.mask(rf_imp < min_rf, np.nan)
+    rf_second_lowest = rf_filtered.min()
+    print(f"rf_smallest_non_zero: {min_rf:.5f}, {rf_second_lowest:.5f}")
+
+    lr_survivor = lr.abs() > 0
+    rf_survivor = rf_imp > rf_second_lowest * 1.001
+    both_survivor  = lr_survivor & rf_survivor
+    either_survivor= lr_survivor | rf_survivor
+    score_survivor = (df_imp["score_pc"] > 5)
+    print(f"survivors out of {len(lr)} features: "
+          f"LR {      lr_survivor.sum()}, RF {        rf_survivor.sum()}, "
+          f"both {  both_survivor.sum()}, either {either_survivor.sum()}, "
+          f"score {score_survivor.sum()}")
+
+
+    # Final ordering
+    df_imp = (
+        df_imp
+        .sort_values("score_pc", ascending=False)
+        .drop(columns=["LR_coef", "RF_importance"])  # keep only normalized
+    )
+
+    print("\n[Model diagnostics] Top features (LR + RF):")
+    print(df_imp.round(2).to_string(float_format="%6.2f"))  # .head(20)
+
 
 
 
@@ -235,7 +294,7 @@ def load_or_compute_regression_and_forest(
 
 
 
-## Version 3 -- older versions in: archives/utils-old-LR_RF-test_predictions.py
+## older versions in: archives/utils-old-LR_RF-test_predictions.py
 def regression_and_forest(
     df:          pd.DataFrame,
     # dates:       pd.DatetimeIndex,
@@ -245,7 +304,7 @@ def regression_and_forest(
     val_end:     int,     # end of validation set (exclusive)
     models_cfg:  Dict[str, dict],
     verbose:     int = 0
-) -> Tuple[Dict[str, pd.Series], Ridge, Dict[str, Dict[str, float]]]:
+) -> Tuple[Dict[str, pd.Series], object, pd.DataFrame, List[str]]:
     """
     Leakage-safe contemporaneous tabular baselines:
         y_t ~ features_t   (NO LAG)
@@ -264,36 +323,66 @@ def regression_and_forest(
     features : Dict[str, pd.Series]
         {name -> OOF feature aligned with df.index}
     final_models : Dict[str, fitted model]
-    losses : Dict[str, Dict[str, float]]
-        {name -> {"train": mse, "valid": mse}}
+    df: pd.DataFrame
+        with only selected features
+    feature_cols: List[str]
+        said features (df.columns[1:])
     """
 
     # sigma_y_GW = 11.7  # TODO do not do by hand
 
-    # -------------------------
-    # 1. Extract matrices
+    # Extract matrices
     # -------------------------
     X_GW: np.ndarray = df[feature_cols].values.astype(np.float32)
     y_GW: np.ndarray = df[target_col  ].values.astype(np.float32)
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_GW)
 
     N: int = len(df)
     # print(f"indices: 0 < {train_end} < {val_end} < {N}")
     assert 0 < train_end < val_end <= N, "Invalid split indices"
 
-    # -------------------------
-    # 2. Define ranges
+    # Define ranges
     # -------------------------
     train_idx: np.ndarray = np.arange(0,        train_end)
     valid_idx: np.ndarray = np.arange(train_end,val_end)
     test_idx : np.ndarray = np.arange(val_end,  N)
 
-    X_train_GW: np.ndarray = X_GW[train_idx];  y_train_GW: np.ndarray = y_GW[train_idx]
-    X_valid_GW: np.ndarray = X_GW[valid_idx];  y_valid_GW: np.ndarray = y_GW[valid_idx]
-    X_test_GW : np.ndarray = X_GW[ test_idx];  y_test_GW : np.ndarray = y_GW[ test_idx]
+    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
 
+
+    # lasso pass to select features
     # -------------------------
-    # 3. predictions on TRAIN only
+    cfg = models_cfg['LR'].copy()
+    cfg.pop('type')
+
+    model_lasso = Lasso(**cfg)
+    model_lasso.fit(X_train_scaled, y_train_GW)
+
+    coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
+    # print("coeffs_lasso:", coeffs_lasso)
+
+    # Features with non-zero coefficients
+    idx_coeffs   = np.where(coeffs_lasso != 0)[0]
+    # print("idx_coeffs:", idx_coeffs)
+    feature_cols = list(np.array(feature_cols)[idx_coeffs])
+    feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
+    # print("feature_cols:", feature_cols)
+
+    # print(df.shape, X_GW.shape)
+    X_GW = X_GW[:, idx_coeffs]
+    df   = df[[target_col] + feature_cols]
+    # print(df.shape, X_GW.shape)
+
+
+    # start over, with fewer features
     # -------------------------
+    X_scaled = scaler.fit_transform(X_GW)
+
+    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
+    X_valid_scaled = X_scaled[valid_idx];  y_valid_GW = y_GW[valid_idx]
+    X_test_scaled  = X_scaled[ test_idx];  y_test_GW  = y_GW[ test_idx]
 
     models            = dict()
     preds_GW          = dict()
@@ -312,11 +401,11 @@ def regression_and_forest(
 
         else:
             models[name] = _build_model_from_cfg(cfg)
-            models[name].fit(X_train_GW, y_train_GW)
+            models[name].fit(X_train_scaled, y_train_GW)
 
-            pred_train_GW = models[name].predict(X_train_GW)
-            pred_valid_GW = models[name].predict(X_valid_GW)
-            pred_test_GW  = models[name].predict(X_test_GW )
+            pred_train_GW = models[name].predict(X_train_scaled)
+            pred_valid_GW = models[name].predict(X_valid_scaled)
+            pred_test_GW  = models[name].predict(X_test_scaled )
 
 
         series_pred_GW[name] = pd.Series(
@@ -326,42 +415,8 @@ def regression_and_forest(
 
 
     # most relevant features
-    if verbose >= 3 and {'LR', 'RF'} <= models.keys():
-
-        ridge = pd.Series(
-            models['LR'].coef_ * 100.,
-            index=feature_cols,
-            name="ridge_coef_pc"
-        ).astype(np.float32).round(2)
-
-        rf = pd.Series(
-            models['RF'].feature_importances_ * 100.,
-            index=feature_cols,
-            name="rf_importance_pc"
-        )
-
-        df_imp = pd.concat([ridge, rf], axis=1).astype(np.float32).round(2)
-
-        # Normalize for comparability
-        _source = df_imp["ridge_coef_pc"].abs()
-        df_imp["ridge_norm"] = (_source / _source.max())
-
-        _source = df_imp["rf_importance_pc"]
-        df_imp["rf_norm"]    = _source / _source.max()
-
-        # Overall relevance score
-        df_imp["score_pc"] = (100. * df_imp[["ridge_norm", "rf_norm"]])\
-            .mean(axis=1).astype(np.float32).round(2)
-
-        # Final ordering
-        df_imp = (
-            df_imp
-            .sort_values("score_pc", ascending=False)
-            .drop(columns=["ridge_norm", "rf_norm"])
-        )
-
-        print("\n[Model diagnostics] Top features (Ridge + RF):")
-        print(df_imp.astype(np.float32).round(2))  # .head(20)
+    if verbose >= -3 and {'LR', 'RF'} <= models.keys():
+        most_relevant_features(models['LR'], models['RF'], feature_cols)
 
 
-    return series_pred_GW, models #, losses_quantile_GW
+    return series_pred_GW, models, df, feature_cols

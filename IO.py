@@ -169,7 +169,7 @@ def load_temperature(path, weights,
 
     # Averages
     out["Tavg_degC"] = weighted_mean(Tavg)
-    # out["Tmin_degC"] = weighted_mean(Tmin)
+    out["Tmin_degC"] = weighted_mean(Tmin)
     out["Tmax_degC"] = weighted_mean(Tmax)
 
     # # Cold / hot tails
@@ -183,23 +183,37 @@ def load_temperature(path, weights,
 
 
     # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 2 °C
-    for heating_ref_degc in [15, 2]:
-        Tsat_local = Tavg.clip(upper=heating_ref_degc)
-        Tsat_local_3days = Tsat_local.rolling(3, min_periods=3).mean()
-        name = 'Tavg_sat'+str(heating_ref_degc)
-        out[name+'_degC']      = weighted_mean(Tsat_local)
-        out[name+'_3days_degC']= weighted_mean(Tsat_local_3days)
-
-        # fraction of the population heating
-        heating_on_r = (Tavg < heating_ref_degc).astype(int)
-        out[name+'_frac']      = heating_on_r.mul(weights, axis=1).sum(axis=1)
-        out[name+'_5days_frac']= out[name+'_frac'].rolling(5, min_periods=5).mean()
-
     # air-conditioning days: T_avg >= 22 °C
-    AC_REF_DEGC: int = 22
-    out['Tavg_sat'+str(AC_REF_DEGC)+'_degC'] = \
-        weighted_mean(Tavg.clip(lower=AC_REF_DEGC))
+    for (T, name_T) in zip([Tavg, Tmin, Tmax],  ['avg', 'min', 'max']):
+        for (Tref_degC, direction) in zip([15, 3, 22], ['low', 'low', 'high']):
+            if direction == 'low':  # heating
+                Tsat = T.clip(upper=Tref_degC)
+                _direction_str = "inf"
+            else:  # air-conditioning
+                Tsat = T.clip(lower=Tref_degC)
+                _direction_str = "sup"
 
+            name_Tsat = 'T'+name_T+'_'+_direction_str+'_' + str(Tref_degC) + 'degC'
+            out[name_Tsat] = weighted_mean(Tsat)
+
+            # fraction of the population heating/cooling
+            _frac_avg = (Tsat < Tref_degC)\
+                .astype(int).mul(weights, axis=1).sum(axis=1)
+            out['frac_'+name_Tsat]      = _frac_avg
+
+            for duration_days in ([3, 10] if Tref_degC <= 15 else [10]):
+                Tsat_SMA = Tsat.rolling(duration_days,
+                                        min_periods=int(duration_days*.8)).mean()
+                name_Tsat_SMA = name_Tsat + '_SMA_' + str(duration_days)+'days'
+
+                out[name_Tsat_SMA]= weighted_mean(Tsat_SMA)
+                out['frac_'+name_Tsat_SMA]= weighted_mean(Tsat_SMA).\
+                    rolling(duration_days, min_periods=int(duration_days*.8)).mean()
+
+
+
+    # drop temperatures that turn out to be useless in LR and RF
+    # out.drop(columns=['Tavg_sat2_degC', 'Tavg_sat22_degC'], inplace=True)
 
 
     # para-dates
@@ -309,7 +323,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
             if len(missing) > 20:
                 print("... (more omitted)")
         else:
-            print(f"✓ No missing timestamps at freq = {freq}")
+            print(f"No missing timestamps at freq = {freq}")
 
 
 def load_data(dict_fnames: dict, cache_fname: str,
@@ -425,12 +439,12 @@ def load_data(dict_fnames: dict, cache_fname: str,
 # ----------------------------------------------------------------------
 
 CANONICAL_HOLIDAYS = {
-    "winter": [
+    "February": [
         "vacances d'hiver",
         "vacances de fevrier",
         "hiver",
     ],
-    "spring": [
+    "easter": [
         "vacances de printemps",
         "vacances de paques",
         "printemps",
@@ -439,7 +453,7 @@ CANONICAL_HOLIDAYS = {
         "vacances d'ete",
         "ete",
     ],
-    "autumn": [
+    "all_saints": [
         "vacances de la toussaint",
         "toussaint",
     ],
@@ -514,6 +528,7 @@ def school_holidays(fname1: str='data/fr-en-calendrier-scolaire.csv',
 
     return holidays
 
+
 def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
             -> Tuple[pd.Series, tuple]:
     """
@@ -547,6 +562,11 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
 
         # Each zone contributes +1 to its holiday type
         out.loc[mask, f"holiday_{htype}"] += 1
+
+
+    # drop holidays that turn out to be useless in LR and RF
+    # out.drop(columns= ['holiday_all_saints','holiday_summer',
+    #                    'holiday_February',  'holiday_easter'], inplace=True)
 
     if verbose >= 3:
         print(out.head())
