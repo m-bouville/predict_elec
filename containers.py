@@ -113,7 +113,7 @@ class DataSplit:
                             pd.DataFrame(self.dict_preds_ML),
                             self.dict_preds_NN['q50']
                            ],  axis=1, join="inner").astype('float32')
-        _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['nn']
+        _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['NN']
         self.input_metamodel_LR = _input.drop(columns=['y'])
 
         if self.name == split_active:
@@ -128,13 +128,14 @@ class DataSplit:
 
     # plotting
     def plots_diagnostics(self,
-                          name_baseline:     str,
-                          name_meta:         str,
+                          names_baseline:    str,
+                          names_meta:        str,
                           temperature_full:  pd.Series,
                           num_steps_per_day: int):
-        plots.diagnostics(self.true_GW, {'q50': self.dict_preds_NN['q50']},
+        plots.diagnostics(self.name,
+                self.true_GW, {'q50': self.dict_preds_NN['q50']},
                 self.dict_preds_ML, self.dict_preds_meta,
-                name_baseline, name_meta, temperature_full.iloc[self.idx],
+                names_baseline, names_meta, temperature_full.iloc[self.idx],
                 num_steps_per_day)
 
 
@@ -190,16 +191,16 @@ class DatasetBundle:
 
         if split_active == 'train':
             (self.weights_meta_LR,
-            self.train.dict_preds_meta['meta_LR'],
-            self.valid.dict_preds_meta['meta_LR'],
-            self.test .dict_preds_meta['meta_LR'])= metamodel.weights_LR_metamodel(
+            self.train.dict_preds_meta['LR'],
+            self.valid.dict_preds_meta['LR'],
+            self.test .dict_preds_meta['LR'])= metamodel.weights_LR_metamodel(
                     self.train.input_metamodel_LR, self.train.    y_metamodel_LR,
                     self.valid.input_metamodel_LR, self.test .input_metamodel_LR,
                     min_weight=min_weight, verbose=verbose)
         else:  # on valid
             (self.weights_meta_LR,
-            self.valid.dict_preds_meta['meta_LR'],
-            self.test .dict_preds_meta['meta_LR'], _) =\
+            self.valid.dict_preds_meta['LR'],
+            self.test .dict_preds_meta['LR'], _) =\
                 metamodel.weights_LR_metamodel(
                     self.valid.input_metamodel_LR, self.valid.y_metamodel_LR,
                     self.test .input_metamodel_LR, None,
@@ -225,9 +226,9 @@ class DatasetBundle:
         self.weights_meta_NN = split_active
 
         if split_active == 'train':
-            (self.train.dict_preds_meta['meta_NN'],
-             self.valid.dict_preds_meta['meta_NN'],
-             self.test .dict_preds_meta['meta_NN']) = \
+            (self.train.dict_preds_meta['NN'],
+             self.valid.dict_preds_meta['NN'],
+             self.test .dict_preds_meta['NN']) = \
                 metamodel.metamodel_NN(
                     self.train, self.valid, self.test,
                     feature_cols, valid_length,
@@ -239,8 +240,8 @@ class DatasetBundle:
         else:  # on valid
             # the second argumennt is actual validation (learning rate scheduling)
             #   /!\ use train for that? or nothing?
-            (self.valid.dict_preds_meta['meta_NN'], _,
-             self.test .dict_preds_meta['meta_NN']) = \
+            (self.valid.dict_preds_meta['NN'], _,
+             self.test .dict_preds_meta['NN']) = \
                 metamodel.metamodel_NN(
                     self.valid, self.train, self.test,
                     feature_cols, valid_length,

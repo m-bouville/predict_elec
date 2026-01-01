@@ -542,10 +542,10 @@ if VERBOSE >= 1:
               f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
     print()
 
-name_baseline =  'gb' if 'gb' in data.test.dict_preds_ML else \
-                ('rf' if 'rf' in data.test.dict_preds_ML else \
-                ('lr' if 'lr' in data.test.dict_preds_ML else None))
-name_meta     = 'meta_LR'
+# name_baseline =  'GB' if 'GB' in data.test.dict_preds_ML else \
+#                 ('RF' if 'RF' in data.test.dict_preds_ML else \
+#                 ('LR' if 'LR' in data.test.dict_preds_ML else None))
+# name_meta     = 'meta_LR'
 
 
 rows = []
@@ -560,7 +560,7 @@ common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
 rows.append(utils.index_summary("true",  data.test.true_GW            .index, common_idx))
 rows.append(utils.index_summary("nn_q50",data.test.dict_preds_NN["q50"].index, common_idx))
 
-for _name in ['lr', 'rf', 'gb']:
+for _name in ['LR', 'RF', 'GB']:
     if _name in data.test.dict_preds_ML:  # keep only those we trained
         _baseline_test_idx = data.test.dict_preds_ML[_name].index
         common_idx = common_idx.intersection(_baseline_test_idx)
@@ -603,7 +603,7 @@ if VERBOSE >= 1:
     print("\nTraining metrics [GW]:")
     data.train.compare_models(unit="GW", verbose=VERBOSE)
 
-    print("\nvalidation metrics [GW]:")
+    print("\nValidation metrics [GW]:")
     data.valid.compare_models(unit="GW", verbose=VERBOSE)
 
     print("\nTesting metrics [GW]:")
@@ -611,11 +611,14 @@ if VERBOSE >= 1:
 
 
     print("Plotting test results...")
-if VERBOSE >= 2:
+if VERBOSE >= 3:
     data.train.plots_diagnostics(
-        name_baseline, name_meta, Tavg_full, NUM_STEPS_PER_DAY)
+        names_baseline={'LR', 'RF', 'GB'}, names_meta={'LR', 'NN'},
+        temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
 
-data.test.plots_diagnostics(name_baseline, name_meta, Tavg_full, NUM_STEPS_PER_DAY)
+data.test.plots_diagnostics(
+    names_baseline={'LR', 'RF', 'GB'}, names_meta={'LR', 'NN'},
+    temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
 
 
 

@@ -48,23 +48,27 @@ def df_features_calendar(dates: pd.DatetimeIndex,
         df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
     df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
 
+    for _days, _name in zip([1.75, 3.5, 7], ["1_75","3_5","7"]): # several per week
+        df['sin_'+_name+'day'] = np.sin(7/_days * 2*np.pi * df['dow_norm'])
     df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
-    # df['cos_1wk']  = np.cos(2*np.pi*df['dow_norm'])
-    # df['sin_12mo']  = np.sin(2*np.pi*df['doy_norm'])
-    df['cos_12mo'] = np.cos(2*np.pi*df['doy_norm'])
-    df['cos_6mo']  = np.cos(4*np.pi*df['doy_norm'])  # 2 periods per year
+
+    for _months in [3, 4, 6, 12]:  # several periods per year
+        df['cos_'+str(_months)+'mo'] = np.cos(12/_months * 2*np.pi * df['doy_norm'])
+
 
     # remove temporary variables
     df.drop(columns=['hour_norm', 'dow_norm', 'doy_norm'], inplace=True)
 
 
-    # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
-    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. for morning
-    df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
-    df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
-    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. for evening
-    df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
-    df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
+    # # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
+    # df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. for morning
+    # df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
+    # df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
+    # df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. for evening
+    # df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
+    # df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
+    df['is_weekend' ] = (((df.index.dayofweek == 4) & (df.index.hour >= 16)) |
+                          (df.index.dayofweek.isin([5, 6]))).astype(np.int16)
 
     df['is_evening' ] = (df.index.hour     >= 21).astype(np.int16)
         # there is a peak of coverage loss between about 9pm and midninght, UTC
@@ -190,7 +194,7 @@ def subset_predictions_day_ahead(
 
     # Baselines available
     baseline_names = [
-        nm for nm in ('lr', 'rf', 'oracle')
+        nm for nm in ('LR', 'RF', 'GB', 'oracle')
         if f"consumption_{nm}" in feature_cols
     ]
     offset_steps = pred_length - valid_length + 1
@@ -347,13 +351,13 @@ def compare_models(true_series:     pd.Series,
     df_eval = pd.DataFrame({"true": true_series})
 
     if dict_pred_series is not None:
-        df_eval['nn'] = dict_pred_series.get("q50")
-        names_models += ['nn']
+        df_eval['NN'] = dict_pred_series.get("q50")
+        names_models += ['NN']
 
     # baselines (LR, RF)
     list_baselines = []
     if dict_preds_ML is not None:
-        for _name in ['lr', 'rf', 'oracle']:
+        for _name in ['lr', 'rf', 'gb', 'oracle']:
             if _name in dict_preds_ML:  # keep only those we trained
                 if verbose >= 3:
                     print(f"{_name}:   {dict_preds_ML.get(_name).shape} "
@@ -400,10 +404,10 @@ def compare_models(true_series:     pd.Series,
         # plotting RMSE as a function of bias for the different models
         plt.figure(figsize=(10,6))
         for model in df_metrics.index:
-            plt.scatter(df_metrics.loc[model, 'bias'],
-                        df_metrics.loc[model, 'RMSE'], label=model)
-        plt.xlabel(subset + ' bias [GW]'); plt.xlim(-0.5, 1.75)
-        plt.ylabel(subset + ' RMSE [GW]'); plt.ylim( 0., max_RMSE) # plt.ylim(bottom=0.)
+            plt.scatter(abs(df_metrics.loc[model, 'bias']),
+                            df_metrics.loc[model, 'RMSE'], label=model, s=100)
+        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.5)
+        plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
         plt.show()
 

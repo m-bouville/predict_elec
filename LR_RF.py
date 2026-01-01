@@ -73,8 +73,8 @@ def _build_model_from_cfg(cfg: Dict[str, dict]):
 baseline_cfg = [
     {  # 'DEBUG'
     # "oracle": {1},  # (content is just a place-holder)
-    "lr": {"type": "ridge", "alpha": 1.0},
-    "rf": {
+    'LR': {"type": "ridge", "alpha": 1.0},
+    'RF': {
         "type":            "rf",
         "n_estimators":     50,     # was 300 -> fewer trees
         "max_depth":         6,     # shallower trees
@@ -83,17 +83,17 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
-    'gb': {
+    'GB': {
         "type":     "lgbm",
         "objective": "regression",
         "boosting_type": "gbdt",
-        "num_leaves": 16-1,             # Fewer leaves for simplicity
+        "num_leaves": 16-1,           # Fewer leaves for simplicity
         "max_depth": 4,               # Shallower trees
         "learning_rate": 0.1,         # Learning rate
-        "n_estimators": 50,          # Fewer trees for faster training
+        "n_estimators": 50,           # Fewer trees for faster training
         "min_child_samples": 20,      # Minimum samples per leaf
         "subsample": 0.8,             # Fraction of samples used for training each tree
-        "colsample_bytree": 0.8,       # Fraction of features used for training each tree
+        "colsample_bytree": 0.8,      # Fraction of features used for training each tree
         "reg_alpha": 0.1,             # L1 regularization
         "reg_lambda": 0.1,            # L2 regularization
         "random_state": 0,            # Seed for reproducibility
@@ -104,8 +104,8 @@ baseline_cfg = [
 
 {  # 'SMALL'
     # "oracle": {1},  # (content is just a place-holder)
-    "lr": {"type": "ridge", "alpha": 1.0},
-    "rf": {
+    'LR': {"type": "ridge", "alpha": 1.0},
+    'RF': {
         "type":            "rf",
         "n_estimators":    500,
         "max_depth":        20,
@@ -115,7 +115,7 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
-    "gb": {
+    'GB': {
         "type":          "lgbm",
         "objective":     "regression",
         "boosting_type": "gbdt",
@@ -135,8 +135,8 @@ baseline_cfg = [
 },
 
 {  # 'LARGE'
-    "lr": {"type": "ridge", "alpha": 1.0},
-    "rf": {
+    'LR': {"type": "ridge", "alpha": 1.0},
+    'RF': {
         "type":            "rf",
         "n_estimators":    400,
         "max_depth":        15,
@@ -146,7 +146,7 @@ baseline_cfg = [
         "random_state":      0,
         "n_jobs":            4
     },
-    "gb": {
+    'GB': {
         "type":     "lgbm",
         "objective": "regression",
         "boosting_type": "gbdt",
@@ -156,7 +156,7 @@ baseline_cfg = [
         "n_estimators": 500,          # More trees for a robust model
         "min_child_samples": 30,      # Minimum samples per leaf
         "subsample": 0.7,             # Fraction of samples used for training each tree
-        "colsample_bytree": 0.7,       # Fraction of features used for training each tree
+        "colsample_bytree": 0.7,      # Fraction of features used for training each tree
         "reg_alpha": 0.2,             # Stronger L1 regularization
         "reg_lambda": 0.2,            # Stronger L2 regularization
         "random_state": 0,            # Seed for reproducibility
@@ -166,8 +166,8 @@ baseline_cfg = [
 },
 
 {  # 'HUGE'
-    "lr": {"type": "ridge", "alpha": 1.0},
-    "rf": {
+    'LR': {"type": "ridge", "alpha": 1.0},
+    'RF': {
         "type":            "rf",
         "n_estimators":    500,
         "max_depth":        20,
@@ -255,8 +255,8 @@ def regression_and_forest(
     models_cfg : dict
         Example:
         {
-            "lr": {"type": "ridge", "alpha": 1.0},
-            "rf": {"type": "rf", "n_estimators": 300, "max_depth": 12}
+            'LR': {"type": "ridge", "alpha": 1.0},
+            'RF': {"type": "rf", "n_estimators": 300, "max_depth": 12}
         }
 
     Returns
@@ -299,7 +299,7 @@ def regression_and_forest(
     preds_GW          = dict()
     series_pred_GW    = pd.Series()
 
-    for name, cfg in models_cfg.items():  # name = e.g. 'lr', 'rf'
+    for name, cfg in models_cfg.items():  # name = e.g. 'LR', 'rf'
         preds_GW          [name] = pd.Series()
         # losses_quantile_GW[name] = dict()
 
@@ -326,16 +326,16 @@ def regression_and_forest(
 
 
     # most relevant features
-    if verbose >= 3 and {"lr", "rf"} <= models.keys():
+    if verbose >= 3 and {'LR', 'RF'} <= models.keys():
 
         ridge = pd.Series(
-            models["lr"].coef_ * 100.,
+            models['LR'].coef_ * 100.,
             index=feature_cols,
             name="ridge_coef_pc"
         ).astype(np.float32).round(2)
 
         rf = pd.Series(
-            models["rf"].feature_importances_ * 100.,
+            models['RF'].feature_importances_ * 100.,
             index=feature_cols,
             name="rf_importance_pc"
         )
