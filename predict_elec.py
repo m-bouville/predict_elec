@@ -141,95 +141,6 @@ def load_and_create_df(dict_fnames     : Dict[str, str],
 
 
 
-# ============================================================
-# CREATE BASELINES (LINERA REGREASSION, RANDOM FOREST, GRADIENT BOOSTING)
-# ============================================================
-
-def create_baselines(df          : pd.DataFrame,
-                     target_col  : str,
-                     feature_cols: List[str],
-                     verbose     : int = 0) \
-        -> Tuple[pd.DataFrame, str, List[str]]:
-
-    t_start = time.perf_counter()
-    rf_params = dict(
-            df            = df,
-            target_col    = target_col,
-            feature_cols  = feature_cols,
-            train_end     = TRAIN_SPLIT-n_valid,
-            val_end       = TRAIN_SPLIT,
-            models_cfg    = BASELINE_CFG,
-            verbose       = verbose
-        )
-
-    cache_id = {
-        "system_size":  SYSTEM_SIZE,
-        "target":       target_col,
-        "feature_cols": feature_cols,
-        'train_end':    TRAIN_SPLIT-n_valid,
-        'val_end':      TRAIN_SPLIT,
-        # "split": "v1",   # optional: data split identifier
-    }
-
-    baseline_features_GW, baseline_models, df, feature_cols = \
-        LR_RF.load_or_compute_regression_and_forest(
-            compute_kwargs  = rf_params,
-            cache_dir       = "cache",
-            cache_id_dict   = cache_id,
-            force_calculation=verbose >= 2,  #SYSTEM_SIZE == 'DEBUG',
-            verbose         = verbose
-        )
-    if verbose >= 1:
-        print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
-
-    # print(df)
-    # print(feature_cols)
-
-
-
-    # # reset random number generation because sklearn changed it
-    # np.   random.seed(SEED)
-    # torch.manual_seed(SEED)
-
-    # Add features
-    baseline_idx = dict()
-    for name, series in baseline_features_GW.items():
-        col_name     = f"consumption_{name}"
-        df[col_name] = series
-        feature_cols.append(col_name)
-        baseline_idx[name] = feature_cols.index(col_name)
-        # print(f"{name}:{series.shape}")
-        # print("  NA:", np.where(np.isnan(series))[0])
-    # feature_cols.append('consumption_regression')
-    # print(df['consumption_regression'].head(20))
-    if VERBOSE >= 3:
-        print(f"baseline_idx: {baseline_idx}")
-
-
-
-    # ---- Construct final matrix: target first, then features ----
-
-    if VERBOSE >= 2:
-        print(f"Using {len(feature_cols)} features: {feature_cols}")
-        print("Using target:  ", target_col)
-
-
-    # median = dict_pred_series_GW.get('q50')
-    # print(f"nn:    {median.shape} ({median.index.min()} -> {median.index.max()})")
-    # print("  NA:", median.index[median.isna()].tolist())
-    # missing_indices = train_dates.difference(median.index).tolist()
-    # date_str = [dt.strftime('%Y-%m-%d') for dt in missing_indices]
-    # # Count occurrences per date
-    # from collections import Counter
-    # date_counts = Counter(date_str)
-    # print(f"  {len(missing_indices)} missing indices "
-    #       f"({len(missing_indices)/NUM_STEPS_PER_DAY:.1f} days): "
-    #       # f"{[e.strftime('%Y-%m-%d %H:%M') for e in missing_indices[14*48:]]}")
-    #       f"{date_counts}")
-
-    return df, target_col, feature_cols
-
-
 
 
 # ============================================================
@@ -419,24 +330,35 @@ if __name__ == "__main__":
 
 
     # create baselines (linera regreassion, random forest, gradient boosting)
-    (df, target_col, feature_cols) = create_baselines(df, target_col, feature_cols)
+    (df, feature_cols) = LR_RF.create_baselines(df, target_col, feature_cols,
+        BASELINE_CFG, SYSTEM_SIZE, TRAIN_SPLIT, n_valid,
+        cache_dir = "cache",
+        force_calculation = VERBOSE >= 2,  #SYSTEM_SIZE == 'DEBUG',
+        verbose           = VERBOSE
+    )
+        # df now has new columns (baseline predictions)
+        #    but fewer columns overall (some features were removed by lasso)
 
 
+    # Create splits
     data, X_test_scaled = normalize_features(
         df, target_col, feature_cols,
         TRAIN_SPLIT, n_valid,
         NNTQ_PARAMETERS['input_length'],
-        NNTQ_PARAMETERS['pred_length' ],
+        NNTQ_PARAMETERS['pred_length'],
         NNTQ_PARAMETERS['features_in_future'],
-        NNTQ_PARAMETERS['batch_size'  ],
+        NNTQ_PARAMETERS['batch_size'],
         FORECAST_HOUR,
         VERBOSE)
 
+
+    # Create model
     NNTQ_model = containers.NeuralNet(**NNTQ_PARAMETERS,
                                       len_train_data= len(data.train),
                                       num_features  = data.num_features)
 
 
+    # loop for training and validation
     if VERBOSE >= 1:
         print("Starting training...")
 
@@ -547,11 +469,10 @@ if __name__ == "__main__":
     rows.append(utils.index_summary(
         "nn_q50",data.test.dict_preds_NN["q50"].index,common_idx))
 
-    for _name in ['LR', 'RF', 'GB']:
-        if _name in data.test.dict_preds_ML:  # keep only those we trained
-            _baseline_test_idx = data.test.dict_preds_ML[_name].index
-            common_idx = common_idx.intersection(_baseline_test_idx)
-            rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
+    for _name in data.test.dict_preds_ML:
+        _baseline_test_idx = data.test.dict_preds_ML[_name].index
+        common_idx = common_idx.intersection(_baseline_test_idx)
+        rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
 
     rows.append(utils.index_summary("common", common_idx, common_idx))
     if VERBOSE >= 3:
@@ -594,7 +515,7 @@ if __name__ == "__main__":
             feature_cols, NNTQ_model.valid_length, 'valid', meta_model, VERBOSE)
 
 
-    names_baseline= {'GB'}   # 'LR', 'RF',
+    names_baseline= {'GB', 'LR', 'RF'}
     names_meta    = {'LR', 'NN'}
 
     if VERBOSE >= 1:

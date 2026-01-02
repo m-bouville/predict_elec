@@ -48,7 +48,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
         df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
     df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
 
-    for _days, _name in zip([1.75, 3.5, 7], ["1_75","3_5","7"]): # several per week
+    for _days, _name in zip([1.75, 3.5, 7], ["1_75", "3_5", "7"]): # several per week
         df['sin_'+_name+'day'] = np.sin(7/_days * 2*np.pi * df['dow_norm'])
     df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
 
@@ -60,13 +60,13 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df.drop(columns=['hour_norm', 'dow_norm', 'doy_norm'], inplace=True)
 
 
-    # # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
-    # df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. for morning
-    # df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
-    # df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
-    # df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. for evening
-    # df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
-    # df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
+    # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
+    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. morning
+    df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
+    df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
+    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. evening
+    df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
+    df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
     df['is_weekend' ] = (((df.index.dayofweek == 4) & (df.index.hour >= 16)) |
                           (df.index.dayofweek.isin([5, 6]))).astype(np.int16)
 
@@ -76,7 +76,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_August'  ] = ((df.index.month    == 8) \
                     & (df.index.day >= 5) & (df.index.day <= 25)).astype(np.int16)
     # df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
-    #                     ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
+    #                  ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
             # redundent with school holiday
 
 
@@ -151,10 +151,11 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
 
 
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
-    dates_df["start"]= (dates_df["start"] + pd.Timedelta(hours=2)).dt.floor("D").dt.date
+    dates_df["start"]= (dates_df["start"] + pd.Timedelta(hours=2)) \
+        .dt.floor("D").dt.date
     dates_df["end"]  =  dates_df["end"  ].dt.date
 
-    # df['date'] = df.index.year - 2000 + df.index.dayofyear/365  # for long-term drift
+    df['date'] = df.index.year - 2000 + df.index.dayofyear/365  # for long-term drift
 
     if verbose >= 3:
         # print(df.head().to_string())
@@ -346,51 +347,45 @@ def compare_models(true_series:     pd.Series,
                 print(f"{_name}: {_pred_meta.shape}")
                 #" ({pred_meta.index.min()} -> {pred_meta.index.max()})")
 
-    names_models = []
 
     df_eval = pd.DataFrame({"true": true_series})
 
     if dict_pred_series is not None:
         df_eval['NN'] = dict_pred_series.get("q50")
-        names_models += ['NN']
 
     # baselines (LR, RF)
-    list_baselines = []
     if dict_preds_ML is not None:
-        for _name in ['lr', 'rf', 'gb', 'oracle']:
-            if _name in dict_preds_ML:  # keep only those we trained
-                if verbose >= 3:
-                    print(f"{_name}:   {dict_preds_ML.get(_name).shape} "
-                          f"({dict_preds_ML.get(_name).index.min()} -> "
-                          f"{dict_preds_ML.get(_name).index.max()})")
-                list_baselines.append(_name)
-                df_eval[_name] = dict_preds_ML.get(_name)
+        for (_name, _pred_ML) in dict_preds_ML.items():
+            if verbose >= 3:
+                print(f"{_name}:   {dict_preds_ML.get(_name).shape} "
+                      f"({dict_preds_ML.get(_name).index.min()} -> "
+                      f"{dict_preds_ML.get(_name).index.max()})")
+            df_eval[_name] = dict_preds_ML.get(_name)
         # print("list_baselines:", list_baselines)
 
     df_eval.dropna(inplace=True)
 
-    names_models += list_baselines
-
     # print("pred_meta:", pred_meta)
     if dict_preds_meta is not None:
         for (_name, _pred_meta) in dict_preds_meta.items():
-            df_eval[_name] = _pred_meta.reindex(df_eval.index)
-            names_models += [_name]
+            df_eval[f"meta {_name}"] = _pred_meta.reindex(df_eval.index)
 
-    y_true = df_eval["true"]
+    y_true = df_eval['true']
+
 
     rows = []
-    for name in names_models:
-        y_pred = df_eval[name]
-        res    = y_pred - y_true
+    for name in df_eval.columns:
+        if name != 'true':
+            y_pred = df_eval[name]
+            res    = y_pred - y_true
 
-        rows.append({
-            "model": name,
-            "bias":  res.mean(),
-            # "std":   res.std(),
-            "RMSE":  rmse(y_pred, y_true),
-            "MAE":   mae (y_pred, y_true),
-        })
+            rows.append({
+                "model": name,
+                "bias":  res.mean(),
+                # "std":   res.std(),
+                "RMSE":  rmse(y_pred, y_true),
+                "MAE":   mae (y_pred, y_true),
+            })
 
     df_metrics = (
         pd.DataFrame(rows)
@@ -406,12 +401,10 @@ def compare_models(true_series:     pd.Series,
         for model in df_metrics.index:
             plt.scatter(abs(df_metrics.loc[model, 'bias']),
                             df_metrics.loc[model, 'RMSE'], label=model, s=100)
-        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.5)
+        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.6)
         plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
         plt.show()
-
-
 
 
     if verbose >= 3:
@@ -427,7 +420,7 @@ def compare_models(true_series:     pd.Series,
                 .groupby("hour")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in names_models
+            for name in df_eval.columns if name != 'true'
         })
         print(df_rmse_hour.round(2))
 
@@ -456,7 +449,7 @@ def compare_models(true_series:     pd.Series,
                 .groupby("month")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in names_models
+            for name in df_eval.columns if name != 'true'
         })
         print(df_rmse_month.round(2))
 
@@ -550,6 +543,7 @@ def display_evolution(
 # -------------------------------------------------------
 
 def worst_days_by_loss(
+    split      : str,
     y_true     : np.ndarray,   # shape (T,)
     y_pred     : np.ndarray,   # shape (T,)
     temperature: np.ndarray,
@@ -561,49 +555,62 @@ def worst_days_by_loss(
     Returns DataFrame of worst days by mean loss
     """
 
-    diff    = y_true - y_pred
-    ts_loss = np.maximum(0.5 * diff, -0.5 * diff)  # 0.5: median
+    print(f"\nWorst days ({split})")
 
-    df_aligned = pd.concat([ts_loss, temperature, holidays], axis=1, join='inner')
-    df_aligned.columns = ['ts_loss', 'temperature', 'holidays']
+    diff   = y_pred - y_true
+    diff_pc= diff / y_pred * 100
+    # ts_loss = np.maximum(0.5 * diff, -0.5 * diff)  # 0.5: median
+
+    df_aligned =pd.concat([diff,  diff_pc,  temperature,  holidays],
+                          axis=1, join='inner').astype(np.float32)
+    df_aligned.columns = ['diff','diff_pc','temperature','holidays']
 
     df = pd.DataFrame({
-        'date':      df_aligned.index.normalize(),  # midnight per day
-        'loss':      df_aligned['ts_loss']    .astype(np.float32).round(2),
-        'Tavg_degC': df_aligned['temperature'].astype(np.float32),
-        'holiday':   df_aligned['holidays']   .astype(np.int16),
+        'date':     df_aligned.index.normalize(),  # midnight per day
+        'diff':     df_aligned['diff']       .astype(np.float32).round(2),
+        'abs_diff': df_aligned['diff'].abs() .astype(np.float32).round(2),
+        'diff_pc':  df_aligned['diff_pc']    .astype(np.float32).round(2),
+        'Tavg_degC':df_aligned['temperature'].astype(np.float32),
+        'holiday':  df_aligned['holidays']   .astype(np.int16),
     })
 
     daily = (
         df.groupby('date', as_index=False)
           .agg(
-              avg_loss = ('loss',      "mean"),
-              max_loss = ('loss',      "max" ),
-              ramp     = ("loss", lambda x: np.max(np.abs(np.diff(x)))
+              diff     = ('diff',      "mean"),
+              abs_diff = ('abs_diff',  "mean"),  # for sorting only
+              diff_pc  = ('diff_pc',   "mean"),
+              max_diff = ('abs_diff',  "max" ),
+              ramp     = ('diff', lambda x: np.max(np.abs(np.diff(x)))
                              if len(x) > 1 else np.nan),
-              n_points = ('loss',      "size"),
+              n_points = ('diff',      "size"),
               Tavg_degC= ('Tavg_degC', "mean"),
               holiday  = ('holiday',   "mean"),
           )
-          .sort_values('avg_loss', ascending=False)
+          .sort_values('abs_diff', ascending=False)
     )
 
     daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
 
-    daily['day_name' ] = daily['date'].dt.day_name()
-    daily['day'      ] = daily['date'].dt.day
-    daily['month'    ] = daily['date'].dt.month
-    daily['year'     ] = daily['date'].dt.year
+    daily['day_name'] = daily['date'].dt.day_name()
+    daily['day'     ] = daily['date'].dt.day
+    daily['month'   ] = daily['date'].dt.month
+    daily['year'    ] = daily['date'].dt.year
 
-    daily['avg_loss' ] = daily['avg_loss' ].astype(np.float32).round(2)
-    daily['max_loss' ] = daily['max_loss' ].astype(np.float32).round(2)
-    daily['ramp'     ] = daily['ramp'     ].astype(np.float32).round(2)
-    daily['Tavg_degC'] = daily['Tavg_degC'].astype(np.float32).round(1)
-    daily['holiday'  ] = daily['holiday'  ].astype(np.int16)
+    daily['diff'    ] = daily['diff'     ].astype(np.float32).round(1)
+    daily['diff_pc' ] = daily['diff_pc'  ].astype(np.float32).round(1)
+    daily['max_diff'] = daily['max_diff' ].astype(np.float32).round(1)
+    daily['ramp'    ] = daily['ramp'     ].astype(np.float32).round(2)
 
-    daily = daily[['day_name', 'day', 'month', 'year', 'holiday', 'Tavg_degC',
-                   'avg_loss', 'max_loss', 'ramp']].head(top_n)
+    daily['Tavg_degC']= daily['Tavg_degC'].astype(np.float32).round(1)
+    daily['holiday' ] = daily['holiday'  ].astype(np.int16)
 
+    daily = daily[['day_name', 'day', 'month', # 'year', 'holiday',
+                   'Tavg_degC', 'diff', 'diff_pc', # 'max_diff',
+                   'ramp']].head(top_n)
+
+
+    # plots
     plt.figure(figsize=(10, 6))
     sns.histplot(data=daily, x='month', bins=12, discrete=True)
     plt.title('Histogram of Months for Bad Days')
@@ -612,12 +619,12 @@ def worst_days_by_loss(
     plt.xticks(range(1, 13))
     plt.show()
 
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=daily, x='year', bins=len(daily['year'].unique()), discrete=True)
-    plt.title('Histogram of Years for Bad Days')
-    plt.xlabel('Year')
-    plt.ylabel('Frequency')
-    plt.show()
+    # plt.figure(figsize=(10, 6))
+    # sns.histplot(data=daily, x='year',bins=len(daily['year'].unique()),discrete=True)
+    # plt.title('Histogram of Years for Bad Days')
+    # plt.xlabel('Year')
+    # plt.ylabel('Frequency')
+    # plt.show()
 
     plt.figure(figsize=(10, 6))
     sns.histplot(data=daily, x='Tavg_degC', bins=20, kde=True)
@@ -633,8 +640,6 @@ def worst_days_by_loss(
     plt.ylabel('Frequency')
     plt.xticks(rotation=45)
     plt.show()
-
-
 
 
     return daily

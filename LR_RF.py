@@ -8,6 +8,7 @@
 
 
 import os, warnings
+import time
 
 import json
 import hashlib
@@ -73,115 +74,6 @@ def _build_model_from_cfg(cfg: Dict[str, dict]):
     raise ValueError(f"Unknown model type: {model_type}")
 
 
-baseline_cfg = [
-    {  # 'DEBUG'
-    # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 5 / 100.},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":     50,     # was 300 -> fewer trees
-        "max_depth":         6,     # shallower trees
-        "min_samples_leaf": 10,     # more regularization
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-    'GB': {
-        "type":     "lgbm",
-        "objective": "regression",
-        "boosting_type": "gbdt",
-        "num_leaves": 16-1,           # Fewer leaves for simplicity
-        "max_depth": 4,               # Shallower trees
-        "learning_rate": 0.1,         # Learning rate
-        "n_estimators": 50,           # Fewer trees for faster training
-        "min_child_samples": 20,      # Minimum samples per leaf
-        "subsample": 0.8,             # Fraction of samples used for training each tree
-        "colsample_bytree": 0.8,      # Fraction of features used for training each tree
-        "reg_alpha": 0.1,             # L1 regularization
-        "reg_lambda": 0.1,            # L2 regularization
-        "random_state": 0,            # Seed for reproducibility
-        "n_jobs": 4,                  # Number of parallel jobs
-        "verbose": -1                 # Suppress output
-    }
-},
-
-{  # 'SMALL'
-    # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 2 / 100., 'max_iter': 2_000},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":    500,
-        "max_depth":        20,
-        "min_samples_leaf": 15,
-        "min_samples_split":20,
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-    'GB': {
-        "type":          "lgbm",
-        "objective":     "regression",
-        "boosting_type": "gbdt",
-        "num_leaves":       32-1,     # Default number of leaves
-        "max_depth":         5,       # Moderate tree depth
-        "learning_rate":     0.05,    # Lower learning rate for stability
-        "n_estimators":    500,       # More trees for a robust model
-        "min_child_samples":20,       # Minimum samples per leaf
-        "subsample":         0.8,     # Fraction of samples used to train each tree
-        "colsample_bytree":  0.8,     # Fraction of features used for each tree
-        "reg_alpha":         0.1,     # L1 regularization
-        "reg_lambda":        0.1,     # L2 regularization
-        "random_state":      0,       # Seed for reproducibility
-        "n_jobs":            4,       # Number of parallel jobs
-        "verbose":          -1        # Suppress output
-    }
-},
-
-{  # 'LARGE'
-    'LR': {"type": "lasso", "alpha": 0.5 / 100., 'max_iter': 5_000},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":    400,
-        "max_depth":        15,
-        "min_samples_leaf": 20,
-        "min_samples_split":20,
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-    'GB': {
-        "type":     "lgbm",
-        "objective": "regression",
-        "boosting_type": "gbdt",
-        "num_leaves": 64-1,           # More leaves for complex patterns
-        "max_depth": 8,               # Deeper trees
-        "learning_rate": 0.02,        # Lower learning rate for precision
-        "n_estimators": 500,          # More trees for a robust model
-        "min_child_samples": 30,      # Minimum samples per leaf
-        "subsample": 0.7,             # Fraction of samples used to train each tree
-        "colsample_bytree": 0.7,      # Fraction of features used for each tree
-        "reg_alpha": 0.2,             # Stronger L1 regularization
-        "reg_lambda": 0.2,            # Stronger L2 regularization
-        "random_state": 0,            # Seed for reproducibility
-        "n_jobs": 4,                  # Number of parallel jobs
-        "verbose": -1                 # Suppress output
-    }
-},
-
-{  # 'HUGE'
-    'LR': {"type": "lasso", "alpha": 0.2 / 100., 'max_iter': 10_000},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":    500,
-        "max_depth":        20,
-        "min_samples_leaf": 20,
-        "min_samples_split":20,
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-}
-]
 
 def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
 
@@ -240,70 +132,130 @@ def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
 
 
 
+# ============================================================
+# CREATE BASELINES (LINERA REGREASSION, RANDOM FOREST, GRADIENT BOOSTING)
+# ============================================================
 
-def load_or_compute_regression_and_forest(
-    compute_kwargs,
-    cache_dir,
-    cache_id_dict,
-    force_calculation: bool = False,
-    verbose: int = 0,
-):
-    """
-    Generic cache wrapper for RandomForest predictions.
+def create_baselines(df            : pd.DataFrame,
+                     target_col    : str,
+                     feature_cols  : List[str],
+                     baseline_cfg,
+                     system_size,
+                     train_split   : float,
+                     n_valid       : int,
+                     cache_dir     : str = "cache",
+                     force_calculation:bool = False,
+                     verbose       : int = 0) \
+        -> Tuple[pd.DataFrame, str, List[str]]:
 
-    Parameters
-    ----------
-    compute_kwargs : dict
-        Keyword arguments passed to compute_fn
-    cache_dir : str
-        Directory to store cached predictions
-    cache_id_dict : dict
-        Dict describing data + RF config (used to build cache key)
-    verbose : int
-        Print cache hit/miss messages
-    """
-    os.makedirs(cache_dir, exist_ok=True)
+    t_start = time.perf_counter()
 
-    key_str    = json.dumps(cache_id_dict, sort_keys=True)
-    cache_key  = hashlib.md5(key_str.encode()).hexdigest()
-    cache_path = os.path.join(cache_dir, f"rf_preds_{cache_key}.pkl")
-
-    # either load...
-    if os.path.exists(cache_path) and \
-            'rf' in compute_kwargs['models_cfg'] and \
-            not force_calculation:
-        if verbose > 0:
-            print("Loaded RandomForest predictions from cache")
-        with open(cache_path, "rb") as f:
-            return pickle.load(f)
-
-    # ... or compute
-    if verbose > 0:
-        print("Training RandomForest (no cache found)")
-
-    out = regression_and_forest(**compute_kwargs)
-
-    # Save
-    with open(cache_path, "wb") as f:
-        pickle.dump(out, f)
-
-    if verbose > 0:
-        print("Saved RandomForest predictions to cache")
-
-    return out
+    # Dict describing data + RF config (used to build cache key)
+    cache_id = {
+        "system_size":  system_size,
+        "target":       target_col,
+        "feature_cols": feature_cols,  # TODO add AFTER lasso
+        'train_end':    train_split-n_valid,
+        'val_end':      train_split,
+        # "split": "v1",   # optional: data split identifier
+    }
 
 
 
-## older versions in: archives/utils-old-LR_RF-test_predictions.py
+    # Extract matrices
+    # -------------------------
+    X_GW: np.ndarray = df[feature_cols].values.astype(np.float32)
+    y_GW: np.ndarray = df[target_col  ].values.astype(np.float32)
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_GW)
+
+
+    # Define ranges
+    # -------------------------
+    train_idx: np.ndarray = np.arange(0,        train_split-n_valid)
+    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
+
+
+    # lasso pass to select features
+    # -------------------------
+    cfg = baseline_cfg['lasso'] # .copy()
+
+    model_lasso = Lasso(**cfg)
+    model_lasso.fit(X_train_scaled, y_train_GW)
+
+    coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
+    # print("coeffs_lasso:", coeffs_lasso)
+
+    # Features with non-zero coefficients
+    idx_coeffs   = np.where(coeffs_lasso != 0)[0]
+    feature_cols = list(np.array(feature_cols)[idx_coeffs])
+    feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
+    # print("feature_cols:", feature_cols)
+    if verbose >= 1:
+        print(f"lasso: {X_GW.shape[1]} -> {len(feature_cols)} features")
+
+    # print(df.shape, X_GW.shape)
+    X_GW = X_GW[:, idx_coeffs]
+    df   = df[[target_col] + feature_cols]
+    # print(df.shape, X_GW.shape)
+
+
+    # start over, with fewer features
+    # -------------------------
+
+    baseline_features_GW, baseline_models = \
+        regression_and_forest(
+            X               = X_GW,
+            y               = y_GW,
+            target_col      = target_col,
+            feature_cols    = feature_cols,
+            dates           = df.index,
+            train_end       = train_split-n_valid,
+            val_end         = train_split,
+            models_cfg      = baseline_cfg,
+            cache_dir       = cache_dir,
+            cache_id_dict   = cache_id,
+            force_calculation=force_calculation,
+            verbose         = verbose
+        )
+
+
+    if verbose >= 1:
+        print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
+
+    # Add features
+    baseline_idx = dict()
+    for name, series in baseline_features_GW.items():
+        col_name     = f"consumption_{name}"
+        df[col_name] = series
+        feature_cols.append(col_name)
+        baseline_idx[name] = feature_cols.index(col_name)
+    # print(df['consumption_regression'].head(20))
+    if verbose >= 3:
+        print(f"baseline_idx: {baseline_idx}")
+
+    if verbose >= 2:
+        print(f"Using {len(feature_cols)} features: {feature_cols}")
+        print("Using target:", target_col)
+
+    return df, feature_cols
+
+
+
 def regression_and_forest(
-    df:          pd.DataFrame,
-    # dates:       pd.DatetimeIndex,
-    target_col:  str,
-    feature_cols:List[str],
-    train_end:   int,   # end of training set (exclusive)
-    val_end:     int,     # end of validation set (exclusive)
-    models_cfg:  Dict[str, dict],
-    verbose:     int = 0
+    X:             np.ndarray,
+    y:             np.ndarray,
+    target_col:    str,
+    feature_cols:  List[str],
+    dates:         pd.DatetimeIndex,
+    train_end:     int,     # end of training set (exclusive)
+    val_end:       int,     # end of validation set (exclusive)
+    models_cfg:    Dict[str, dict],
+    cache_dir:     str,
+    cache_id_dict: dict,
+    force_calculation:bool = False,
+    verbose:       int = 0
 ) -> Tuple[Dict[str, pd.Series], object, pd.DataFrame, List[str]]:
     """
     Leakage-safe contemporaneous tabular baselines:
@@ -329,66 +281,22 @@ def regression_and_forest(
         said features (df.columns[1:])
     """
 
-    # sigma_y_GW = 11.7  # TODO do not do by hand
-
-    # Extract matrices
-    # -------------------------
-    X_GW: np.ndarray = df[feature_cols].values.astype(np.float32)
-    y_GW: np.ndarray = df[target_col  ].values.astype(np.float32)
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_GW)
-
-    N: int = len(df)
-    # print(f"indices: 0 < {train_end} < {val_end} < {N}")
-    assert 0 < train_end < val_end <= N, "Invalid split indices"
-
-    # Define ranges
-    # -------------------------
     train_idx: np.ndarray = np.arange(0,        train_end)
     valid_idx: np.ndarray = np.arange(train_end,val_end)
-    test_idx : np.ndarray = np.arange(val_end,  N)
+    test_idx : np.ndarray = np.arange(val_end,  len(X))
 
-    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
+    scaler   = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
+    X_train_scaled = X_scaled[train_idx];  y_train_GW = y[train_idx]
+    X_valid_scaled = X_scaled[valid_idx]
+    X_test_scaled  = X_scaled[ test_idx]
 
-    # lasso pass to select features
-    # -------------------------
-    cfg = models_cfg['LR'].copy()
-    cfg.pop('type')
+    models         = dict()
+    preds_GW       = dict()
+    series_pred_GW = dict()
 
-    model_lasso = Lasso(**cfg)
-    model_lasso.fit(X_train_scaled, y_train_GW)
-
-    coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
-    # print("coeffs_lasso:", coeffs_lasso)
-
-    # Features with non-zero coefficients
-    idx_coeffs   = np.where(coeffs_lasso != 0)[0]
-    # print("idx_coeffs:", idx_coeffs)
-    feature_cols = list(np.array(feature_cols)[idx_coeffs])
-    feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
-    # print("feature_cols:", feature_cols)
-
-    # print(df.shape, X_GW.shape)
-    X_GW = X_GW[:, idx_coeffs]
-    df   = df[[target_col] + feature_cols]
-    # print(df.shape, X_GW.shape)
-
-
-    # start over, with fewer features
-    # -------------------------
-    X_scaled = scaler.fit_transform(X_GW)
-
-    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
-    X_valid_scaled = X_scaled[valid_idx];  y_valid_GW = y_GW[valid_idx]
-    X_test_scaled  = X_scaled[ test_idx];  y_test_GW  = y_GW[ test_idx]
-
-    models            = dict()
-    preds_GW          = dict()
-    series_pred_GW    = pd.Series()
-
-    for name, cfg in models_cfg.items():  # name = e.g. 'LR', 'rf'
+    for name, cfg in models_cfg.items():  # name = e.g. 'LR', 'RF'
         preds_GW          [name] = pd.Series()
         # losses_quantile_GW[name] = dict()
 
@@ -396,10 +304,39 @@ def regression_and_forest(
             warnings.warn("Using the oracle!")
             models[name] = None # meaningless
             pred_train_GW = y_train_GW
-            pred_valid_GW = y_valid_GW
-            pred_test_GW  = y_test_GW
+            pred_valid_GW = y[valid_idx]
+            pred_test_GW  = y[ test_idx]
 
-        else:
+            continue
+
+        if name == 'lasso':
+            continue
+
+
+        # normal models
+        os.makedirs(cache_dir, exist_ok=True)
+
+        key_str    = json.dumps(cache_id_dict | cfg, sort_keys=True)
+        cache_key  = hashlib.md5(key_str.encode()).hexdigest()
+        cache_path = os.path.join(cache_dir, f"{name}_preds_{cache_key}.pkl")
+
+        # either load...
+        if os.path.exists(cache_path) and name != 'LR' and not force_calculation:
+            if verbose > 0:
+                print(f"Loading {name} predictions from: {cache_path}...")
+            with open(cache_path, "rb") as f:
+                ((pred_train_GW, pred_valid_GW,
+                  pred_test_GW, models[name])) = pickle.load(f)
+
+        else:  # ... or compute
+            if verbose > 0:
+                if name == 'LR':
+                    print(f"Training {name}...")
+                elif force_calculation:
+                    print(f"Training {name} (calculation forced)...")
+                else:
+                    print(f"Training {name} (no cache found)...")
+
             models[name] = _build_model_from_cfg(cfg)
             models[name].fit(X_train_scaled, y_train_GW)
 
@@ -407,16 +344,23 @@ def regression_and_forest(
             pred_valid_GW = models[name].predict(X_valid_scaled)
             pred_test_GW  = models[name].predict(X_test_scaled )
 
+            # Save
+            if name != 'LR':
+                with open(cache_path, "wb") as f:
+                    pickle.dump((pred_train_GW, pred_valid_GW,
+                                 pred_test_GW,  models[name]), f)
+                if verbose > 0:
+                    print(f"Saved {name} predictions to: {cache_path}")
 
         series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
-                            index = df.index)
+                            index = dates)
         # print(series_pred_GW[name])
 
 
     # most relevant features
-    if verbose >= -3 and {'LR', 'RF'} <= models.keys():
+    if verbose >= 3 and {'LR', 'RF'} <= models.keys():
         most_relevant_features(models['LR'], models['RF'], feature_cols)
 
 
-    return series_pred_GW, models, df, feature_cols
+    return series_pred_GW, models

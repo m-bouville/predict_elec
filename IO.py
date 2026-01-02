@@ -16,6 +16,7 @@ import architecture, plots
 
 
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
+# depth of historical data: 2012 to date (M-1)
 # Last processing
 #    December  2, 2025 4:28 PM (metadata)
 #    December  2, 2025 4:28 PM (data)
@@ -172,14 +173,14 @@ def load_temperature(path, weights,
     out["Tmin_degC"] = weighted_mean(Tmin)
     out["Tmax_degC"] = weighted_mean(Tmax)
 
-    # # Cold / hot tails
-    # quantile_pc: int = 25
-    # out['Tavg_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tavg,  quantile_pc/100.)
-    # out['Tmin_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tmin,  quantile_pc/100.)
-    # out['Tmax_q'+str(100-quantile_pc)+'_degC'] = weighted_q(Tmax,1-quantile_pc/100.)
+    # Cold / hot tails
+    quantile_pc: int = 25
+    out['Tavg_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tavg,  quantile_pc/100.)
+    out['Tmin_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tmin,  quantile_pc/100.)
+    out['Tmax_q'+str(100-quantile_pc)+'_degC'] = weighted_q(Tmax,1-quantile_pc/100.)
 
-    # # Regional spread (heterogeneity)
-    # out["T_spread_degC"] = Tavg.max(axis=1) - Tavg.min(axis=1)
+    # Regional spread (heterogeneity)
+    out["T_spread_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
 
 
     # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 2 °C
@@ -572,19 +573,6 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
         print(out.head())
 
     return out, [holidays["start_date"].min(), holidays["end_date"].max()]
-
-    # # old version: a single list for all holidays
-    # for _, row in holidays.iterrows():
-    #     start, end = row['start_date'], row['end_date']
-    #     # start, end, zone = row["start_date"], row["end_date"], row["zone"]
-
-    #     # Build mask: holidays are [start, end) in Paris official calendar
-    #     mask = (dates >= start) & (dates < end)
-
-    #     # Each zone adds one
-    #     zone_count[mask] += 1
-
-    # return zone_count, [holidays['start_date'].min(), holidays['end_date'].max()]
 
 
 

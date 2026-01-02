@@ -10,7 +10,7 @@ import  torch
 # from   typing import Dict  # List
 
 
-import LR_RF  # utils
+# import LR_RF  # utils
 
 
 
@@ -28,7 +28,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ============================================================
 
 SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE']
-IDX_SYSTEM_SIZE = {'DEBUG': 0, 'SMALL': 1, 'LARGE': 2}[SYSTEM_SIZE]
 
 SEED         =   0              # For reproducibility
 
@@ -51,7 +50,7 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'batch_size'       :  6,                   # Training batch size
+    'batch_size'       : 64,                   # Training batch size
 
     # optimizer
     'learning_rate'    :  7.5e-3,      # Optimizer learning rate
@@ -89,6 +88,8 @@ WARMUP_STEPS =[4000,2500,2250]
 PATIENCE     = [  5,   5,  10]  # DEBUG: patience > nb epochas
 
 # Pick correct value from list of possibilites
+IDX_SYSTEM_SIZE = {'DEBUG': 0, 'SMALL': 1, 'LARGE': 2}[SYSTEM_SIZE]
+
 NNTQ_PARAMETERS['epochs']       = EPOCHS        [IDX_SYSTEM_SIZE]
 NNTQ_PARAMETERS['model_dim']    = MODEL_DIM     [IDX_SYSTEM_SIZE]
 NNTQ_PARAMETERS['warmup_steps'] = WARMUP_STEPS  [IDX_SYSTEM_SIZE]
@@ -133,9 +134,6 @@ METAMODEL_NN_PARAMETERS['epochs']  = META_EPOCHS  [IDX_SYSTEM_SIZE]
 VERBOSE: int   = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 
-BASELINE_CFG = (LR_RF.baseline_cfg)[IDX_SYSTEM_SIZE]
-
-
 DICT_FNAMES = {
     "consumption": "data/consommation-quotidienne-brute.csv",
     "temperature": 'data/temperature-quotidienne-regionale.csv',
@@ -144,8 +142,6 @@ DICT_FNAMES = {
 CACHE_FNAME = "cache/merged_aligned.csv"
 
 
-
-# BASELINE_CFG = {}
 
 
 
@@ -166,3 +162,110 @@ assert all([_quantiles[i] + _quantiles[num_quantiles - i - 1] == 1
 assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the median"
     # the code assumes it is
 
+
+
+
+baseline_cfg = [
+    {  # 'DEBUG'
+    'lasso': {"alpha": 5 / 100.},
+    # "oracle": {1},  # (content is just a place-holder)
+    'LR': {"type": "lasso", "alpha": 5 / 100.},
+    'RF': {
+        "type":            "rf",
+        "n_estimators":     50,     # was 300 -> fewer trees
+        "max_depth":         6,     # shallower trees
+        "min_samples_leaf": 10,     # more regularization
+        "max_features":   "sqrt",
+        "random_state":      0,
+        "n_jobs":            4
+    },
+    'GB': {
+        "type":     "lgbm",
+        "objective": "regression",
+        "boosting_type": "gbdt",
+        "num_leaves": 16-1,           # Fewer leaves for simplicity
+        "max_depth": 4,               # Shallower trees
+        "learning_rate": 0.1,         # Learning rate
+        "n_estimators": 50,           # Fewer trees for faster training
+        "min_child_samples": 20,      # Minimum samples per leaf
+        "subsample": 0.8,             # Fraction of samples used for training each tree
+        "colsample_bytree": 0.8,      # Fraction of features used for training each tree
+        "reg_alpha": 0.1,             # L1 regularization
+        "reg_lambda": 0.1,            # L2 regularization
+        "random_state": 0,            # Seed for reproducibility
+        "n_jobs": 4,                  # Number of parallel jobs
+        "verbose": -1                 # Suppress output
+    }
+},
+
+{  # 'SMALL'
+    'lasso': {"alpha": 2 / 100., 'max_iter': 2_000},
+    # "oracle": {1},  # (content is just a place-holder)
+    'LR': {"type": "lasso", "alpha": 2 / 100., 'max_iter': 2_000},
+    'RF': {
+        "type":            "rf",
+        "n_estimators":    500,
+        "max_depth":        20,
+        "min_samples_leaf": 15,
+        "min_samples_split":20,
+        "max_features":   "sqrt",
+        "random_state":      0,
+        "n_jobs":            4
+    },
+    'GB': {
+        "type":          "lgbm",
+        "objective":     "regression",
+        "boosting_type": "gbdt",
+        "num_leaves":       32-1,     # Default number of leaves
+        "max_depth":         5,       # Moderate tree depth
+        "learning_rate":     0.05,    # Lower learning rate for stability
+        "n_estimators":    500,       # More trees for a robust model
+        "min_child_samples":20,       # Minimum samples per leaf
+        "subsample":         0.8,     # Fraction of samples used to train each tree
+        "colsample_bytree":  0.8,     # Fraction of features used for each tree
+        "reg_alpha":         0.1,     # L1 regularization
+        "reg_lambda":        0.1,     # L2 regularization
+        "random_state":      0,       # Seed for reproducibility
+        "n_jobs":            4,       # Number of parallel jobs
+        "verbose":          -1        # Suppress output
+    }
+},
+
+{  # 'LARGE'
+    'lasso': {"alpha": 0.5 / 100., 'max_iter': 5_000},
+    # "oracle": {1},  # (content is just a place-holder)
+    'LR': {"type": "lasso", "alpha": 0.5 / 100., 'max_iter': 5_000},
+    'RF': {
+        "type":            "rf",
+        "n_estimators":    400,
+        "max_depth":        15,
+        "min_samples_leaf": 20,
+        "min_samples_split":20,
+        "max_features":   "sqrt",
+        "random_state":      0,
+        "n_jobs":            4
+    },
+    'GB': {
+        "type":     "lgbm",
+        "objective": "regression",
+        "boosting_type": "gbdt",
+        "num_leaves": 64-1,           # More leaves for complex patterns
+        "max_depth": 8,               # Deeper trees
+        "learning_rate": 0.02,        # Lower learning rate for precision
+        "n_estimators": 500,          # More trees for a robust model
+        "min_child_samples": 30,      # Minimum samples per leaf
+        "subsample": 0.7,             # Fraction of samples used to train each tree
+        "colsample_bytree": 0.7,      # Fraction of features used for each tree
+        "reg_alpha": 0.2,             # Stronger L1 regularization
+        "reg_lambda": 0.2,            # Stronger L2 regularization
+        "random_state": 0,            # Seed for reproducibility
+        "n_jobs": 4,                  # Number of parallel jobs
+        "verbose": -1                 # Suppress output
+    }
+}
+]
+
+
+BASELINE_CFG = baseline_cfg[IDX_SYSTEM_SIZE]
+
+# BASELINE_CFG = {}
