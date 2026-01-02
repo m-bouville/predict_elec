@@ -218,7 +218,8 @@ def train_meta_model(
     batch_size  : int,
     patience    : int,
     factor      : float,
-    device
+    device,
+    verbose     : int = 0
 ):
     """
     Train meta-model on training data, validate on validation data.
@@ -337,7 +338,8 @@ def train_meta_model(
                     if df_valid is not None else None
 
         # Logging
-        if ((epoch + 1) % 2 == 0 or epoch == 0) and len(epoch_weights) > 0:
+        if ((epoch + 1) % 2 == 0 or epoch == 0) and len(epoch_weights) > 0 \
+                and verbose >= 1:
             all_w = torch.cat(epoch_weights, dim=0)
             avg_weights = all_w.mean(dim=0).numpy()
             print(f"Epoch{epoch+1:3n}/{epochs}: "
@@ -367,18 +369,10 @@ def metamodel_NN(data_train,
                  data_valid : Optional,
                  data_test  : Optional,
                 feature_cols: List[str],
-                #constants
                 valid_length: int,
-                dropout     : float,
-                num_cells   : int,
-                epochs      : int,
-                lr          : float,
-                weight_decay: float,
-                patience    : int,
-                factor      : float,
-                batch_size  : int,
-                device,
+                meta_model,
                 verbose     : int = 0):
+    device = meta_model.device
 
     _feature_cols = feature_cols + ['horizon']
 
@@ -414,13 +408,13 @@ def metamodel_NN(data_train,
         df_meta_train, df_meta_valid,
         feature_cols,
         valid_length,
-        dropout,
-        num_cells,
-        epochs,
-        lr, weight_decay,
-        batch_size,
-        patience, factor,
-        device
+        meta_model.dropout,
+        meta_model.num_cells,
+        meta_model.epochs,
+        meta_model.learning_rate, meta_model.weight_decay,
+        meta_model.batch_size,
+        meta_model.patience, meta_model.factor,
+        device, verbose
     )
 
     # Test
@@ -438,11 +432,11 @@ def metamodel_NN(data_train,
     pred_meta2_train = torch.zeros(len(df_meta_train), device=device)
 
     if data_valid is not None:
-        preds_valid, context_valid, y_valid = to_tensors(df_meta_valid, _feature_cols)
+        preds_valid, context_valid, y_valid= to_tensors(df_meta_valid, _feature_cols)
         pred_meta2_valid = torch.zeros(len(df_meta_valid), device=device)
 
     if data_test is not None:
-        preds_test,  context_test,  y_test =  to_tensors(df_meta_test,  _feature_cols)
+        preds_test,  context_test,  y_test = to_tensors(df_meta_test,  _feature_cols)
         pred_meta2_test  = torch.zeros(len(df_meta_test ), device=device)
 
 
@@ -497,7 +491,8 @@ def metamodel_NN(data_train,
         weights_test_all = torch.cat(weights_test_all, dim=0)  # (N_total, 3)
         avg_weights_test = weights_test_all.mean(dim=0)
         print(f"Average test weights: NN={avg_weights_test[0]*100:.1f}%,"
-              f"LR={avg_weights_test[1]*100:5.1f}%,RF={avg_weights_test[2]*100:5.1f}%,"
+              f"LR={avg_weights_test[1]*100:5.1f}%, "
+              f"RF={avg_weights_test[2]*100:5.1f}%, "
               f"GB={avg_weights_test[3]*100:5.1f}%")
 
 

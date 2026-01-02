@@ -1,5 +1,5 @@
 
-from   typing import Tuple, List, Dict, Sequence  #, Optional
+from   typing import Tuple, List, Dict  # Sequence  #, Optional
 # from   collections import defaultdict
 
 import torch
@@ -124,15 +124,15 @@ class DayAheadDataset(torch.utils.data.Dataset):
 # 3. make_X_and_y
 # ============================================================
 
-def make_X_and_y(series, dates,
+def make_X_and_y(array, dates,
                  train_split, n_valid,
                  feature_cols, target_col,
                  input_length:int, pred_length:int, features_in_future:bool,
                  batch_size:int, forecast_hour:int=12,
                  verbose: int = 0):
 
-    assert series.shape[0] == len(dates), \
-        f"series.shape ({series.shape}) != len(dates) ({len(dates)})"
+    assert array.shape[0] == len(dates), \
+        f"array.shape ({array.shape}) != len(dates) ({len(dates)})"
 
     # print(f"Forecast hour: {forecast_hour:2n}:00")
     # print(f"input_length:{input_length:4n} [half-hours]")
@@ -162,12 +162,12 @@ def make_X_and_y(series, dates,
     feature_idx = [col_to_idx[c] for c in feature_cols]
     target_idx  =  col_to_idx[target_col]
 
-    test_data   = series[idx_test]
+    test_data   = array[idx_test]
     X_test_GW   = test_data[:, feature_idx];  y_test_GW = test_data [:, target_idx]
 
 
     # 1. Extract X and y using names
-    X_GW = series[:, feature_idx];  y_GW = series[:, target_idx]
+    X_GW = array[:, feature_idx];  y_GW = array[:, target_idx]
 
     # 2. Fit two different scalers (on training set)
     scaler_x = StandardScaler()
@@ -260,15 +260,20 @@ def make_X_and_y(series, dates,
         # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
-    train = containers.DataSplit("train", idx_train, X_train_GW, y_train_GW, train_dates,
+    train = containers.DataSplit("train", idx_train, X_train_GW, y_train_GW,
+                                 train_dates, feature_cols,
                       loader=train_loader, dataset_scaled=train_dataset_scaled)
-    valid = containers.DataSplit("valid", idx_valid, X_valid_GW, y_valid_GW, valid_dates,
+    valid = containers.DataSplit("valid", idx_valid, X_valid_GW, y_valid_GW,
+                                 valid_dates, feature_cols,
                       loader=valid_loader, dataset_scaled=valid_dataset_scaled)
-    test  = containers.DataSplit("test",  idx_test,  X_test_GW,  y_test_GW,  test_dates,
+    test  = containers.DataSplit("test",  idx_test,  X_test_GW,  y_test_GW,
+                                 test_dates,  feature_cols,
                       loader=test_loader,  dataset_scaled=test_dataset_scaled)
 
     data = containers.DatasetBundle(train, valid, test,
-                                   scaler_y=scaler_y, X=X_GW, y=y_GW)
+                                   scaler_y=scaler_y, X=X_GW, y=y_GW,
+                                   num_features = len(feature_cols),
+                                   num_time_steps=array.shape[0])
 
     return data, test_scaled[:, feature_idx]
 
@@ -350,13 +355,13 @@ class TransformerEncoderLayerWithAttn(nn.Module):
 
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, patch_len, stride, in_channels, d_model):
+    def __init__(self, patch_length, stride, in_channels, d_model):
         super().__init__()
         self.proj = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=d_model,
-            kernel_size=patch_len,
-            stride=stride
+            in_channels = in_channels,
+            out_channels= d_model,
+            kernel_size = patch_length,
+            stride      = stride
         )
 
     def forward(self, x):
@@ -368,7 +373,7 @@ class PatchEmbedding(nn.Module):
 
 
 class TimeSeriesTransformer(nn.Module):
-    def __init__(self, num_features:int, dim_model:int, nhead:int, num_layers:int,
+    def __init__(self, num_features:int, dim_model:int, num_heads:int, num_layers:int,
                  input_length:int, patch_length:int, stride:int, pred_length:int,
                  features_in_future: bool,
                  dropout:float, ffn_mult:int, num_quantiles:int,
@@ -381,52 +386,55 @@ class TimeSeriesTransformer(nn.Module):
         self.num_quantiles  = num_quantiles
 
         self.input_length   = input_length
-        self.features_in_future=int(features_in_future)
         self.patch_length   = patch_length
         self.stride         = stride
-        self.num_patches    = ((input_length+self.features_in_future*pred_length) \
-                               - patch_length) // stride + 1
 
-        total_covered = ((input_length-patch_length) // stride) * stride + patch_length
-        self.pad_length  = input_length - total_covered
+        if input_length is not None:
+            self.features_in_future=int(features_in_future)
+            self.num_patches  = ((input_length+self.features_in_future*pred_length) \
+                                 - patch_length) // stride + 1
 
-        self.patch_embed = PatchEmbedding(patch_length, stride, num_features, dim_model)
-        self.layers = nn.ModuleList([
-            TransformerEncoderLayerWithAttn(dim_model, nhead, dropout, ffn_mult)
-            for _ in range(num_layers)
-        ])
+            total_covered = ((input_length-patch_length)//stride) * stride + patch_length
+            self.pad_length  = input_length - total_covered
+
+            self.patch_embed= PatchEmbedding(patch_length, stride, num_features, dim_model)
+            self.layers = nn.ModuleList([
+                TransformerEncoderLayerWithAttn(dim_model, num_heads, dropout, ffn_mult)
+                for _ in range(num_layers)
+            ])
 
         # blocks
         self.num_geo_blocks = num_geo_blocks
         self.geo_block_ratio= geo_block_ratio
 
-        self.block_sizes    = block_sizes(
-            self.num_patches,
-            self.num_geo_blocks,
-            self.geo_block_ratio
-        )
+        if num_geo_blocks is not None:
+            self.block_sizes    = block_sizes(
+                self.num_patches,
+                self.num_geo_blocks,
+                self.geo_block_ratio
+            )
 
-        assert sum(self.block_sizes) == self.num_patches
+            assert sum(self.block_sizes) == self.num_patches
 
-        self.block_ranges = []
-        idx = 0
-        for size in self.block_sizes:
-            self.block_ranges.append((idx, idx + size))
-            idx += size
+            self.block_ranges = []
+            idx = 0
+            for size in self.block_sizes:
+                self.block_ranges.append((idx, idx + size))
+                idx += size
 
-        self.block_weighting = BlockWeighting(
-            num_blocks = num_geo_blocks,
-            model_dim  = dim_model
-        )
+            self.block_weighting = BlockWeighting(
+                num_blocks = num_geo_blocks,
+                model_dim  = dim_model
+            )
 
 
-        # fc_out
-        self.fc_out = nn.Sequential(
-            nn.Linear(2 * dim_model, dim_model),
-            nn.GELU(),
-            nn.Linear(dim_model, pred_length * num_quantiles)
-        )
-        # self.fc_out = nn.Linear(dim_model, pred_len)
+            # fc_out
+            self.fc_out = nn.Sequential(
+                nn.Linear(2 * dim_model, dim_model),
+                nn.GELU(),
+                nn.Linear(dim_model, pred_length * num_quantiles)
+            )
+            # self.fc_out = nn.Linear(dim_model, pred_len)
 
 
 
@@ -620,21 +628,8 @@ class BlockWeighting(nn.Module):
 
 
 def subset_evolution_torch(
-        model         : nn.Module,
-        amp_scaler,
-        optimizer,
-        scheduler,
-        subset_loader : DataLoader,
-        subset_dates  : Sequence,
-        # constants
-        device        : torch.device,
-        valid_length  : int,
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-        lambda_median : float,
-        smoothing_cross:float
+        model_NN, #: containers.NeuralNet
+        subset_loader : DataLoader
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Returns:
@@ -643,6 +638,12 @@ def subset_evolution_torch(
         dict_losses_h: Dict[str, torch.tensor]
             components of the loss, each of shape (V, ): used for diagnostics
     """
+
+    model       = model_NN.model
+    amp_scaler  = model_NN.amp_scaler
+    device      = model_NN.device
+    valid_length= model_NN.valid_length
+
 
     model.train()
 
@@ -663,7 +664,7 @@ def subset_evolution_torch(
         #                for t in origin_unix.tolist()].to(device)
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
-        # optimizer.zero_grad(set_to_none=True)
+        # model_NN.optimizer).zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             pred_scaled_dev = model(X_scaled_dev)
@@ -673,13 +674,13 @@ def subset_evolution_torch(
             # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
             loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
                 pred_scaled_dev[:, -valid_length:, :],
-                y_scaled_dev   [:, -valid_length:, :], quantiles,
-                lambda_cross, lambda_coverage, lambda_deriv,
-                lambda_median, smoothing_cross)
+                y_scaled_dev   [:, -valid_length:, :], model_NN.quantiles,
+                **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
+                     'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross']})
 
         amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
-        amp_scaler.step(optimizer)
+        amp_scaler.step(model_NN.optimizer)
         amp_scaler.update()
 
         loss_quantile_scaled_h += loss_quantile_scaled_h_batch
@@ -688,10 +689,10 @@ def subset_evolution_torch(
 
         # loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
-    scheduler.step()
+    model_NN.scheduler.step()
 
-    loss_quantile_scaled_h /= len(subset_loader)
-    dict_losses_h = {key: value / len(subset_loader)
+    loss_quantile_scaled_h      /= len(subset_loader)
+    dict_losses_h = {key: value /  len(subset_loader)
                      for (key, value) in dict_losses_h.items()}
 
     return loss_quantile_scaled_h, dict_losses_h
@@ -699,18 +700,9 @@ def subset_evolution_torch(
 
 @torch.no_grad()
 def subset_evolution_numpy(
-        model         : nn.Module,
+        model_NN, #: containers.NeuralNet
         subset_loader : DataLoader,
-        subset_dates  : Sequence,
-        # constants
-        device        : torch.device,
-        valid_length  : int,
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-        lambda_median : float,
-        smoothing_cross:float
+
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Returns:
@@ -719,6 +711,12 @@ def subset_evolution_numpy(
         dict_losses_h: Dict[str, np.ndarray]
             components of the loss, each of shape (V, ): used for diagnostics
     """
+
+    model       = model_NN.model
+    device      = model_NN.device
+    valid_length= model_NN.valid_length
+
+
     model.eval()
 
     # Q = len(quantiles)
@@ -748,9 +746,10 @@ def subset_evolution_numpy(
         # loss
         loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_numpy(
             pred_scaled_cpu[:, -valid_length:],
-            y_scaled_cpu   [:, -valid_length:], quantiles,
-            lambda_cross, lambda_coverage, lambda_deriv,
-            lambda_median, smoothing_cross)
+            y_scaled_cpu   [:, -valid_length:],
+            **{_name: getattr(model_NN, _name) for _name in ['quantiles', \
+                 'lambda_cross', 'lambda_coverage', 'lambda_deriv', \
+                 'lambda_median', 'smoothing_cross']})
 
         # print("batch:\n", loss_quantile_scaled_h_batch.round(2))
 

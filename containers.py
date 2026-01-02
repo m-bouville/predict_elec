@@ -1,14 +1,16 @@
-from   dataclasses import dataclass, field
+from   dataclasses import dataclass, field, InitVar
 
-from   typing      import Dict, List, Tuple, Optional
+from   typing      import Dict, List, Tuple, Optional, Any
 
 import torch
+from   torch       import nn  #, optim
+# from   torch.optim.lr_scheduler import _LRScheduler
 
 import numpy  as np
 import pandas as pd
 
 
-import utils, metamodel, plots
+import architecture, utils, metamodel, plots
 
 
 @dataclass
@@ -71,6 +73,7 @@ class DataSplit:
                            num_steps_per_day:int,
                            top_n           : int) -> pd.DataFrame:
         return utils.worst_days_by_loss(
+            split       = self.name,
             y_true      = self.true_GW,
             y_pred      = self.dict_preds_NN['q50'],
             temperature = temperature_full.iloc[self.idx],
@@ -150,6 +153,9 @@ class DatasetBundle:
     X:      np.ndarray
     y:      np.ndarray
 
+    num_features  : int
+    num_time_steps: int
+
     scaler_y: object
     scaler_X: Optional[object] = None
 
@@ -186,8 +192,8 @@ class DatasetBundle:
 
         for (_split, _data_split) in self.items():
             _data_split.calculate_input_metamodel_LR(split_active=split_active)
-            print(_split, _data_split.input_metamodel_LR is not None,
-                          _data_split.    y_metamodel_LR is not None)
+            # print(_split, _data_split.input_metamodel_LR is not None,
+            #               _data_split.    y_metamodel_LR is not None)
 
         if split_active == 'train':
             (self.weights_meta_LR,
@@ -211,16 +217,7 @@ class DatasetBundle:
                     feature_cols: List[str],
                     valid_length: int,
                     split_active: str,
-                        # constants
-                    dropout     : float,
-                    num_cells   : int,
-                    epochs      : int,
-                    lr          : float,
-                    weight_decay: float,
-                    patience    : int,
-                    factor      : float,
-                    batch_size  : int,
-                    device,
+                    meta_model,
                     verbose     : int = 0) -> None:
         assert split_active in ['train', 'valid'], split_active
         self.weights_meta_NN = split_active
@@ -231,12 +228,7 @@ class DatasetBundle:
              self.test .dict_preds_meta['NN']) = \
                 metamodel.metamodel_NN(
                     self.train, self.valid, self.test,
-                    feature_cols, valid_length,
-                    #constants
-                    dropout, num_cells, epochs,
-                    lr, weight_decay,
-                    patience, factor,
-                    batch_size, device, verbose)
+                    feature_cols, valid_length, meta_model, verbose)
         else:  # on valid
             # the second argumennt is actual validation (learning rate scheduling)
             #   /!\ use train for that? or nothing?
@@ -244,11 +236,127 @@ class DatasetBundle:
              self.test .dict_preds_meta['NN']) = \
                 metamodel.metamodel_NN(
                     self.valid, self.train, self.test,
-                    feature_cols, valid_length,
-                    #constants
-                    dropout, num_cells, epochs,
-                    lr, weight_decay,
-                    patience, factor,
-                    batch_size, device, verbose)
+                    feature_cols, valid_length, meta_model, verbose)
 
 
+
+
+@dataclass
+class NeuralNet:
+
+    # minutes_per_step
+    # num_steps_per_day: int
+    device           : object
+
+    batch_size       : int
+    epochs           : int
+    patience         : int
+
+    # optimizer
+    learning_rate    : float
+    weight_decay     : float
+    dropout          : float
+    warmup_steps     : Optional[int]   = None
+
+    # rest of early stopping
+    min_delta        : Optional[float] = None
+    factor           : Optional[float] = None    # metamodel only
+
+    # architecture
+    model_dim        : Optional[int]   = None
+    num_layers       : Optional[int]   = None
+    num_heads        : Optional[int]   = None
+    ffn_size         : Optional[int]   = None
+    num_cells        : Optional[List[int]]=None  # metamodel only
+
+    # in steps of half-hours
+    input_length     : Optional[int]   = None
+    pred_length      : Optional[int]   = None
+    valid_length     : Optional[int]   = None
+    features_in_future:Optional[bool]  = None
+
+    #
+    patch_length     : Optional[int]   = None
+    stride           : Optional[int]   = None
+    num_patches      : Optional[int]   = None
+
+    # geometric blocks
+    num_geo_blocks   : Optional[int]   = None
+    geo_block_ratio  : Optional[float] = None
+
+    # quantile loss
+    quantiles        : Optional[List[float]]= None
+    lambda_cross     : Optional[float] = None
+    lambda_coverage  : Optional[float] = None
+    lambda_deriv     : Optional[float] = None
+    lambda_median    : Optional[float] = None
+    smoothing_cross  : Optional[float] = None
+
+
+    # will be created in __post_init__
+    model            : Optional[nn.Module]            = \
+                         field(default=None, init=False, repr=False, compare=False)
+    optimizer        : Optional[torch.optim.Optimizer]= \
+                         field(default=None, init=False, repr=False, compare=False)
+    scheduler        : Optional[torch.optim.lr_scheduler._LRScheduler] = \
+                         field(default=None, init=False, repr=False, compare=False)
+    early_stopping   : Optional[Dict[str, Any]]       = \
+                         field(default_factory=dict,     repr=False, compare=False)
+    amp_scaler       : Optional[torch.amp.GradScaler] = \
+                         field(default=None, init=False, repr=False, compare=False)
+
+    num_quantiles    : int         = field(default_factory=int)
+
+
+    # needed by __post_init__
+    len_train_data   : InitVar[Optional[int]]   = None
+    num_features     : InitVar[Optional[int]]   = None
+
+
+
+    def __post_init__(self,
+                      len_train_data: Optional[int] = None,
+                      num_features  : Optional[int] = None):
+        if self.quantiles is None : return   # metamodel
+
+        self.num_quantiles = len(self.quantiles) \
+            if self.quantiles is not None else None
+
+        self.model = architecture.TimeSeriesTransformer(
+                num_features, self.model_dim, self.num_heads, self.num_layers,
+                self.input_length, self.patch_length, self.stride, self.pred_length,
+                self.features_in_future,
+                self.dropout, self.ffn_size, self.num_quantiles,
+                self.num_geo_blocks, self.geo_block_ratio
+            ).to(self.device)
+        # model = torch.compile(model)  # Speedup: 1.5× to 2× on NVIDIA GPUs.
+
+        self.optimizer = torch.optim.Adam(self.model.parameters(),
+                                     lr          = self.learning_rate,
+                                     weight_decay= self.weight_decay)
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer,
+        #     mode    = "min",
+        #     factor  = SCHED_FACTOR,
+        #     patience= SCHED_PATIENCE,
+        #     min_lr  = 1e-6,
+        #     # verbose = VERBOSE >= 1
+        # )
+
+        def my_lr_warmup_cosine(step):
+            return architecture.lr_warmup_cosine(
+                step, self.warmup_steps, self.epochs, len_train_data)
+
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer,
+            lr_lambda=my_lr_warmup_cosine
+        )
+        # print("Initial LR:", scheduler.get_last_lr())
+
+
+        # Example usage in your training loop:
+        # Initialize early stopping
+        self.early_stopping = architecture.EarlyStopping(
+            patience=self.patience, min_delta=self.min_delta)
+
+        self.amp_scaler     = torch.amp.GradScaler(device=self.device)

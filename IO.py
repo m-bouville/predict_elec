@@ -6,7 +6,7 @@
 
 
 import os # , sys
-from   typing import Tuple  # List, Dict  #, Optional
+from   typing import List, Tuple  # Dict  #, Optional
 
 import numpy  as np
 import pandas as pd
@@ -594,9 +594,9 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
 # ----------------------------------------------------------------------
 
 def print_model_summary(
-    minutes_per_step,  num_steps_per_day,
-    num_time_steps,
-    feature_cols,
+    minutes_per_step,  num_steps_per_day: int,
+    num_time_steps: int,
+    feature_cols: List[str],
     input_length: int, pred_length: int, valid_length: int, features_in_future:bool,
     # incr_steps_test,
     batch_size: int,
@@ -607,7 +607,7 @@ def print_model_summary(
     warmup_steps: int,
     patience: int,  min_delta,
     model_dim: int,  num_layers: int,  num_heads: int, ffn_size: int,
-    patch_len: int,  stride: int,  num_patches: int,
+    patch_length: int,  stride: int,  num_patches: int,
     num_geo_blocks: int, geo_block_ratio: float,
     # quantile loss
     quantiles,
@@ -616,7 +616,7 @@ def print_model_summary(
     lambda_deriv:   float,
     lambda_median:  float,
     # metamodel
-    meta_epochs: int, meta_lr: float, meta_weight_decay: float, meta_batch_size: int,
+    meta_epochs: int, meta_learning_rate: float, meta_weight_decay: float, meta_batch_size: int,
     meta_dropout: float, meta_num_cells, meta_patience: int, meta_factor: float
 ):
     # number of sliding windows
@@ -668,7 +668,7 @@ def print_model_summary(
     print(f"{'FFN_SIZE'    :17s} ={ffn_size:5n}  (expansion factor)")
 
     print("\n===== PATCH EMBEDDING =====")
-    print(f"{'PATCH_LEN'   :17s} ={patch_len:5n} half-hours")
+    print(f"{'PATCH_LENGTH':17s} ={patch_length:5n} half-hours")
     print(f"{'STRIDE'      :17s} ={stride:5n} half-hours"
           f" => NUM_PATCHES ={num_patches:5n}")
 
@@ -678,7 +678,7 @@ def print_model_summary(
 
     print("\n===== METAMODEL =====")
     print(f"{'META_EPOCHS'  :17s} ={meta_epochs:5n}")
-    print(f"{'META_LR'      :17s} ={meta_lr*1e3:8.2f}e-3")
+    print(f"{'META_LR'      :17s} ={meta_learning_rate*1e3:8.2f}e-3")
     print(f"{'META_WEIGHT_DECAY':17s} ={meta_weight_decay*1e6:8.2f}e-6")
     print(f"{'META_BATCH_SIZE':17s} ={meta_batch_size:5n}")
     print(f"{'META_DROPOUT'  :17s} ={meta_dropout:8.2f}")
@@ -692,7 +692,7 @@ def print_model_summary(
     l = num_layers
     m = ffn_size
     p = num_patches
-    pl = patch_len
+    pl= patch_length
     f = len(feature_cols)
     h = pred_length
     n = max(1, num_samples)
