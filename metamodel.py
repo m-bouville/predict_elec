@@ -371,7 +371,8 @@ def metamodel_NN(data_train,
                  valid_length: int,
                  metamodel_nn_parameters: Dict[str, Any],
                  verbose     : int = 0) \
-        -> Tuple[pd.Series, Optional[pd.Series], Optional[pd.Series], list]:
+        -> Tuple[pd.Series, Optional[pd.Series], Optional[pd.Series],
+                 list, Optional[pd.Series]]:
 
     device = metamodel_nn_parameters['device']
 
@@ -487,9 +488,8 @@ def metamodel_NN(data_train,
 
 
     # Evaluate
-    if data_test is not None and verbose >= 1:
+    if data_test is not None:
         rmse_test = torch.sqrt(torch.mean((pred_meta_test - y_test.to(device))**2))
-        print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
 
         # Analyze learned weights
         df_weights_test  = pd.DataFrame(
@@ -498,12 +498,15 @@ def metamodel_NN(data_train,
         plots.data(df_weights_test * 100, xlabel="horizon",
                    ylabel="weights NN metamodel [%}")
         avg_weights_test = df_weights_test.mean(axis=0)
-            # (N_total, 4) ->
-        print(f"Average test weights: NN={avg_weights_test['NN']*100:.1f}%,"
-              f"LR={avg_weights_test['LR']*100:5.1f}%, "
-              f"RF={avg_weights_test['RF']*100:5.1f}%, "
-              f"GB={avg_weights_test['GB']*100:5.1f}%")
 
+        if verbose > 0:
+            print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
+            print(f"Average test weights: NN={avg_weights_test['NN']*100:.1f}%,"
+                  f"LR={avg_weights_test['LR']*100:5.1f}%, "
+                  f"RF={avg_weights_test['RF']*100:5.1f}%, "
+                  f"GB={avg_weights_test['GB']*100:5.1f}%")
+    else:
+        avg_weights_test = None
 
 
     return (pd.Series(pred_meta_train.cpu().numpy(), index=df_meta_train.index),
@@ -511,6 +514,7 @@ def metamodel_NN(data_train,
                 if data_valid is not None else None,
             pd.Series(pred_meta_test .cpu().numpy(), index=df_meta_test .index) \
                 if data_test  is not None else None,
-            meta_nets
+            meta_nets,
+            avg_weights_test
             )
 

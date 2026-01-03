@@ -7,10 +7,6 @@ __all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO',
 
 
 import  torch
-# from   typing import Dict  # List
-
-
-# import LR_RF  # utils
 
 
 
@@ -169,7 +165,7 @@ assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the media
 
 baseline_cfg = [
     {  # 'DEBUG'
-    'lasso': {"alpha": 5 / 100.},
+    'lasso': {"alpha": 5 / 100., 'max_iter': 1_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "lasso", "alpha": 5 / 100.},
     'RF': {

@@ -419,11 +419,12 @@ def load_data(dict_fnames: dict, cache_fname: str,
     merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
     merged.index.name = "datetime"
 
-    merged.to_csv(cache_fname)
+    if cache_fname is not None:
+        merged.to_csv(cache_fname)
 
-    if verbose >= 2:
-        print(f"Saved merged dataset to {cache_fname}")
-        print(merged.head())
+        if verbose >= 2:
+            print(f"Saved merged dataset to {cache_fname}")
+            print(merged.head())
 
     if verbose >= 3:
         plots.data(merged.drop(columns=['year', 'month', 'timeofday'])\

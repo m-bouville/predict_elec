@@ -330,8 +330,8 @@ def compare_models(true_series:     pd.Series,
                    verbose:  int   = 0) -> pd.DataFrame:
     # if verbose < 1: return  # this function does nothing if it cannot display
 
-    def rmse(a,b): return round(np.sqrt(np.mean((a-b)**2)),2)
-    def mae (a,b): return round(np.mean(np.abs  (a-b)),    2)
+    def rmse(a,b): return round(np.sqrt(np.mean((a-b)**2)),4)
+    def mae (a,b): return round(np.mean(np.abs  (a-b)),    4)
 
     # print("weights_meta:", weights_meta)
 
@@ -394,7 +394,7 @@ def compare_models(true_series:     pd.Series,
     )
 
     if verbose >= 1:
-        print(df_metrics.round(3))
+        print(df_metrics.round(2))
 
         # plotting RMSE as a function of bias for the different models
         plt.figure(figsize=(10,6))

@@ -16,7 +16,7 @@ import pandas as pd  # for types
 
 
 def data(df, xlabel=None, ylabel=None, title=None) -> None:
-    print(f"Plotting {title}..." if title is not None else "Plotting...")
+    # print(f"Plotting {title}..." if title is not None else "Plotting...")
     df.plot(figsize=(10,6))
     if xlabel is not None:  plt.xlabel(xlabel)
     if ylabel is not None:  plt.ylabel(ylabel)

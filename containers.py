@@ -124,12 +124,12 @@ class DataSplit:
             self.y_metamodel_LR = _input[['y']].squeeze()  #.to_numpy()
 
     # compare models
-    def compare_models(self, unit: str = "GW", verbose: int = 0):
+    def compare_models(self, unit: str = "GW", verbose: int = 0) -> pd.DataFrame:
         if verbose > 0:
             print(f"\n{self.name_display:10s} metrics [{unit}]:")
-        utils.compare_models(self.true_GW,      self.dict_preds_NN,
-                             self.dict_preds_ML,self.dict_preds_meta,
-                             subset=self.name, unit=unit, verbose=verbose)
+        return utils.compare_models( self.true_GW,      self.dict_preds_NN,
+                                     self.dict_preds_ML,self.dict_preds_meta,
+                                     subset=self.name, unit=unit, verbose=verbose)
 
 
     # plotting
@@ -228,12 +228,12 @@ class DatasetBundle:
                     metamodel_nn_parameters: Dict[str, Any],
                     verbose     : int = 0) -> None:
         assert split_active in ['train', 'valid'], split_active
-        self.weights_meta_NN = split_active
 
         if split_active == 'train':
             (self.train.dict_preds_meta['NN'],
              self.valid.dict_preds_meta['NN'],
-             self.test .dict_preds_meta['NN'], list_models) = \
+             self.test .dict_preds_meta['NN'],
+             list_models, self.avg_weights_meta_NN) = \
                 metamodel.metamodel_NN(
                     self.train, self.valid, self.test,
                     feature_cols, valid_length, metamodel_nn_parameters, verbose)
@@ -241,7 +241,8 @@ class DatasetBundle:
             # the second argumennt is actual validation (learning rate scheduling)
             #   /!\ use train for that? or nothing?
             (self.valid.dict_preds_meta['NN'], _,
-             self.test .dict_preds_meta['NN'], list_models) = \
+             self.test .dict_preds_meta['NN'],
+             list_models, self.avg_weights_meta_NN) = \
                 metamodel.metamodel_NN(
                     self.valid, self.train, self.test,
                     feature_cols, valid_length, metamodel_nn_parameters, verbose)
