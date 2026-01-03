@@ -27,9 +27,9 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE']
+SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE']
 
-VERBOSE: int = 0  # 2 if SYSTEM_SIZE == 'DEBUG' else 1
+VERBOSE: int = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 SEED         =   0              # For reproducibility
 

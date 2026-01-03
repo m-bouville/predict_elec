@@ -15,7 +15,8 @@ import architecture, utils, metamodel, plots
 
 @dataclass
 class DataSplit:
-    name: str                      # 'train' | 'valid' | 'test'
+    name:           str             # 'train'   | 'valid'     | 'test'
+    name_display:   str             # 'training'| 'validation'| 'testing'
 
     # Indices into the original series
     idx:            pd.Index | range
@@ -124,6 +125,8 @@ class DataSplit:
 
     # compare models
     def compare_models(self, unit: str = "GW", verbose: int = 0):
+        if verbose > 0:
+            print(f"\n{self.name_display:10s} metrics [{unit}]:")
         utils.compare_models(self.true_GW,      self.dict_preds_NN,
                              self.dict_preds_ML,self.dict_preds_meta,
                              subset=self.name, unit=unit, verbose=verbose)
@@ -153,8 +156,13 @@ class DatasetBundle:
     X:      np.ndarray
     y:      np.ndarray
 
+    # size of the input data
     num_features  : int
     num_time_steps: int
+
+    # time increment
+    minutes_per_step: int
+    num_steps_per_day: int
 
     scaler_y: object
     scaler_X: Optional[object] = None
@@ -244,8 +252,6 @@ class DatasetBundle:
 @dataclass
 class NeuralNet:
 
-    # minutes_per_step
-    # num_steps_per_day: int
     device           : object
 
     batch_size       : int

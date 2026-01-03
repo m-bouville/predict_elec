@@ -499,10 +499,10 @@ def metamodel_NN(data_train,
                    ylabel="weights NN metamodel [%}")
         avg_weights_test = df_weights_test.mean(axis=0)
             # (N_total, 4) ->
-        print(f"Average test weights: NN={avg_weights_test[0]*100:.1f}%,"
-              f"LR={avg_weights_test[1]*100:5.1f}%, "
-              f"RF={avg_weights_test[2]*100:5.1f}%, "
-              f"GB={avg_weights_test[3]*100:5.1f}%")
+        print(f"Average test weights: NN={avg_weights_test['NN']*100:.1f}%,"
+              f"LR={avg_weights_test['LR']*100:5.1f}%, "
+              f"RF={avg_weights_test['RF']*100:5.1f}%, "
+              f"GB={avg_weights_test['GB']*100:5.1f}%")
 
 
 

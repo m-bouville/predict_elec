@@ -126,7 +126,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
 def make_X_and_y(array, dates,
                  train_split, n_valid,
-                 feature_cols, target_col,
+                 feature_cols: List[str], target_col: str, minutes_per_step: int,
                  input_length:int, pred_length:int, features_in_future:bool,
                  batch_size:int, forecast_hour:int=12,
                  verbose: int = 0):
@@ -260,20 +260,26 @@ def make_X_and_y(array, dates,
         # origins = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()]
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
-    train = containers.DataSplit("train", idx_train, X_train_GW, y_train_GW,
-                                 train_dates, feature_cols,
-                      loader=train_loader, dataset_scaled=train_dataset_scaled)
-    valid = containers.DataSplit("valid", idx_valid, X_valid_GW, y_valid_GW,
-                                 valid_dates, feature_cols,
-                      loader=valid_loader, dataset_scaled=valid_dataset_scaled)
-    test  = containers.DataSplit("test",  idx_test,  X_test_GW,  y_test_GW,
-                                 test_dates,  feature_cols,
-                      loader=test_loader,  dataset_scaled=test_dataset_scaled)
+    train = containers.DataSplit("train", "training",
+                        idx_train, X_train_GW, y_train_GW,
+                        train_dates, feature_cols,
+                        loader=train_loader, dataset_scaled=train_dataset_scaled)
+    valid = containers.DataSplit("valid", "validation",
+                        idx_valid, X_valid_GW, y_valid_GW,
+                        valid_dates, feature_cols,
+                        loader=valid_loader, dataset_scaled=valid_dataset_scaled)
+    test  = containers.DataSplit("test",  "testing",
+                        idx_test,  X_test_GW,  y_test_GW,
+                        test_dates,  feature_cols,
+                        loader=test_loader,  dataset_scaled=test_dataset_scaled)
 
-    data = containers.DatasetBundle(train, valid, test,
-                                   scaler_y=scaler_y, X=X_GW, y=y_GW,
-                                   num_features = len(feature_cols),
-                                   num_time_steps=array.shape[0])
+    data = containers.DatasetBundle(
+            train, valid, test,
+            scaler_y=scaler_y, X=X_GW, y=y_GW,
+            minutes_per_step=minutes_per_step,
+            num_steps_per_day = int(round(24*60/minutes_per_step)),
+            num_features = len(feature_cols), num_time_steps=array.shape[0]
+        )
 
     return data, test_scaled[:, feature_idx]
 

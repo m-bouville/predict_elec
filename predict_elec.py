@@ -2,7 +2,7 @@ import gc
 # import sys
 import inspect
 
-from   typing import List, Tuple, Dict   #, Optional, Any
+from   typing import List, Tuple, Dict, Any   #, Optional
 
 # from datetime import datetime
 import time
@@ -14,12 +14,6 @@ import pandas as pd
 
 
 # from constants import * # annoying Spyder complains "may be defined in constants"
-from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
-           VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
-           VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
-           FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
-           NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
-           )
 
 import containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
@@ -84,7 +78,7 @@ def load_and_create_df(dict_fnames     : Dict[str, str],
 
     df_len_before = df.shape[0]
 
-    if VERBOSE >= 3:
+    if verbose >= 3:
         print("NA:", df[df.isna().any(axis=1)])
 
     # Remove every row containing any NA (no filling)
@@ -92,14 +86,14 @@ def load_and_create_df(dict_fnames     : Dict[str, str],
 
     # print start and end dates
     dates_df.loc["df"]= [df.index.min().date(), df.index.max().date()]
-    if VERBOSE >= 1:
+    if verbose >= 1:
         print(dates_df)
 
     drop = df_len_before - df.shape[0]
-    if VERBOSE >= 2:
+    if verbose >= 2:
         print(f"number of datetimes: {df_len_before} -> {df.shape[0]}, "
-              f"drop by {drop} (= {drop/NUM_STEPS_PER_DAY:.1f} days)")
-    if VERBOSE >= 3:
+              f"drop by {drop} (= {drop/num_steps_per_day:.1f} days)")
+    if verbose >= 3:
         print(f"df:  {df.shape} "
               f"({df.index.min()} -> {df.index.max()})")
         print("  NA:", df.index[df.isna().any(axis=1)].tolist())
@@ -112,34 +106,7 @@ def load_and_create_df(dict_fnames     : Dict[str, str],
     df = df.reset_index(drop=True)
 
 
-    num_time_steps = df.shape[0]
-
-
-
-    if VERBOSE >= 1:
-        # keep only arguments expected by `IO.print_model_summary`
-        valid_parameters = inspect.signature(IO.print_model_summary).parameters.keys()
-        filtered_parameters = {k: v for k, v in NNTQ_PARAMETERS.items()
-                                       if k in valid_parameters}
-        filtered_meta_parameters = {
-            'meta_'+k : v for k, v in METAMODEL_NN_PARAMETERS.items()
-                                       if 'meta_'+k in valid_parameters}
-
-        IO.print_model_summary(
-                minutes_per_step, num_steps_per_day,
-                num_time_steps, feature_cols,
-                **filtered_parameters, **filtered_meta_parameters
-        )
-
-
-    # correlation matrix for temperatures
-    # utils.temperature_correlation_matrix(df)
-
-    if VERBOSE >= 1:
-        print("Doing linear regression and random forest...")
-
     return df, target_col, feature_cols, dates, Tavg_full, holidays_full
-
 
 
 
@@ -151,8 +118,11 @@ def load_and_create_df(dict_fnames     : Dict[str, str],
 def normalize_features(df            : pd.DataFrame,
                        target_col    : str,
                        feature_cols  : List[str],
+                       minutes_per_step: int,
+                       dates         : pd.DatetimeIndex,
                        train_split   : float,
                        n_valid       : int,
+                       test_months   : int,
                        input_length  : int,
                        pred_length   : int,
                        features_in_future:bool,
@@ -166,7 +136,7 @@ def normalize_features(df            : pd.DataFrame,
         df[feature_cols].values.astype(np.float32)
     ])
 
-    if VERBOSE >= 3:
+    if verbose >= 3:
         print(f"array:{array.shape}")
         print("  NA:", np.where(np.isnan(array))[0])
 
@@ -175,12 +145,13 @@ def normalize_features(df            : pd.DataFrame,
 
 
 
-    if VERBOSE >= 1:
-        print(f"{len(array)/NUM_STEPS_PER_DAY/365.25:.1f} years of data, "
-              f"train: {TRAIN_SPLIT/NUM_STEPS_PER_DAY/365.25:.2f} yrs"
-              f" ({TRAIN_SPLIT_FRACTION*100:.1f}%), "
-              f"test: {test_months/NUM_STEPS_PER_DAY/365.25:.2f} yrs"
-              f" (switching  {dates[TRAIN_SPLIT].date()})")
+    if verbose >= 1:
+        num_steps_per_day = int(round(24*60/minutes_per_step))
+        print(f"{len(array)/num_steps_per_day/365.25:.1f} years of data, "
+              f"train: {train_split/num_steps_per_day/365.25:.2f} yrs"
+              # f" ({train_split_fraction*100:.1f}%), "
+              f"test: {test_months/num_steps_per_day/365.25:.2f} yrs"
+              f" (switching  {dates[train_split].date()})")
         print()
     assert input_length + 60 < test_months,\
         f"input_length ({input_length}) > test_months ({test_months}) - 60"
@@ -194,14 +165,14 @@ def normalize_features(df            : pd.DataFrame,
 
     data, X_test_scaled = architecture.make_X_and_y(
             array, dates, train_split, n_valid,
-            feature_cols, target_col,
+            feature_cols, target_col, minutes_per_step,
             input_length=input_length, pred_length=pred_length,
             features_in_future=features_in_future, batch_size=batch_size,
             forecast_hour=forecast_hour,
             verbose=verbose)
 
 
-    if VERBOSE >= 2:
+    if verbose >= 2:
         print(f"Train mean:{data.scaler_y.mean_ [0]:6.2f} GW")
         print(f"Train std :{data.scaler_y.scale_[0]:6.2f} GW")
         print(f"Valid mean:{data.valid.y_dev.mean():6.2f} GW")
@@ -221,12 +192,14 @@ def normalize_features(df            : pd.DataFrame,
 # TRAINING LOOP
 # ============================================================
 
-def training_loop(model         : containers.NeuralNet,
+def training_loop(data          : containers.DatasetBundle,
+                  NNTQ_model    : containers.NeuralNet,
+                  validate_every: int,
                   display_every : int,
                   plot_conv_every:int,
                   verbose       : int = 0):
 
-    num_epochs: int = NNTQ_PARAMETERS['epochs']
+    num_epochs: int = NNTQ_model.epochs
 
     t_epoch_loop_start = time.perf_counter()
 
@@ -241,7 +214,7 @@ def training_loop(model         : containers.NeuralNet,
         t_train_start = time.perf_counter()
 
         train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
-            architecture.subset_evolution_torch(model, data.train.loader)
+            architecture.subset_evolution_torch(NNTQ_model, data.train.loader)
 
         train_loss_quantile_h_scaled= \
             train_loss_quantile_h_scaled.detach().cpu().numpy()
@@ -254,11 +227,11 @@ def training_loop(model         : containers.NeuralNet,
 
 
         # validation
-        if ((epoch+1) % VALIDATE_EVERY == 0) | (epoch == 0):
+        if ((epoch+1) % validate_every == 0) | (epoch == 0):
 
             t_valid_start     = time.perf_counter()
             valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                architecture.subset_evolution_numpy(model, data.train.loader)
+                architecture.subset_evolution_numpy(NNTQ_model, data.train.loader)
 
             if verbose >= 2:
                 print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
@@ -272,10 +245,10 @@ def training_loop(model         : containers.NeuralNet,
                 valid_loss_quantile_h_scaled.mean(),
                 list_of_min_losses, list_of_lists,
                 num_epochs, display_every, plot_conv_every,
-                NNTQ_PARAMETERS['min_delta'], verbose)
+                NNTQ_model.min_delta, verbose)
 
         # plotting convergence
-        if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
+        if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
                 & (epoch < num_epochs-2) & verbose > 0:
             plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                               list_of_lists[2], list_of_lists[3],
@@ -283,7 +256,7 @@ def training_loop(model         : containers.NeuralNet,
 
         # Check for early stopping
         if NNTQ_model.early_stopping(valid_loss_quantile_h_scaled.mean()):
-            if VERBOSE >= 1:
+            if verbose > 0:
                 print(f"Early stopping triggered at epoch {epoch+1}.")
             break
 
@@ -293,18 +266,36 @@ def training_loop(model         : containers.NeuralNet,
             dict_valid_loss_quantile_h)
 
 
+def run_model(
+        # configuration bundles
+        baseline_cfg    : Dict[str, Dict[str, Any]],
+        NNTQ_parameters : Dict[str, Any],
+        metamodel_NN_parameters:Dict[str, Any],
+        dict_fnames     : Dict[str, str],
+        # statistics of the dataset
+        minutes_per_step: int,
+        train_split_fraction:float,
+        val_ratio       : float,
+        forecast_hour   : int,
+        seed            : int,
+        force_calc_baselines:bool,
+        # XXX_EVERY (in epochs)
+        validate_every  : int,
+        display_every   : int,
+        plot_conv_every : int,
+
+        cache_fname     : str = "cache",
+        verbose         : int  = 0
+        ):
+
+    np.   random.seed(seed)
+    torch.manual_seed(seed)
 
 
-if __name__ == "__main__":
-
-    np.   random.seed(SEED)
-    torch.manual_seed(SEED)
-
-
-    if VERBOSE >= 1:
+    if verbose > 0:
         print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
     if torch.cuda.is_available():
-        if VERBOSE >= 1:
+        if verbose > 0:
             print(f"GPU: {torch.cuda.get_device_name(0)}, "
                   f"CUDA version: {torch.version.cuda}, "
                   f"CUDNN version: {torch.backends.cudnn.version()}")
@@ -313,29 +304,54 @@ if __name__ == "__main__":
         gc.collect()
         torch.cuda.empty_cache()
         # print(torch.cuda.memory_summary())
-    elif VERBOSE >= 1:
+    elif verbose > 0:
         print("CUDA unavailable")
     print()
 
 
     # load data from csv and create pd.DataFrame
+    num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, target_col, feature_cols, dates, Tavg_full, holidays_full) = \
         load_and_create_df(
-            DICT_FNAMES, CACHE_FNAME, NNTQ_PARAMETERS['pred_length'],
-            NUM_STEPS_PER_DAY, MINUTES_PER_STEP, VERBOSE)
+            dict_fnames, cache_fname, NNTQ_parameters['pred_length'],
+            num_steps_per_day, minutes_per_step, verbose)
 
 
-    TRAIN_SPLIT = int(len(df) * TRAIN_SPLIT_FRACTION)
-    test_months = len(df)-TRAIN_SPLIT
-    n_valid     = int(TRAIN_SPLIT * VAL_RATIO)
+    num_time_steps = df.shape[0]
+
+    if verbose > 0:
+        # keep only arguments expected by `IO.print_model_summary`
+        valid_parameters = inspect.signature(IO.print_model_summary).parameters.keys()
+        filtered_parameters = {k: v for k, v in NNTQ_parameters.items()
+                                       if k in valid_parameters}
+        filtered_meta_parameters = {
+            'meta_'+k : v for k, v in metamodel_NN_parameters.items()
+                                       if 'meta_'+k in valid_parameters}
+
+        IO.print_model_summary(
+                minutes_per_step, num_steps_per_day,
+                num_time_steps, feature_cols,
+                **filtered_parameters, **filtered_meta_parameters
+        )
+
+        # correlation matrix for temperatures
+        # utils.temperature_correlation_matrix(df)
 
 
     # create baselines (linera regreassion, random forest, gradient boosting)
+    if verbose > 0:
+        print("Doing linear regression and random forest...")
+
+
+    train_split = int(len(df) * train_split_fraction)
+    test_months = len(df)-train_split
+    n_valid     = int(train_split * val_ratio)
+
     (df, feature_cols) = LR_RF.create_baselines(df, target_col, feature_cols,
-        BASELINE_CFG, SYSTEM_SIZE, TRAIN_SPLIT, n_valid,
+        baseline_cfg, train_split, n_valid,
         cache_dir = "cache",
-        force_calculation = VERBOSE >= 2,  #SYSTEM_SIZE == 'DEBUG',
-        verbose           = VERBOSE
+        force_calculation = force_calc_baselines,
+        verbose           = verbose
     )
         # df now has new columns (baseline predictions)
         #    but fewer columns overall (some features were removed by lasso)
@@ -343,40 +359,40 @@ if __name__ == "__main__":
 
     # Create splits
     data, X_test_scaled = normalize_features(
-        df, target_col, feature_cols,
-        TRAIN_SPLIT, n_valid,
-        NNTQ_PARAMETERS['input_length'],
-        NNTQ_PARAMETERS['pred_length'],
-        NNTQ_PARAMETERS['features_in_future'],
-        NNTQ_PARAMETERS['batch_size'],
-        FORECAST_HOUR,
-        VERBOSE)
+        df, target_col, feature_cols, minutes_per_step, dates,
+        train_split, n_valid, test_months,
+        NNTQ_parameters['input_length'],
+        NNTQ_parameters['pred_length'],
+        NNTQ_parameters['features_in_future'],
+        NNTQ_parameters['batch_size'],
+        forecast_hour,
+        verbose)
 
 
     # Create model
-    NNTQ_model = containers.NeuralNet(**NNTQ_PARAMETERS,
+    NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
                                       len_train_data= len(data.train),
                                       num_features  = data.num_features)
 
 
     # loop for training and validation
-    if VERBOSE >= 1:
+    if verbose >= 1:
         print("Starting training...")
 
     list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
-            dict_valid_loss_quantile_h = training_loop(
-                NNTQ_model, DISPLAY_EVERY, PLOT_CONV_EVERY, VERBOSE)
+            dict_valid_loss_quantile_h = training_loop(data,
+                NNTQ_model, validate_every, display_every, plot_conv_every, verbose)
 
 
 
     # plotting convergence for entire training
-    if VERBOSE > 0:
+    if verbose > 0:
         plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                                    list_of_lists[2], list_of_lists[3],
-                                   partial=False, verbose=VERBOSE)
+                                   partial=False, verbose=verbose)
 
         plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
-                               **dict_valid_loss_quantile_h), MINUTES_PER_STEP,
+                               **dict_valid_loss_quantile_h), minutes_per_step,
                                "validation loss")
 
 
@@ -384,13 +400,13 @@ if __name__ == "__main__":
     test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
        architecture.subset_evolution_numpy(NNTQ_model, data.test.loader)
 
-    if VERBOSE >= 3:
+    if verbose >= 3:
         print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
                                 **dict_test_loss_quantile_h)
                            ).round(2).to_string())
-    if VERBOSE > 0:
+    if verbose > 0:
         plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
-                                     **dict_test_loss_quantile_h), MINUTES_PER_STEP,
+                                     **dict_test_loss_quantile_h), minutes_per_step,
                                "test loss")
 
 
@@ -403,29 +419,29 @@ if __name__ == "__main__":
             input_length = NNTQ_model.input_length,
             pred_length  = NNTQ_model.pred_length,
             valid_length = NNTQ_model.valid_length,
-            minutes_per_step=MINUTES_PER_STEP,
+            minutes_per_step=minutes_per_step,
             quantiles    = NNTQ_model.quantiles
             )
 
     # metamodel LR
     data.calculate_metamodel_LR(
-        split_active='valid', min_weight=0.15, verbose=VERBOSE)
+        split_active='valid', min_weight=0.15, verbose=verbose)
 
-    if VERBOSE >= 1:
+    if verbose >= 1:
         print(f"weights_meta_LR [%]: "
           f"{ {k: round(v*100, 1) for k, v in data.weights_meta_LR.items()}}")
     t_metamodel_end = time.perf_counter()
-    if VERBOSE >= 2:
+    if verbose >= 2:
         print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
 
 
-    if VERBOSE >= 3:
+    if verbose >= 3:
         top_bad_days_train = data.train.worst_days_by_loss(
             temperature_full = Tavg_full,
             holidays_full    = holidays_full,
-            num_steps_per_day= NUM_STEPS_PER_DAY,
+            num_steps_per_day= num_steps_per_day,
             top_n            = 40,
         )
         print(top_bad_days_train.to_string())
@@ -437,16 +453,9 @@ if __name__ == "__main__":
     # TEST PREDICTIONS
     # ============================================================
 
-    if VERBOSE >= 1:
+    if verbose >= 0:
         print("\nStarting test ...")  #"(baseline: {name_baseline})...")
 
-    # print("true_test_GW:\n",      true_test_GW.head())
-    # print("dict_pred_test_GW:\n", {_name: _test.head() \
-    #                     for (_name, _test) in dict_pred_test_GW.items()})
-    # print("dict_baseline_test_GW:\n", {_name: _test.head() \
-    #                     for (_name, _test) in dict_baseline_test_GW.items()})
-
-    if VERBOSE >= 1:
         print("\nTesting quantiles")
         for tau in NNTQ_model.quantiles:
             key = f"q{int(100*tau)}"
@@ -457,39 +466,40 @@ if __name__ == "__main__":
         print()
 
 
-    rows = []
-    rows.append(utils.index_summary("test_dates", data.test.dates, None))
+    # rows = []
+    # rows.append(utils.index_summary("test_dates", data.test.dates, None))
 
-    rows.append({"series": "origin_times",
-            "start": data.test.origin_times[0].date(),
-            "end":   data.test.origin_times[1].date(),
-            "n": None, "n_common": None, "start_diff": None, "end_diff": None})
+    # rows.append({"series": "origin_times",
+    #         "start": data.test.origin_times[0].date(),
+    #         "end":   data.test.origin_times[1].date(),
+    #         "n": None, "n_common": None, "start_diff": None, "end_diff": None})
 
-    common_idx = data.test.true_GW.index
-    common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
-    rows.append(utils.index_summary(
-        "true",  data.test.true_GW             .index, common_idx))
-    rows.append(utils.index_summary(
-        "nn_q50",data.test.dict_preds_NN["q50"].index,common_idx))
+    # common_idx = data.test.true_GW.index
+    # common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
+    # rows.append(utils.index_summary(
+    #     "true",  data.test.true_GW             .index, common_idx))
+    # rows.append(utils.index_summary(
+    #     "nn_q50",data.test.dict_preds_NN["q50"].index,common_idx))
 
-    for _name in data.test.dict_preds_ML:
-        _baseline_test_idx = data.test.dict_preds_ML[_name].index
-        common_idx = common_idx.intersection(_baseline_test_idx)
-        rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
+    # for _name in data.test.dict_preds_ML:
+    #     _baseline_test_idx = data.test.dict_preds_ML[_name].index
+    #     common_idx = common_idx.intersection(_baseline_test_idx)
+    #     rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
 
-    rows.append(utils.index_summary("common", common_idx, common_idx))
-    if VERBOSE >= 3:
-        print(pd.DataFrame(rows).set_index("series"))
-        print()
+    # rows.append(utils.index_summary("common", common_idx, common_idx))
+    # if verbose >= 3:
+    #     print(pd.DataFrame(rows).set_index("series"))
+    #     print()
 
-    assert len(common_idx)>0, "No common timestamps between truth and predictions!"
+    # assert len(common_idx)>0, "No common timestamps between truth and predictions!"
 
+    # print(data.test.true_GW.index, common_idx)
 
-    true_test_GW = data.test.true_GW.loc[common_idx]
-    for k in data.test.dict_preds_NN:
-        data.test.dict_preds_NN[k] = data.test.dict_preds_NN[k].loc[common_idx]
-    for k in data.test.dict_preds_ML:
-        data.test.dict_preds_ML[k] = data.test.dict_preds_ML[k].loc[common_idx]
+    # true_test_GW = data.test.true_GW.loc[common_idx]
+    # for k in data.test.dict_preds_NN:
+    #     data.test.dict_preds_NN[k] = data.test.dict_preds_NN[k].loc[common_idx]
+    # for k in data.test.dict_preds_ML:
+    #     data.test.dict_preds_ML[k] = data.test.dict_preds_ML[k].loc[common_idx]
 
 
 
@@ -503,37 +513,34 @@ if __name__ == "__main__":
     # ============================================================
 
     data.calculate_metamodel_NN(feature_cols, NNTQ_model.valid_length, 'valid',
-                                METAMODEL_NN_PARAMETERS, VERBOSE)
+                                metamodel_NN_parameters, verbose)
 
 
     names_baseline= {'GB', 'LR', 'RF'}
     names_meta    = {'LR', 'NN'}
 
-    if VERBOSE > 0:
-        print("\nTraining metrics [GW]:")
-        data.train.compare_models(unit="GW", verbose=VERBOSE)
+    if verbose > 0:
+        # print("\nTraining metrics [GW]:")
+        data.train.compare_models(unit="GW", verbose=verbose)
 
-        print("\nValidation metrics [GW]:")
-        data.valid.compare_models(unit="GW", verbose=VERBOSE)
+        # print("\nValidation metrics [GW]:")
+        data.valid.compare_models(unit="GW", verbose=verbose)
 
-        print("\nTesting metrics [GW]:")
-        data.test .compare_models(unit="GW", verbose=VERBOSE)
+        # print("\nTesting metrics [GW]:")
+        data.test .compare_models(unit="GW", verbose=verbose)
 
 
         print("Plotting test results...")
-    if VERBOSE >= 3:
+    if verbose >= 3:
         data.train.plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
+            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day)
 
-    if VERBOSE > 0:
+    if verbose > 0:
         data.test.plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
+            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day)
 
-
-
-    if VERBOSE > 0:
         plots.quantiles(
             data.test.true_GW,
             data.test.dict_preds_NN,
@@ -542,7 +549,7 @@ if __name__ == "__main__":
             q_high= "q90",
             baseline_series=data.test.dict_preds_ML,
             title = "Electricity consumption forecast (NN quantiles), test",
-            dates = data.test.dates[-(8*NUM_STEPS_PER_DAY):]
+            dates = data.test.dates[-(8*num_steps_per_day):]
         )
 
 
@@ -559,3 +566,29 @@ if __name__ == "__main__":
         gc.collect()
         torch.cuda.empty_cache()
         # torch.cuda.synchronize()
+
+
+
+if __name__ == "__main__":
+    from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
+               VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
+               VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
+               FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
+               NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
+               )
+    run_model(baseline_cfg    = BASELINE_CFG,
+              NNTQ_parameters=NNTQ_PARAMETERS,
+              metamodel_NN_parameters=METAMODEL_NN_PARAMETERS,
+              dict_fnames     = DICT_FNAMES,
+              minutes_per_step= MINUTES_PER_STEP,
+              train_split_fraction=TRAIN_SPLIT_FRACTION,
+              val_ratio       = VAL_RATIO,
+              forecast_hour   = FORECAST_HOUR,
+              seed            = SEED,
+              force_calc_baselines=False,  #VERBOSE >= 2,  #SYSTEM_SIZE == 'DEBUG',
+              validate_every = VALIDATE_EVERY,
+              display_every   = DISPLAY_EVERY,
+              plot_conv_every = PLOT_CONV_EVERY,
+              cache_fname     = CACHE_FNAME,
+              verbose         = VERBOSE
+              )

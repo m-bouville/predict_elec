@@ -14,7 +14,7 @@ import json
 import hashlib
 import pickle
 
-from   typing import List, Tuple, Dict # Sequence, Optional
+from   typing import List, Tuple, Dict, Any # Sequence, Optional
 # from   collections import defaultdict
 
 
@@ -139,8 +139,7 @@ def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
 def create_baselines(df            : pd.DataFrame,
                      target_col    : str,
                      feature_cols  : List[str],
-                     baseline_cfg,
-                     system_size,
+                     baseline_cfg  : Dict[str, Dict[str, Any]],
                      train_split   : float,
                      n_valid       : int,
                      cache_dir     : str = "cache",
@@ -152,7 +151,6 @@ def create_baselines(df            : pd.DataFrame,
 
     # Dict describing data + RF config (used to build cache key)
     cache_id = {
-        "system_size":  system_size,
         "target":       target_col,
         "feature_cols": feature_cols,  # TODO add AFTER lasso
         'train_end':    train_split-n_valid,
