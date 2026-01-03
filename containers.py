@@ -217,7 +217,7 @@ class DatasetBundle:
                     feature_cols: List[str],
                     valid_length: int,
                     split_active: str,
-                    meta_model,
+                    metamodel_nn_parameters: Dict[str, Any],
                     verbose     : int = 0) -> None:
         assert split_active in ['train', 'valid'], split_active
         self.weights_meta_NN = split_active
@@ -225,18 +225,18 @@ class DatasetBundle:
         if split_active == 'train':
             (self.train.dict_preds_meta['NN'],
              self.valid.dict_preds_meta['NN'],
-             self.test .dict_preds_meta['NN']) = \
+             self.test .dict_preds_meta['NN'], list_models) = \
                 metamodel.metamodel_NN(
                     self.train, self.valid, self.test,
-                    feature_cols, valid_length, meta_model, verbose)
+                    feature_cols, valid_length, metamodel_nn_parameters, verbose)
         else:  # on valid
             # the second argumennt is actual validation (learning rate scheduling)
             #   /!\ use train for that? or nothing?
             (self.valid.dict_preds_meta['NN'], _,
-             self.test .dict_preds_meta['NN']) = \
+             self.test .dict_preds_meta['NN'], list_models) = \
                 metamodel.metamodel_NN(
                     self.valid, self.train, self.test,
-                    feature_cols, valid_length, meta_model, verbose)
+                    feature_cols, valid_length, metamodel_nn_parameters, verbose)
 
 
 

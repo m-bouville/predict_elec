@@ -46,6 +46,7 @@ import containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 # TODO preparation: in `predict_elec.py`
 #   - create functions
 #   - make main call these functions
+#   - no plotting if verbose == 0
 
 
 
@@ -499,20 +500,8 @@ if __name__ == "__main__":
     # NN metamodel
     # ============================================================
 
-    meta_model = containers.NeuralNet(
-        dropout     = METAMODEL_NN_PARAMETERS['dropout'],
-        num_cells   = METAMODEL_NN_PARAMETERS['num_cells'],
-        epochs      = METAMODEL_NN_PARAMETERS['epochs'],
-        learning_rate=METAMODEL_NN_PARAMETERS['learning_rate'],
-        weight_decay= METAMODEL_NN_PARAMETERS['weight_decay'],
-        patience    = METAMODEL_NN_PARAMETERS['patience'],
-        factor      = METAMODEL_NN_PARAMETERS['factor'],
-        batch_size  = METAMODEL_NN_PARAMETERS['batch_size'],
-        device      = NNTQ_model.device,
-    )
-
-    data.calculate_metamodel_NN(
-            feature_cols, NNTQ_model.valid_length, 'valid', meta_model, VERBOSE)
+    data.calculate_metamodel_NN(feature_cols, NNTQ_model.valid_length, 'valid',
+                                METAMODEL_NN_PARAMETERS, VERBOSE)
 
 
     names_baseline= {'GB', 'LR', 'RF'}

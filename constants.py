@@ -27,7 +27,9 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE']
+SYSTEM_SIZE  = 'DEBUG'          # in ['DEBUG', 'SMALL', 'LARGE']
+
+VERBOSE: int = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 SEED         =   0              # For reproducibility
 
@@ -50,7 +52,7 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'batch_size'       : 64,                   # Training batch size
+    'batch_size'       :  64,                   # Training batch size
 
     # optimizer
     'learning_rate'    :  7.5e-3,      # Optimizer learning rate
@@ -125,13 +127,13 @@ METAMODEL_NN_PARAMETERS: dict = {
     # early stopping
     'patience'         :   4,
     'factor'           :   0.7,
+
+    'device'           : DEVICE,
     }
 
 META_EPOCHS     = [  1, 12, 15]
 METAMODEL_NN_PARAMETERS['epochs']  = META_EPOCHS  [IDX_SYSTEM_SIZE]
 
-
-VERBOSE: int   = 2 if SYSTEM_SIZE == 'DEBUG' else 1
 
 
 DICT_FNAMES = {
