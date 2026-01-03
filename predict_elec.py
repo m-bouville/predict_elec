@@ -276,7 +276,7 @@ def training_loop(model         : containers.NeuralNet,
 
         # plotting convergence
         if ((epoch+1 == PLOT_CONV_EVERY) | ((epoch+1) % PLOT_CONV_EVERY == 0))\
-                & (epoch < num_epochs-2):
+                & (epoch < num_epochs-2) & verbose > 0:
             plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                               list_of_lists[2], list_of_lists[3],
                               partial=True, verbose=verbose)
@@ -370,13 +370,14 @@ if __name__ == "__main__":
 
 
     # plotting convergence for entire training
-    plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
-                               list_of_lists[2], list_of_lists[3],
-                               partial=False, verbose=VERBOSE)
+    if VERBOSE > 0:
+        plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
+                                   list_of_lists[2], list_of_lists[3],
+                                   partial=False, verbose=VERBOSE)
 
-    plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
-                           **dict_valid_loss_quantile_h), MINUTES_PER_STEP,
-                           "validation loss")
+        plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
+                               **dict_valid_loss_quantile_h), MINUTES_PER_STEP,
+                               "validation loss")
 
 
     # test loss
@@ -387,9 +388,10 @@ if __name__ == "__main__":
         print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
                                 **dict_test_loss_quantile_h)
                            ).round(2).to_string())
-    plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
-                                 **dict_test_loss_quantile_h), MINUTES_PER_STEP,
-                           "test loss")
+    if VERBOSE > 0:
+        plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
+                                     **dict_test_loss_quantile_h), MINUTES_PER_STEP,
+                               "test loss")
 
 
     t_metamodel_start = time.perf_counter()
@@ -507,7 +509,7 @@ if __name__ == "__main__":
     names_baseline= {'GB', 'LR', 'RF'}
     names_meta    = {'LR', 'NN'}
 
-    if VERBOSE >= 1:
+    if VERBOSE > 0:
         print("\nTraining metrics [GW]:")
         data.train.compare_models(unit="GW", verbose=VERBOSE)
 
@@ -524,22 +526,24 @@ if __name__ == "__main__":
             names_baseline = names_baseline, names_meta = names_meta,
             temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
 
-    data.test.plots_diagnostics(
-        names_baseline = names_baseline, names_meta = names_meta,
-        temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
+    if VERBOSE > 0:
+        data.test.plots_diagnostics(
+            names_baseline = names_baseline, names_meta = names_meta,
+            temperature_full=Tavg_full, num_steps_per_day=NUM_STEPS_PER_DAY)
 
 
 
-    plots.quantiles(
-        data.test.true_GW,
-        data.test.dict_preds_NN,
-        q_low = "q10",
-        q_med = "q50",
-        q_high= "q90",
-        baseline_series=data.test.dict_preds_ML,
-        title = "Electricity consumption forecast (NN quantiles), test",
-        dates = data.test.dates[-(8*NUM_STEPS_PER_DAY):]
-    )
+    if VERBOSE > 0:
+        plots.quantiles(
+            data.test.true_GW,
+            data.test.dict_preds_NN,
+            q_low = "q10",
+            q_med = "q50",
+            q_high= "q90",
+            baseline_series=data.test.dict_preds_ML,
+            title = "Electricity consumption forecast (NN quantiles), test",
+            dates = data.test.dates[-(8*NUM_STEPS_PER_DAY):]
+        )
 
 
     # final cleanup to free pinned memory and intermediate arrays

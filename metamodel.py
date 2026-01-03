@@ -338,16 +338,16 @@ def train_meta_model(
                     if df_valid is not None else None
 
         # Logging
-        if ((epoch + 1) % 2 == 0 or epoch == 0) and len(epoch_weights) > 0 \
-                and verbose >= 1:
+        if ((epoch + 1) % 2 == 0 or epoch == 0) and len(epoch_weights) > 0:
             all_w = torch.cat(epoch_weights, dim=0)
             avg_weights = all_w.mean(dim=0).numpy()
-            print(f"Epoch{epoch+1:3n}/{epochs}: "
-                  f"losses train{train_loss_avg:5.2f}, "
-                  f"valid{valid_loss_avg:5.2f}; "
-                  f"avg w: NN{avg_weights[0]*100:5.1f}%, "
-                  f"LR{avg_weights[1]*100:5.1f}%, RF{avg_weights[2]*100:5.1f}%, "
-                  f"GB{avg_weights[3]*100:5.1f}%")
+            if verbose > 0:
+                print(f"Epoch{epoch+1:3n}/{epochs}: "
+                      f"losses train{train_loss_avg:5.2f}, "
+                      f"valid{valid_loss_avg:5.2f}; "
+                      f"avg w: NN{avg_weights[0]*100:5.1f}%, "
+                      f"LR{avg_weights[1]*100:5.1f}%, RF{avg_weights[2]*100:5.1f}%, "
+                      f"GB{avg_weights[3]*100:5.1f}%")
 
         # Save best model
         if df_valid is not None:
