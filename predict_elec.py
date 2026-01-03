@@ -4,29 +4,16 @@
 import MC_search, run # containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
 
-# system dimensions
-# B = BATCH_SIZE
-# L = INPUT_LENGTH
-# H = prediction horizon  =  PRED_LENGTH
-# V = validation horizon  = VALID_LENGTH
-# Q = number of quantiles = len(quantiles)
-# F = number of features
-
 
 # BUG NNTQ misses whole days for no apparent reason
 # BUG bias => bad coverage of quantiles.
 # TODO make future T° noisy to mimic the uncertainty of forecasts
 # BUG RF and Boosting generalize poorly
 # TODO make the metamodel reduce the bias
-# [done] save RF and GB pickles separately
-# [done] use lasso with LR to select features, and use only these with other models
 # TODO have separate public holidays, as with the school holidays
 # BUG GB complains about pd vs. np
 # [in progress] MC hyperparameter search
-# [done] preparation: in `predict_elec.py`
-#   - [done] create functions
-#   - [done] make main call these functions
-#   - [done] no plotting if verbose == 0
+#   - TODO add parameters for lasso, LR, RF, GB
 
 
 
@@ -49,9 +36,7 @@ if __name__ == "__main__":
                 baseline_cfg    = BASELINE_CFG,
 
                 base_NNTQ_params= NNTQ_PARAMETERS,
-                NNTQ_modifiers  = MC_search.NNTQ_SEARCH,
                 base_meta_NN_params= METAMODEL_NN_PARAMETERS,
-                meta_NN_modifiers= MC_search.METAMODEL_SEARCH,
                 dict_fnames     = DICT_FNAMES,
 
                 # statistics of the dataset

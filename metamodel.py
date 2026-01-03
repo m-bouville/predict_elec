@@ -495,8 +495,9 @@ def metamodel_NN(data_train,
         df_weights_test  = pd.DataFrame(
                 weights_test_h, columns=["NN", "LR", "RF", "GB"])
 
-        plots.data(df_weights_test * 100, xlabel="horizon",
-                   ylabel="weights NN metamodel [%}")
+        if verbose > 0:
+            plots.data(df_weights_test * 100, xlabel="horizon",
+                       ylabel="weights NN metamodel [%}")
         avg_weights_test = df_weights_test.mean(axis=0)
 
         if verbose > 0:

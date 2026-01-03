@@ -51,9 +51,9 @@ NNTQ_PARAMETERS: dict = {
     'batch_size'       :  64,                   # Training batch size
 
     # optimizer
-    'learning_rate'    :  7.5e-3,      # Optimizer learning rate
+    'learning_rate'    : 12.e-3,      # Optimizer learning rate
     'weight_decay'     :  1.e-7,
-    'dropout'          :  0.05,
+    'dropout'          :  0.07,
 
     # early stopping
     'min_delta'        :   25 / 1000,
@@ -70,9 +70,9 @@ NNTQ_PARAMETERS: dict = {
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
     'lambda_cross'     : 1.,          # enforcing correct order of quantiles
     'lambda_coverage'  : 0.5,
-    'lambda_deriv'     : 0.1,         # derivative weight in loss function
-    'lambda_median'    : 0.5,
-    'smoothing_cross'  : 0.02,
+    'lambda_deriv'     : 0.15,         # derivative weight in loss function
+    'lambda_median'    : 0.6,
+    'smoothing_cross'  : 0.025,
 }
 
 
@@ -117,8 +117,8 @@ METAMODEL_NN_PARAMETERS: dict = {
 
     # optimizer
     'learning_rate'    :  5e-4,
-    'weight_decay'     :  1e-5,
-    'dropout'          :  0.05,
+    'weight_decay'     : 10e-6,
+    'dropout'          :  0.07,
 
     # early stopping
     'patience'         :   4,

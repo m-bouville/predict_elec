@@ -15,106 +15,24 @@ import run
 
 
 
-NNTQ_SEARCH = {
-    # batch size: powers of two near baseline
-    "batch_size": [32, 64, 96, 128],
 
-    # optimizer (log-scale)
-    "learning_rate": (0.3, 3.0),
-    "weight_decay":  (0.3, 3.0),
-
-    # regularization
-    "dropout":       (0.02, 0.12),
-
-    # quantile-loss weights (absolute ranges)
-    "lambda_cross":    (0.5, 2.0),
-    "lambda_coverage": (0.2, 1.0),
-    "lambda_deriv":    (0.0, 0.3),
-    "lambda_median":   (0.2, 1.0),
-    "smoothing_cross": (0.005, 0.05),
-
-    # multiplicative jitter around SYSTEM_SIZE baseline
-    "model_dim_scale":   [0.75, 1.0, 1.25],
-    "ffn_size_scale":    [0.75, 1.0, 1.25],
-
-    # discrete alternatives near baseline
-    "num_layers_delta":  [-1, 0, +1],
-    "num_heads_delta":   [-1, 0, +1],
-    "num_geo_blocks_delta": [-2, 0, +2],
-
-    # training dynamics
-    "epochs_scale":      [0.75, 1.0, 1.25],
-    "warmup_scale":      [0.7, 1.0, 1.3],
-    "patience_delta":    [-2, 0, +2],
-
-    # patch geometry (relative jitter)
-    # "patch_length_scale": (0.8, 1.25),
-    # "stride_ratio":       (0.4, 0.7),
-
-    # # quantiles: optional mild perturbation
-    # "quantiles": [
-    #     (0.1, 0.25, 0.5, 0.75, 0.9),
-    #     (0.05, 0.25, 0.5, 0.75, 0.95),
-    # ],
-}
-
-
-METAMODEL_SEARCH = {
-    # batch size: powers of two near baseline
-    "batch_size": [128, 256, 512],
-
-    # hidden cells: small structural jitter
-    "num_cells_scale": [0.75, 1.0, 1.25],
-
-    # optimizer (log-scale where appropriate)
-    "learning_rate":  (0.3, 3.0),    # multiplicative
-    "weight_decay":   (0.3, 3.0),
-    "dropout":        (0.02, 0.12),
-
-    # early stopping
-    "patience":       [3, 4, 5, 6],
-    "factor":         (0.6, 0.85),
-}
-
-
-
-def sample_NNTQ_parameters(
-        base_params: dict,
-        modifiers  : dict,
-    ) -> dict:
+def sample_NNTQ_parameters(base_params: dict) -> dict:
 
     p = copy.deepcopy(base_params)
 
-
-    p["epochs"] = max(
-        1,
-        int(base_params["epochs"] * random.choice(modifiers["epochs_scale"]))
-    )
-
-    # batch size
-    p["batch_size"] = random.choice(modifiers["batch_size"])
-
-    # optimizer (log-uniform)
-    p["learning_rate"] = base_params["learning_rate"] * (
-        10 ** random.uniform(
-            np.log10(modifiers["learning_rate"][0]),
-            np.log10(modifiers["learning_rate"][1]),
-        )
-    )
-    p["weight_decay"] = base_params["weight_decay"] * (
-        10 ** random.uniform(
-            np.log10(modifiers["weight_decay"][0]),
-            np.log10(modifiers["weight_decay"][1]),
-        )
-    )
-
-    # dropout
-    p["dropout"] = random.uniform(*modifiers["dropout"])
+    p["epochs"]      = int(random.uniform(20, 40))
+    p["batch_size"]  = random.choice([32, 64, 96, 128])
+    p["learning_rate"]=round(0.01 * 10**random.uniform(np.log10(0.3), np.log10( 3.)),4)
+    p["weight_decay"]= round(0.1e-6*10**random.uniform(np.log10(0.1), np.log10(10.)),8)
+    p["dropout"]     = round(random.uniform(0.02, 0.15), 2)
 
     # quantile loss weights
-    for k in ["lambda_cross", "lambda_coverage",
-              "lambda_deriv", "lambda_median", "smoothing_cross"]:
-        p[k] = random.uniform(*modifiers[k])
+    p["lambda_cross"]   = round(random.uniform(0.5,  2.0), 3)
+    p["lambda_coverage"]= round(random.uniform(0.2,  1.0), 2)
+    p["lambda_deriv"]   = round(random.uniform(0.0,  0.3), 4)
+    p["lambda_median"]  = round(random.uniform(0.2,  1.0), 3)
+    p["smoothing_cross"]= round(random.uniform(0.005,0.05),4)
+
 
     # # quantiles
     # p["quantiles"] = random.choice(modifiers["quantiles"])
@@ -129,47 +47,21 @@ def sample_NNTQ_parameters(
 
 
     # architecture
-    p["model_dim"] = max(
-        16,
-        int(base_params["model_dim"] * random.choice(modifiers["model_dim_scale"]))
-    )
-
-    p["ffn_size"] = max(
-        2,
-        int(base_params["ffn_size"] * random.choice(modifiers["ffn_size_scale"]))
-    )
-
-    p["num_layers"] = max(
-        1,
-        base_params["num_layers"] + random.choice(modifiers["num_layers_delta"])
-    )
-
-    p["num_heads"] = max(
-        1,
-        base_params["num_heads"]  + random.choice(modifiers["num_heads_delta"])
-    )
+    p["model_dim"]  = int(128 * random.choice([0.75, 1.0, 1.25]))
+    p["ffn_size"]   = random.choice([2, 3, 4, 5])
+    p["num_heads"]  = random.choice([2, 3, 4, 5])
+    p["num_layers"] = random.choice([1, 2, 3, 4])
 
     # enforce divisibility (Transformer constraint)
-    if p["model_dim"] % p["num_heads"] != 0:
+    if  p["model_dim"] % p["num_heads"] != 0:
         p["model_dim"] = p["num_heads"] * (p["model_dim"] // p["num_heads"])
 
-    p["num_geo_blocks"] = max(
-        1,
-        base_params["num_geo_blocks"] + random.choice(modifiers["num_geo_blocks_delta"])
-    )
-
+    p["num_geo_blocks"]= int(round(random.uniform(2,    8)))
 
     # early stopping
-    p["warmup_steps"] = max(
-        100,
-        int(base_params["warmup_steps"] * random.choice(modifiers["warmup_scale"]))
-    )
-
-    p["patience"] = max(
-        2,
-        base_params["patience"]  + random.choice(modifiers["patience_delta"])
-    )
-
+    p["warmup_steps"]  = int(round(random.uniform(1500, 4000), -2))
+    p["patience"]      = int(      random.uniform(4,    10))
+    p["min_delta"]     =     round(random.uniform(15e-3,30e-3), 5)
 
     # derived quantities
     p["num_patches"] = (
@@ -182,44 +74,23 @@ def sample_NNTQ_parameters(
 
 
 
-def sample_metamodel_NN_parameters(
-            base_params : dict,
-            modifiers   : dict
-        ) -> dict:
+def sample_metamodel_NN_parameters(base_params : dict) -> dict:
     p = copy.deepcopy(base_params)
 
-    # batch size
-    p["batch_size"] = random.choice(modifiers["batch_size"])
+    p["epochs"]      = int(random.uniform(8, 15))
+    p["batch_size"]  = random.choice([128, 192, 256, 384])
+    p["learning_rate"]=round(0.5e-3*10**random.uniform(np.log10(0.3),np.log10( 3.)),5)
+    p["weight_decay"]= round(10e-6 *10**random.uniform(np.log10(0.1),np.log10(10.)),7)
+    p["dropout"]     = round(random.uniform(0.05, 0.2), 2)
 
     # num_cells: scale but keep integers ≥ 4
-    scale = random.choice(modifiers["num_cells_scale"])
-    p["num_cells"] = [
-        max(4, int(c * scale))
-        for c in base_params["num_cells"]
-    ]
-
-    # learning rate (log-uniform around base)
-    p["learning_rate"] = base_params["learning_rate"] * (
-        10 ** random.uniform(
-            np.log10(modifiers["learning_rate"][0]),
-            np.log10(modifiers["learning_rate"][1]),
-        )
-    )
-
-    # weight decay (log-uniform around base)
-    p["weight_decay"] = base_params["weight_decay"] * (
-        10 ** random.uniform(
-            np.log10(modifiers["weight_decay"][0]),
-            np.log10(modifiers["weight_decay"][1]),
-        )
-    )
-
-    # dropout (absolute range)
-    p["dropout"]  = random.uniform(*modifiers["dropout"])
+    scales = [random.choice([0.75, 1.0, 1.25]),
+              random.choice([0.75, 1.0, 1.25])]
+    p["num_cells"] = [max(4, int(c * scales[i])) for i, c in enumerate([32, 16])]
 
     # early stopping
-    p["patience"] = random.choice (modifiers["patience"])
-    p["factor"]   = random.uniform(*modifiers["factor"])
+    p["patience"] =       random.choice ([3, 4, 5, 6])
+    p["factor"]   = round(random.uniform(0.6, 0.85), 3)
 
     return p
 
@@ -276,9 +147,7 @@ def run_Monte_Carlo_search(
             # configuration bundles
             baseline_cfg        : Dict[str, Dict[str, Any]],
             base_NNTQ_params    : Dict[str, Any],
-            NNTQ_modifiers      : Dict[str, Any],
             base_meta_NN_params : Dict[str, Any],
-            meta_NN_modifiers   : Dict[str, Any],
             dict_fnames         : Dict[str, str],
             # statistics of the dataset
             minutes_per_step    : int,
@@ -302,15 +171,9 @@ def run_Monte_Carlo_search(
         # print(f"Starting run {run_id} out of {num_runs}")
         # meta_cfg = sample_meta_params(base_meta_NN_params, rng)
 
-        NNTQ_parameters = sample_NNTQ_parameters(
-            base_params= base_NNTQ_params,
-            modifiers  = NNTQ_modifiers
-            )
+        NNTQ_parameters     = sample_NNTQ_parameters        (base_NNTQ_params)
 
-        metamodel_parameters = sample_metamodel_NN_parameters(
-            base_params= base_meta_NN_params,
-            modifiers  = meta_NN_modifiers
-            )
+        metamodel_parameters= sample_metamodel_NN_parameters(base_meta_NN_params)
 
         df_metrics, avg_weights_meta_NN, quantile_delta_coverage = run.run_model(
                   # configuration bundles
@@ -346,6 +209,13 @@ def run_Monte_Carlo_search(
 
         _baseline_cfg     = baseline_cfg   .copy()
         _NNTQ_parameters  = NNTQ_parameters.copy()
+
+        # learning_rate and weight_decay are so small
+        _NNTQ_parameters    ['learning_rate']= _NNTQ_parameters ['learning_rate'] * 1e6
+        metamodel_parameters['learning_rate']=metamodel_parameters['learning_rate']*1e6
+
+        _NNTQ_parameters    ['weight_decay']= _NNTQ_parameters ['weight_decay'] * 1e6
+        metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
 
         # flatten sequences
         _dict_quantiles = expand_sequence(name="quantiles",

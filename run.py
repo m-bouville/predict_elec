@@ -15,6 +15,15 @@ import pandas as pd
 import containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
 
+# system dimensions
+# B = BATCH_SIZE
+# L = INPUT_LENGTH
+# H = prediction horizon  =  PRED_LENGTH
+# V = validation horizon  = VALID_LENGTH
+# Q = number of quantiles = len(quantiles)
+# F = number of features
+
+
 
 # ============================================================
 # LOAD DATA FROM CSV AND CREATE DATAFRAME
