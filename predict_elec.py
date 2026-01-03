@@ -231,7 +231,7 @@ def training_loop(data          : containers.DatasetBundle,
 
             t_valid_start     = time.perf_counter()
             valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                architecture.subset_evolution_numpy(NNTQ_model, data.train.loader)
+                architecture.subset_evolution_numpy(NNTQ_model, data.valid.loader)
 
             if verbose >= 2:
                 print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")

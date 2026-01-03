@@ -159,7 +159,6 @@ def create_baselines(df            : pd.DataFrame,
     }
 
 
-
     # Extract matrices
     # -------------------------
     X_GW: np.ndarray = df[feature_cols].values.astype(np.float32)
@@ -195,7 +194,7 @@ def create_baselines(df            : pd.DataFrame,
 
     # print(df.shape, X_GW.shape)
     X_GW = X_GW[:, idx_coeffs]
-    df   = df[[target_col] + feature_cols]
+    _df  = df[[target_col] + feature_cols].copy()
     # print(df.shape, X_GW.shape)
 
 
@@ -208,7 +207,7 @@ def create_baselines(df            : pd.DataFrame,
             y               = y_GW,
             target_col      = target_col,
             feature_cols    = feature_cols,
-            dates           = df.index,
+            dates           = _df.index,
             train_end       = train_split-n_valid,
             val_end         = train_split,
             models_cfg      = baseline_cfg,
@@ -225,11 +224,12 @@ def create_baselines(df            : pd.DataFrame,
     # Add features
     baseline_idx = dict()
     for name, series in baseline_features_GW.items():
+        assert len(series) == _df.shape[0], (len(series), _df.shape)
         col_name     = f"consumption_{name}"
-        df[col_name] = series
+        _df[col_name] = series
         feature_cols.append(col_name)
         baseline_idx[name] = feature_cols.index(col_name)
-    # print(df['consumption_regression'].head(20))
+    # print(_df['consumption_regression'].head(20))
     if verbose >= 3:
         print(f"baseline_idx: {baseline_idx}")
 
@@ -237,7 +237,7 @@ def create_baselines(df            : pd.DataFrame,
         print(f"Using {len(feature_cols)} features: {feature_cols}")
         print("Using target:", target_col)
 
-    return df, feature_cols
+    return _df, feature_cols
 
 
 
