@@ -29,24 +29,23 @@ if __name__ == "__main__":
 
     if num_runs > 1:   # search for hyperparameters
         MC_search.run_Monte_Carlo_search(
-                num_runs        = num_runs,
-                csv_path        = "MC_results.csv",
+                num_runs            = num_runs,
+                csv_path            = "MC_results.csv",
 
                 # configuration bundles
-                baseline_cfg    = BASELINE_CFG,
-
-                base_NNTQ_params= NNTQ_PARAMETERS,
-                base_meta_NN_params= METAMODEL_NN_PARAMETERS,
-                dict_fnames     = DICT_FNAMES,
+                base_baseline_params= BASELINE_CFG,
+                base_NNTQ_params    = NNTQ_PARAMETERS,
+                base_meta_NN_params = METAMODEL_NN_PARAMETERS,
+                dict_fnames         = DICT_FNAMES,
 
                 # statistics of the dataset
-                minutes_per_step= MINUTES_PER_STEP,
-                train_split_fraction=TRAIN_SPLIT_FRACTION,
-                val_ratio       = VAL_RATIO,
-                forecast_hour   = FORECAST_HOUR,
-                seed            = SEED,
-                force_calc_baselines=False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG'
-                cache_fname     = CACHE_FNAME,
+                minutes_per_step    = MINUTES_PER_STEP,
+                train_split_fraction= TRAIN_SPLIT_FRACTION,
+                val_ratio           = VAL_RATIO,
+                forecast_hour       = FORECAST_HOUR,
+                seed                = SEED,
+                force_calc_baselines= False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG'
+                cache_fname         = CACHE_FNAME,
             )
 
 
