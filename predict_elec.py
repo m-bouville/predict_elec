@@ -14,6 +14,7 @@ import MC_search, Bayes_search, run # containers, architecture, utils, LR_RF, IO
 # BUG GB complains about pd vs. np
 # [in progress] MC hyperparameter search
 #   - TODO add parameters for lasso, LR, RF, GB
+# TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
 
 
 

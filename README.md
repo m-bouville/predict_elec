@@ -2,9 +2,7 @@
 
 
 ## Introduction
-The purpose of this project is to forecast electricity consumption. On top of historical consumption data, other information (temperature, public and school holidays) is used to provide context.
-
-The neural network (NN) model predicts not only the median consumption but also other quantiles (e.g. quartiles, deciles) in order to estimate the precision of the forecast median.
+The purpose of this project is to use neural network (NN) models to forecast electricity consumption. Information such as temperature and public and school holidays is used along historical consumption data to provide context.
 
 The focus is currently on the half-hourly national French consumption (average: 53 GW). Input data (included) are from open sources, for the past ten years. 
 
@@ -33,21 +31,21 @@ Gearing the model toward this specific case has two (advantageous) consequences:
 - Training only from _h_ + 12 to _h_ + 36 lets the model rely on the fact that time step number 24 is always midnight. No need for a decoder or extra degrees of freedom to get this pattern right.
 
 
+### Leakage Control
+- All features used to predict _h_ + 36 are available at _h_: no consumption data from D+1 are used.
+- Baseline model predictions are generated out-of-sample only.
+- Meta-models are trained on validation predictions exclusively.
+
+
 ---
 
 ## Architecture
 
 The strategy is based on a **two-stage architecture** with a strict separation of responsibilities:
-1. First, a Neural Network uses Transformers to predict Quantiles (hereafter, NNTQ), thus estimating uncertainty.
+1. First, a Neural Network uses Transformers to predict Quantiles (hereafter, NNTQ), in order to estimate the uncertainty of the forecast.
 2. Then, a meta-model forecasts the operational point as the mean.
 
 There is **no feedback loop** between the two stages.
-
-Expected benefits
-- Improved point forecast accuracy over using `q50` alone
-- Retention of well-calibrated probabilistic forecasts
-- Better bias correction across regimes
-- Clean validation and interpretability at each stage
 
 The main file is `predict_elec.py`.
 
@@ -55,18 +53,17 @@ The main file is `predict_elec.py`.
 ### Stage 1 — Quantile Neural Network
 
 **Input**
-- exogenous features (temperature, school holidays),
-- week-ends plus Fourier-like sine waves at different scales (day, year),
-- moving averages of recent consumption (but not so recent as to cause leaks),
-- predictions from baseline models (**linear regression, LR** and **random forest, RF**) used as features, *not* ensembled directly.
+- exogenous features (temperature, school holidays);
+- week-ends plus Fourier-like sine waves at different scales (day, year);
+- moving averages of recent consumption (but not so recent as to cause leaks);
+- predictions from baseline models --**linear regression (LR)**, **random forest, (RF)** and **gradient boosting (GB)**-- used as features, *not* ensembled directly (yet).
 
 **Output**
 - Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
 
 **Training**
-- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives),
+- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives);
 - Direct multi-horizon prediction
-  - Possible later extension: a light (partial) decoder
 
 **Role**
 - Learn the conditional distribution of electricity demand to produce
@@ -79,9 +76,9 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
 ### Stage 2 — Mean-Based Meta-Model
 
 **Input**
-- LR and RF predictions
+- LR, RF an GB predictions
 - Median (`q50`) output from stage 1
-  - also, `q75` minus `q25` (uncertainty proxy)?
+- features similar to those used in stage 1.
 
 **Output**
 - A single point forecast optimized for mean accuracy
@@ -102,9 +99,8 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
 - **Systematic bias in predictions**
   - Bias is visible in LR, RF and NN in validation and testing (but not training).
 
-- **Median vs mean ambiguity**
-  - The neural network is trained with a quantile loss, so `q50` is a conditional median.
-  - Operational evaluation and comparison (RMSE, MAE, bias) implicitly target the conditional mean.
-  - Using `q50` as a point forecast mixes these two objectives and can lead to persistent bias.
-  - The Transformer is simultaneously responsible for learning uncertainty structure (quantiles) and producing a usable point forecast; any change improving point RMSE can degrade quantile calibration (and vice versa).
-
+- **Empirical coverage of predicted quantiles**
+  - While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
+  
+- **Plans**
+  - `q75` minus `q25` (uncertainty proxy) could be used as a feature in the NN metamodel.

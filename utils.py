@@ -223,7 +223,7 @@ def overall_loss(flat_metrics           : Dict[str, float],
     avg_metrics = {}
     for _metric in ['bias', 'RMSE', 'MAE']:
         values = [
-            v for key, v in flat_metrics.items() if _metric in key
+            abs(v) for key, v in flat_metrics.items() if _metric in key
         ]
         avg_metrics[_metric] = float(np.mean(values))
 
