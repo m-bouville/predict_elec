@@ -1,7 +1,7 @@
 # import sys
 
 
-import MC_search, run # containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
+import MC_search, Bayes_search, run # containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
 
 
 
@@ -28,7 +28,8 @@ if __name__ == "__main__":
                )
 
     if num_runs > 1:   # search for hyperparameters
-        MC_search.run_Monte_Carlo_search(
+        Bayes_search.run_Bayes_search(
+        # MC_search.run_Monte_Carlo_search(
                 num_runs            = num_runs,
                 csv_path            = "MC_results.csv",
 

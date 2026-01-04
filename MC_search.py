@@ -2,7 +2,7 @@ import os
 import copy
 from   tqdm     import trange
 
-from   typing   import Dict, Sequence, Any, Optional  # List, Tuple,
+from   typing   import Dict, Any, Optional  # List, Tuple, Sequence,
 
 from   datetime import datetime
 
@@ -11,7 +11,7 @@ import pandas   as pd
 import random
 
 
-import run
+import run, utils
 
 
 
@@ -135,10 +135,11 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
         p['num_layers'] = random.choice([1, 2, 3, 4])
 
     # enforce divisibility (Transformer constraint)
-    if  p['model_dim'] % p['num_heads'] != 0:
-        p['model_dim'] = p['num_heads'] * (p['model_dim'] // p['num_heads'])
+    if 'model_dim' in p and 'num_heads' in p:
+        if  p['model_dim'] % p['num_heads'] != 0:
+            p['model_dim'] = p['num_heads'] * (p['model_dim'] // p['num_heads'])
 
-    if 'epochs' in p.keys():
+    if 'num_geo_blocks' in p.keys():
         p['num_geo_blocks']= int(round(random.uniform(2,    8)))
 
     # early stopping
@@ -150,11 +151,13 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
         p['min_delta']     =     round(random.uniform(15e-3,30e-3), 5)
 
     # derived quantities
-    p['num_patches'] = (
-        p['input_length']
-        + p['features_in_future'] * p['pred_length']
-        - p['patch_length']
-    ) // p['stride'] + 1
+    if 'input_length' in p and 'features_in_future' in p and \
+                'pred_length' in p and 'patch_length' in p and 'stride' in p:
+        p['num_patches'] = (
+            p['input_length']
+            + p['features_in_future'] * p['pred_length']
+            - p['patch_length']
+        ) // p['stride'] + 1
 
     return p
 
@@ -201,43 +204,6 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
 #     cfg["dropout"]    = rng.uniform(0.05, 0.4)
 #     # cfg["num_cells"]  = rng.choice([[32,16], [32,32], [64,32]])
 #     return cfg
-
-
-def expand_sequence(name: str, values: Sequence, length: int,
-                    prefix: Optional[str]="", fill_value=np.nan) -> Dict[str, Any]:
-    """
-    Expand a list/tuple into fixed-length columns.
-    Shorter lists are padded with fill_value.
-    Longer lists raise an error (by default).
-    """
-    if not isinstance(values, (list, tuple)):
-        raise TypeError(f"{name} must be list or tuple, got {type(values)}")
-
-    if len(values) > length:
-        raise ValueError(f"{name} length {len(values)} > fixed length {length}")
-
-    output = {}
-    for i in range(length):
-        output[f"{prefix}{name}_{i}"] = values[i] if i < len(values) else fill_value
-
-    return output
-
-def flatten_dict(d, parent_key="", sep="_"):
-    """
-    Flatten a nested dict using namespaced keys.
-    Example:
-      {"rf": {"n_estimators": 500}} →
-      {"baseline__rf__n_estimators": 500}
-    """
-    items = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-
-        if isinstance(v, dict):
-            items.update(flatten_dict(v, new_key, sep=sep))
-        else:
-            items[new_key] = v
-    return items
 
 
 def run_Monte_Carlo_search(
@@ -313,13 +279,13 @@ def run_Monte_Carlo_search(
         metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
 
         # flatten sequences
-        _dict_quantiles = expand_sequence(name="quantiles",
+        _dict_quantiles = utils.expand_sequence(name="quantiles",
                values=NNTQ_parameters["quantiles"],  length=5, prefix="")
         del NNTQ_parameters["quantiles"]
         NNTQ_parameters.update(_dict_quantiles)
 
 
-        _dict_num_cells = expand_sequence(name="num_cells",
+        _dict_num_cells = utils.expand_sequence(name="num_cells",
                values=metamodel_parameters["num_cells"], length=2, prefix="")
         del metamodel_parameters["num_cells"]
         metamodel_parameters.update(_dict_num_cells)
@@ -329,7 +295,7 @@ def run_Monte_Carlo_search(
         row = {
             "run"      : run_id,
             "timestamp": datetime.now(),   # Excel-compatible
-            **(flatten_dict(baseline_parameters, parent_key="")),
+            **(utils.flatten_dict(baseline_parameters, parent_key="")),
             **NNTQ_parameters,
             **{"metaNN_"+key: value for (key, value) in metamodel_parameters.items()},
             **quantile_delta_coverage,

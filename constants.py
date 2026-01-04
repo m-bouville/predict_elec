@@ -167,12 +167,13 @@ baseline_cfg = [
     {  # 'DEBUG'
     'lasso': {"alpha": 5 / 100., 'max_iter': 1_000},
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 5 / 100.},
+    'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 1_000},
     'RF': {
         "type":            "rf",
         "n_estimators":     50,     # was 300 -> fewer trees
         "max_depth":         6,     # shallower trees
         "min_samples_leaf": 10,     # more regularization
+        "min_samples_split": 2,
         "max_features":   "sqrt",
         "random_state":      0,
         "n_jobs":            4

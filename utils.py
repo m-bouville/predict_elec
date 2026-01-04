@@ -8,7 +8,7 @@
 # import os
 import time
 
-from   typing import List, Tuple, Dict, Optional  #, Sequence
+from   typing import List, Tuple, Dict, Sequence, Optional, Any
 
 import torch
 
@@ -119,6 +119,12 @@ def df_features_past_consumption(consumption: pd.Series,
     return df.drop(columns=['consumption_GW'])
 
 
+
+
+# -------------------------------------------------------
+# for MC_search, Bayes_search
+# -------------------------------------------------------
+
 def df_features(dict_fnames: Dict[str, str], cache_fname: str,
         lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -171,6 +177,45 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
         plt.show()
 
     return df, dates_df
+
+
+
+def expand_sequence(name: str, values: Sequence, length: int,
+                    prefix: Optional[str]="", fill_value=np.nan) -> Dict[str, Any]:
+    """
+    Expand a list/tuple into fixed-length columns.
+    Shorter lists are padded with fill_value.
+    Longer lists raise an error (by default).
+    """
+    if not isinstance(values, (list, tuple)):
+        raise TypeError(f"{name} must be list or tuple, got {type(values)}")
+
+    if len(values) > length:
+        raise ValueError(f"{name} length {len(values)} > fixed length {length}")
+
+    output = {}
+    for i in range(length):
+        output[f"{prefix}{name}_{i}"] = values[i] if i < len(values) else fill_value
+
+    return output
+
+def flatten_dict(d, parent_key="", sep="_"):
+    """
+    Flatten a nested dict using namespaced keys.
+    Example:
+      {"rf": {"n_estimators": 500}} →
+      {"baseline__rf__n_estimators": 500}
+    """
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
+        if isinstance(v, dict):
+            items.update(flatten_dict(v, new_key, sep=sep))
+        else:
+            items[new_key] = v
+    return items
+
 
 
 
