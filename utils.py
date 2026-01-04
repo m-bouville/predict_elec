@@ -119,12 +119,6 @@ def df_features_past_consumption(consumption: pd.Series,
     return df.drop(columns=['consumption_GW'])
 
 
-
-
-# -------------------------------------------------------
-# for MC_search, Bayes_search
-# -------------------------------------------------------
-
 def df_features(dict_fnames: Dict[str, str], cache_fname: str,
         lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -180,6 +174,11 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
 
 
 
+
+# -------------------------------------------------------
+# for MC_search, Bayes_search
+# -------------------------------------------------------
+
 def expand_sequence(name: str, values: Sequence, length: int,
                     prefix: Optional[str]="", fill_value=np.nan) -> Dict[str, Any]:
     """
@@ -215,6 +214,61 @@ def flatten_dict(d, parent_key="", sep="_"):
         else:
             items[new_key] = v
     return items
+
+def overall_loss(flat_metrics           : Dict[str, float],
+                 quantile_delta_coverage: Dict[str, float],
+                 weight_coverage        : float   = 10.) -> float:
+    _loss_quantile_coverage = np.mean([abs(e) for e in list(quantile_delta_coverage.values())])
+
+    avg_metrics = {}
+    for _metric in ['bias', 'RMSE', 'MAE']:
+        values = [
+            v for key, v in flat_metrics.items() if _metric in key
+        ]
+        avg_metrics[_metric] = float(np.mean(values))
+
+    # print(avg_metrics)
+
+    return float(round(_loss_quantile_coverage*weight_coverage + \
+                       np.mean(list(avg_metrics.values())), 4))
+
+
+
+def recalculate_loss(csv_path       : str   = 'mc_results.csv',
+                     weight_coverage: float = 10.) -> None:
+    # Load the CSV file containing MC runs
+    results_df = pd.read_csv(csv_path, index_col=False)
+
+    # clean up dates
+    results_df['timestamp'] = pd.to_datetime(
+        results_df['timestamp'],
+        errors   = 'coerce',
+        infer_datetime_format=True,
+        dayfirst = True
+    )
+
+    # print(pd.concat([results_df[['timestamp']], dates], axis=1))
+
+    _list_overall_losses = []
+    for index, row in results_df.iterrows():
+        flat_metrics = (row \
+        [['test_NN_bias',     'test_NN_RMSE',     'test_NN_MAE',
+          'test_LR_bias',     'test_LR_RMSE',     'test_LR_MAE',
+          'test_RF_bias',     'test_RF_RMSE',     'test_RF_MAE',
+          'test_GB_bias',     'test_GB_RMSE',     'test_GB_MAE',
+          'test_meta_LR_bias','test_meta_LR_RMSE','test_meta_LR_MAE',
+          'test_meta_NN_bias','test_meta_NN_RMSE','test_meta_NN_MAE']]).to_dict()
+
+        quantile_delta_coverage = \
+            row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
+
+        _overall_loss = overall_loss(flat_metrics, quantile_delta_coverage, weight_coverage)
+        _list_overall_losses.append(_overall_loss)
+
+    # print(_list_overall_losses)
+
+    results_df['overall_loss'] = _list_overall_losses
+    results_df.to_csv(csv_path, index=False)
 
 
 

@@ -44,11 +44,11 @@ def sample_baseline_parameters(
         elif _baseline == 'LR':
             if 'type' in p:
                 p['type'] = trial.suggest_categorical('LR_type', ['lasso', 'ridge'])
-            if 'alpha' in p:
+            if ('type' in p) and ('alpha' in p):
                 if p['type'] == 'lasso':
-                    p['alpha'] = trial.suggest_float('LR_alpha_lasso', 0.005, 0.04, log=True)
+                    p['alpha'] = trial.suggest_float('LR_alpha', 0.005, 0.04,log=True)
                 else:
-                    p['alpha'] = trial.suggest_float('LR_alpha_ridge', 0.5, 2.0, log=True)
+                    p['alpha'] = trial.suggest_float('LR_alpha', 0.5, 2.0, log=True)
 
         elif _baseline == 'RF':
             if 'n_estimators' in p:  # number of trees in the Random Forest
@@ -100,8 +100,8 @@ def sample_NNTQ_parameters(
         p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
         p['learning_rate' ] = trial.suggest_float('learning_rate', 0.003, 0.3, log=True)
-    if 'weight_decay' in p:
-        p['weight_decay'  ] = trial.suggest_float('weight_decay', 0., 1e-5, log=False)   # BUG: 0 in csv at start
+    if 'weight_decay' in p:     # BUG: 0 in csv at start
+        p['weight_decay'  ] = trial.suggest_float('weight_decay', 0., 1e-5, log=False)
     if 'dropout' in p:
         p['dropout'       ] = trial.suggest_float('dropout', 0.02, 0.15)
 
@@ -249,7 +249,7 @@ distributions_metamodel_NN = {
     'metaNN_epochs':      IntDistribution(low=8, high=15, step=1),
     'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512]),
     'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
-    'metaNN_weight_decay':FloatDistribution(low=10e-7, high=10e-5, log=True),
+    'metaNN_weight_decay':FloatDistribution(low=1e-8, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
     'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40]),
     'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20]),
@@ -273,7 +273,7 @@ def run_Bayes_search(
             seed                : int,
             force_calc_baselines: bool,
             cache_fname         : Optional[str] = None,
-            csv_path            : str    = "mc_results.csv"
+            csv_path            : str    = 'mc_results.csv'
         ):
 
     import warnings
@@ -341,8 +341,8 @@ def run_Bayes_search(
         del metamodel_parameters["num_cells"]
         metamodel_parameters.update(_dict_num_cells)
 
-        _score =np.mean([abs(e) for e in(list(quantile_delta_coverage.values()) +\
-                                         list(flat_metrics           .values()))])
+        _overall_loss = utils.overall_loss(flat_metrics, quantile_delta_coverage)
+
         row = {
             "run"      : trial.number,
             "timestamp": datetime.now(),   # Excel-compatible
@@ -353,7 +353,7 @@ def run_Bayes_search(
             **{"avg_weight_meta_NN_"+key: value
                for (key, value) in avg_weights_meta_NN.items()},
             **flat_metrics,
-            "score": _score
+            "overall_loss": _overall_loss
         }
         # print(row)
 
@@ -366,7 +366,7 @@ def run_Bayes_search(
             float_format="%.6f"
         )
 
-        return float(_score)
+        return float(_overall_loss)
 
 
     # Load the CSV file containing MC runs
@@ -407,7 +407,7 @@ def run_Bayes_search(
                    distributions_NNTQ | distributions_metamodel_NN \
                        if e not in results_df.columns] == []
     assert{e for e in results_df.columns  if e not in distributions_baselines | \
-         distributions_NNTQ | distributions_metamodel_NN} == {'timestamp', 'score'}
+         distributions_NNTQ | distributions_metamodel_NN} == {'timestamp', 'overall_loss'}
 
     # can be 'sqrt' or a float => type issues
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
@@ -423,21 +423,21 @@ def run_Bayes_search(
     for index, row in results_df.iterrows():
         # print(index, row)
         _params = {k: row[k] for k in row.keys()
-                  if k not in ['timestamp', 'score']}
+                  if k not in ['timestamp', 'overall_loss']}
         trial = optuna.trial.FrozenTrial(
             number        = index,
             # number = len(trials),  # Trial number
             state         = optuna.trial.TrialState.COMPLETE,  # State of the trial
             datetime_start=   pd.to_datetime(row['timestamp'])-timedelta(minutes=1.5),
             datetime_complete=pd.to_datetime(row['timestamp']),
-            value        = row['score'],  # Objective value
-            params       = _params,  # hyperparameters
-            user_attrs   = {},  # Additional attributes (can be empty)
-            distributions= distributions_baselines | \
-                           distributions_NNTQ | distributions_metamodel_NN,
-            system_attrs = {},  # system attributes (can be empty)
+            value         = row['overall_loss'],  # Objective value
+            params        = _params,  # hyperparameters
+            user_attrs    = {},  # Additional attributes (can be empty)
+            distributions = distributions_baselines | \
+                            distributions_NNTQ | distributions_metamodel_NN,
+            system_attrs  = {},  # system attributes (can be empty)
             intermediate_values={},  # (can be empty)
-            trial_id=index  # ID du trial
+            trial_id      = index  # ID du trial
         )
         trials.append(trial)
 

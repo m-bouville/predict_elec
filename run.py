@@ -266,7 +266,7 @@ def run_model(
 
         cache_fname     : str = "cache",
         verbose         : int  = 0
-        ) -> Tuple[pd.DataFrame, Dict[str, float]]:
+        ) -> Tuple[pd.DataFrame, Dict[str, float], Dict[str, float]]:
 
     np.   random.seed(seed)
     torch.manual_seed(seed)

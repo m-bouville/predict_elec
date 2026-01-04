@@ -290,8 +290,8 @@ def run_Monte_Carlo_search(
         del metamodel_parameters["num_cells"]
         metamodel_parameters.update(_dict_num_cells)
 
-        _score =np.mean([abs(e) for e in(list(quantile_delta_coverage.values()) +\
-                                         list(flat_metrics           .values()))])
+        _overall_loss = utils.overall_loss(df_metrics, quantile_delta_coverage)
+
         row = {
             "run"      : run_id,
             "timestamp": datetime.now(),   # Excel-compatible
@@ -302,7 +302,7 @@ def run_Monte_Carlo_search(
             **{"avg_weight_meta_NN_"+key: value
                for (key, value) in avg_weights_meta_NN.items()},
             **flat_metrics,
-            "score": _score
+            "overall_loss": _overall_loss
         }
         # print(row)
 
