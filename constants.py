@@ -1,4 +1,4 @@
-__all__ = ['SYSTEM_SIZE', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO',
+__all__ = ['RUN_FAST', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'VERBOSE', 'DICT_FNAMES', 'CACHE_FNAME', 'BASELINE_CFG',
            'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
@@ -23,9 +23,9 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
 
-SYSTEM_SIZE  = 'SMALL'          # in ['DEBUG', 'SMALL', 'LARGE']
+RUN_FAST     = False         # True: smaller system: runs faster, for debugging
 
-VERBOSE: int = 2 if SYSTEM_SIZE == 'DEBUG' else 1
+VERBOSE: int = 2 if RUN_FAST else 1
 
 SEED         =   0              # For reproducibility
 
@@ -52,8 +52,8 @@ NNTQ_PARAMETERS: dict = {
 
     # optimizer
     'learning_rate'    : 12.e-3,      # Optimizer learning rate
-    'weight_decay'     :  1.e-7,
-    'dropout'          :  0.07,
+    'weight_decay'     :  3.e-9,
+    'dropout'          :  0.1,
 
     # early stopping
     'min_delta'        :   25 / 1000,
@@ -69,10 +69,10 @@ NNTQ_PARAMETERS: dict = {
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
     'lambda_cross'     : 1.,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.5,
-    'lambda_deriv'     : 0.15,         # derivative weight in loss function
-    'lambda_median'    : 0.6,
-    'smoothing_cross'  : 0.025,
+    'lambda_coverage'  : 0.7,
+    'lambda_deriv'     : 0.2,         # derivative weight in loss function
+    'lambda_median'    : 0.7,
+    'smoothing_cross'  : 0.032,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
@@ -80,31 +80,31 @@ NNTQ_PARAMETERS: dict = {
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
     'saturation_cold_degC':-5.,
     'threshold_cold_degC':  3.,
-    'lambda_cold'      :    0.5,
+    'lambda_cold'      :    0.05,
 
 }
 
 
-EPOCHS       = [  2,  30,  60] # Number of training epochs
-MODEL_DIM    = [ 48, 128, 192] # Transformer embedding dimension
-NUM_HEADS    = [  2,   4,   6] # Number of attention heads
-FFN_SIZE     = [  4,   4,   6] # expansion factor
-NUM_LAYERS   = [  1,   2,   3] # Number of transformer encoder layers
-NUM_GEO_BLOCKS=[  2,   5,  10]
-WARMUP_STEPS =[4000,2500,2250]
-PATIENCE     = [  5,   5,  10]  # DEBUG: patience > nb epochas
+EPOCHS       = [  2,  25] # Number of training epochs
+MODEL_DIM    = [ 48, 120] # Transformer embedding dimension
+NUM_HEADS    = [  2,   4] # Number of attention heads
+FFN_SIZE     = [  4,   5] # expansion factor
+NUM_LAYERS   = [  1,   3] # Number of transformer encoder layers
+NUM_GEO_BLOCKS=[  2,   3]
+WARMUP_STEPS =[4000,2400]
+PATIENCE     = [  5,   5]  # DEBUG: patience > nb epochas
 
 # Pick correct value from list of possibilites
-IDX_SYSTEM_SIZE = {'DEBUG': 0, 'SMALL': 1, 'LARGE': 2}[SYSTEM_SIZE]
+IDX_RUN_FAST = {True: 0, False: 1}[RUN_FAST]
 
-NNTQ_PARAMETERS['epochs']       = EPOCHS        [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['model_dim']    = MODEL_DIM     [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['warmup_steps'] = WARMUP_STEPS  [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['patience']     = PATIENCE      [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['num_layers']   = NUM_LAYERS    [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['num_heads']    = NUM_HEADS     [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['ffn_size']     = FFN_SIZE      [IDX_SYSTEM_SIZE]
-NNTQ_PARAMETERS['num_geo_blocks']=NUM_GEO_BLOCKS[IDX_SYSTEM_SIZE]
+NNTQ_PARAMETERS['epochs']       = EPOCHS        [IDX_RUN_FAST]
+NNTQ_PARAMETERS['model_dim']    = MODEL_DIM     [IDX_RUN_FAST]
+NNTQ_PARAMETERS['warmup_steps'] = WARMUP_STEPS  [IDX_RUN_FAST]
+NNTQ_PARAMETERS['patience']     = PATIENCE      [IDX_RUN_FAST]
+NNTQ_PARAMETERS['num_layers']   = NUM_LAYERS    [IDX_RUN_FAST]
+NNTQ_PARAMETERS['num_heads']    = NUM_HEADS     [IDX_RUN_FAST]
+NNTQ_PARAMETERS['ffn_size']     = FFN_SIZE      [IDX_RUN_FAST]
+NNTQ_PARAMETERS['num_geo_blocks']=NUM_GEO_BLOCKS[IDX_RUN_FAST]
 
 NNTQ_PARAMETERS['num_patches'] = \
     (NNTQ_PARAMETERS['input_length'] + NNTQ_PARAMETERS['features_in_future'] * \
@@ -122,12 +122,12 @@ PLOT_CONV_EVERY=10
 
 METAMODEL_NN_PARAMETERS: dict = {
     'batch_size'       :  256,
-    'num_cells'        : [32, 16],
+    'num_cells'        : [40, 20],
 
     # optimizer
-    'learning_rate'    :  5e-4,
-    'weight_decay'     : 10e-6,
-    'dropout'          :  0.07,
+    'learning_rate'    :  4e-4,
+    'weight_decay'     :  6e-6,
+    'dropout'          :  0.1,
 
     # early stopping
     'patience'         :   4,
@@ -136,8 +136,8 @@ METAMODEL_NN_PARAMETERS: dict = {
     'device'           : DEVICE,
     }
 
-META_EPOCHS     = [  1, 12, 15]
-METAMODEL_NN_PARAMETERS['epochs']  = META_EPOCHS  [IDX_SYSTEM_SIZE]
+META_EPOCHS     = [  1, 12]
+METAMODEL_NN_PARAMETERS['epochs']  = META_EPOCHS  [IDX_RUN_FAST]
 
 
 
@@ -173,7 +173,7 @@ assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the media
 
 
 baseline_cfg = [
-    {  # 'DEBUG'
+    {  # 'FAST'
     'lasso': {"alpha": 5 / 100., 'max_iter': 1_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 1_000},
@@ -206,10 +206,10 @@ baseline_cfg = [
     }
 },
 
-{  # 'SMALL'
-    'lasso': {"alpha": 2 / 100., 'max_iter': 2_000},
+{  # 'NORMAL'
+    'lasso': {"alpha": 1.75 / 100., 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 2 / 100., 'max_iter': 2_000},
+    'LR': {"type": "ridge", "alpha": 0.5, 'max_iter': 2_000},
     'RF': {
         "type":            "rf",
         "n_estimators":    500,
@@ -229,51 +229,18 @@ baseline_cfg = [
         "learning_rate":     0.05,    # Lower learning rate for stability
         "n_estimators":    500,       # More trees for a robust model
         "min_child_samples":20,       # Minimum samples per leaf
-        "subsample":         0.8,     # Fraction of samples used to train each tree
-        "colsample_bytree":  0.8,     # Fraction of features used for each tree
+        "subsample":         0.85,    # Fraction of samples used to train each tree
+        "colsample_bytree":  0.8,    # Fraction of features used for each tree
         "reg_alpha":         0.1,     # L1 regularization
-        "reg_lambda":        0.1,     # L2 regularization
+        "reg_lambda":        0.12,    # L2 regularization
         "random_state":      0,       # Seed for reproducibility
         "n_jobs":            4,       # Number of parallel jobs
         "verbose":          -1        # Suppress output
-    }
-},
-
-{  # 'LARGE'
-    'lasso': {"alpha": 0.5 / 100., 'max_iter': 5_000},
-    # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 0.5 / 100., 'max_iter': 5_000},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":    400,
-        "max_depth":        15,
-        "min_samples_leaf": 20,
-        "min_samples_split":20,
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-    'GB': {
-        "type":     "lgbm",
-        "objective": "regression",
-        "boosting_type": "gbdt",
-        "num_leaves": 64-1,           # More leaves for complex patterns
-        "max_depth": 8,               # Deeper trees
-        "learning_rate": 0.02,        # Lower learning rate for precision
-        "n_estimators": 500,          # More trees for a robust model
-        "min_child_samples": 30,      # Minimum samples per leaf
-        "subsample": 0.7,             # Fraction of samples used to train each tree
-        "colsample_bytree": 0.7,      # Fraction of features used for each tree
-        "reg_alpha": 0.2,             # Stronger L1 regularization
-        "reg_lambda": 0.2,            # Stronger L2 regularization
-        "random_state": 0,            # Seed for reproducibility
-        "n_jobs": 4,                  # Number of parallel jobs
-        "verbose": -1                 # Suppress output
     }
 }
 ]
 
 
-BASELINE_CFG = baseline_cfg[IDX_SYSTEM_SIZE]
+BASELINE_CFG = baseline_cfg[IDX_RUN_FAST]
 
 # BASELINE_CFG = {}

@@ -12,6 +12,8 @@ import optuna
 from   optuna.distributions import \
                 IntDistribution, FloatDistribution, CategoricalDistribution
 
+# import matplotlib.pyplot as plt
+
 
 import run, utils
 
@@ -60,7 +62,8 @@ def sample_baseline_parameters(
             if 'min_samples_split' in p:   # min number of samples to split an internal node
                 p['min_samples_split'] = trial.suggest_int('RF_min_samples_split', 15, 25)
             if 'max_features' in p:    # number of features when looking for the best split
-                p['max_features']=trial.suggest_categorical('RF_max_features',['sqrt','0.5'])
+                p['max_features'] = trial.suggest_categorical(
+                            'RF_max_features', ['sqrt', '0.4', '0.5', '0.6'])
                 if p['max_features'] != 'sqrt':  # this is a float stored as str
                     p['max_features'] = float(p['max_features'])
 
@@ -109,15 +112,15 @@ def sample_NNTQ_parameters(
 
     # quantile loss weights
     if 'lambda_cross' in p:
-        p['lambda_cross'  ] = trial.suggest_float('lambda_cross', 0.5, 2.0)
+        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0.5, 2.0)
     if 'lambda_coverage' in p:
-        p['lambda_coverage']= trial.suggest_float('lambda_coverage', 0.2, 1.0)
+        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.2, 1.0)
     if 'lambda_deriv' in p:
-        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv', 0.0, 0.3)
+        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0.0, 0.3)
     if 'lambda_median' in p:
-        p['lambda_median' ] = trial.suggest_float('lambda_median', 0.2, 1.0)
+        p['lambda_median' ] = trial.suggest_float('lambda_median',  0.2, 1.0)
     if 'smoothing_cross' in p:
-        p['smoothing_cross']= trial.suggest_float('smoothing_cross', 0.005, 0.05)
+        p['smoothing_cross']= trial.suggest_float('smoothing_cross',0.005,0.05)
 
         # temperature-dependence (pinball loss, coverage penalty)
     if 'threshold_cold_degC' in p:
@@ -130,13 +133,13 @@ def sample_NNTQ_parameters(
 
     # Architecture
     if 'model_dim' in p:
-        p['model_dim'  ] = trial.suggest_categorical('model_dim_scale', [96, 128, 156])
+        p['model_dim'  ] = trial.suggest_int('model_dim', 95, 255, step=16)
     if 'ffn_size' in p:
-        p['ffn_size'   ] = trial.suggest_categorical('ffn_size',  [2, 3, 4, 5, 6])
+        p['ffn_size'   ] = trial.suggest_int('ffn_size',  3, 7)
     if 'num_heads' in p:
-        p['num_heads'  ] = trial.suggest_categorical('num_heads', [2, 3, 4, 5, 6])
+        p['num_heads'  ] = trial.suggest_int('num_heads', 3, 7)
     if 'num_layers' in p:
-        p['num_layers' ] = trial.suggest_categorical('num_layers',[1, 2, 3, 4, 5])
+        p['num_layers' ] = trial.suggest_int('num_layers',2, 6)
 
     if 'epochs' in p:
         p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 2, 8)
@@ -176,11 +179,12 @@ def sample_metamodel_NN_parameters(
         p['epochs']      = trial.suggest_int('metaNN_epochs', 8, 15)
     if 'batch_size' in p:
         p['batch_size']  = trial.suggest_categorical('metaNN_batch_size',
-                                                     [128, 192, 256, 384, 512])
+                                                     [128, 192, 256, 384, 512, 640])
     if 'learning_rate' in p:
-        p['learning_rate']=trial.suggest_float('metaNN_learning_rate',0.15e-3,1.5e-3,log=True)
+        p['learning_rate']=trial.suggest_float('metaNN_learning_rate',
+                                               0.15e-3,1.5e-3,log=True)
     if 'weight_decay' in p:    # BUG: 0 in csv at start
-        p['weight_decay']= trial.suggest_float('metaNN_weight_decay', 0., 1e-5, log=False)
+        p['weight_decay']= trial.suggest_float('metaNN_weight_decay',0.,1e-5,log=False)
     if 'dropout' in p:
         p['dropout']     = trial.suggest_float('metaNN_dropout', 0.05, 0.2)
 
@@ -197,15 +201,6 @@ def sample_metamodel_NN_parameters(
     return p
 
 
-# def sample_meta_params(base_cfg, rng):
-#     cfg = deepcopy(base_cfg)
-#     cfg["lr"]         = 10 ** rng.uniform(-4.5, -3.0)
-#     cfg["dropout"]    = rng.uniform(0.05, 0.4)
-#     # cfg["num_cells"]  = rng.choice([[32,16], [32,32], [64,32]])
-#     return cfg
-
-
-
 distributions_baselines = {
     'lasso_alpha':    FloatDistribution(low=0.005, high=0.04, log=True),
     'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
@@ -219,7 +214,7 @@ distributions_baselines = {
     'RF_max_depth': IntDistribution(low=15, high=25, step=1),
     'RF_min_samples_leaf': IntDistribution(low=10, high=20, step=1),
     'RF_min_samples_split': IntDistribution(low=15, high=25, step=1),
-    'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.5']),
+    'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4', '0.5', '0.6']),
     # gradient boosting
     'GB_boosting_type': CategoricalDistribution(choices=['gbdt']),
     'GB_num_leaves': CategoricalDistribution(choices=[15, 31]),
@@ -252,10 +247,10 @@ distributions_NNTQ = {
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
     'lambda_cold':    FloatDistribution(low=0., high=1.),
 
-    'model_dim':    IntDistribution(low=95, high=160, step=1),
-    'ffn_size':     CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
-    'num_heads':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
-    'num_layers':   CategoricalDistribution(choices=[1, 2, 3, 4, 5]),
+    'model_dim':    IntDistribution(low=90, high=255, step=1),
+    'ffn_size':     IntDistribution(low=2, high=7, step=1),
+    'num_heads':    IntDistribution(low=2, high=7, step=1),
+    'num_layers':   IntDistribution(low=1, high=6, step=1),
     'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
     'num_geo_blocks': IntDistribution(low=2, high=8, step=1),
     'warmup_steps': IntDistribution(low=1500, high=4000, step=50),
@@ -265,7 +260,7 @@ distributions_NNTQ = {
 
 distributions_metamodel_NN = {
     'metaNN_epochs':      IntDistribution(low=8, high=15, step=1),
-    'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512]),
+    'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512, 640]),
     'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
     'metaNN_weight_decay':FloatDistribution(low=1e-8, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
@@ -309,19 +304,58 @@ def plot_optuna(study) -> None:
 
 
     # Parameter importance (quick + honest)
+    cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio', \
+                     'lasso_max_iter', 'patch_length', 'stride']
     dict_corr = dict()
-    numeric_cols = df.select_dtypes(include=[np.number]).drop(columns='value').columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    numeric_cols = [col for col in numeric_cols
+                    if col not in ['value', 'number', 'best_so_far'] + cols_unusable\
+                    and not np.issubdtype(df[col].dtype, np.timedelta64)]
+        # `weight_decay` was so small it was initially rounded down to zero
+
     for p in numeric_cols:
-        dict_corr[p] = np.corrcoef(df[p], df["value"])[0, 1]
-    df_corr = pd.Series(dict_corr).sort_values(ascending=False)
-    print(df_corr[:5])
-    df_corr.plot(kind="bar", title="Parameter Importance (Correlation with 'value')")
+        dict_corr[p[7:]] = -100 * np.corrcoef(df[p], df["value"])[0, 1]
+            # `7:` removes "params_"
+    df_corr = pd.Series(dict_corr, name="neg_corr_pc")
+
+    df_corr_sorted = df_corr.abs().sort_values(ascending=False)
+
+    df_corr = pd.concat([df_corr.round(2),
+                         pd.Series(study.best_trial.params, name='parameter')],
+                        axis = 1)
+    df_corr_sorted_signed = df_corr.loc[df_corr_sorted.index]
+
+    print("Parameter Importance (_negative_ correlation with `value`, in %)")
+    print(df_corr_sorted_signed[:25].round(4))
+    # plt.figure()
+    # df_corr_sorted_signed.plot(kind="bar", title="Parameter Importance (Correlation with 'value')")
+    # plt.show()
+
+
+    # best parameters (more robust than just the very best)
+    num_best_runs = 15
+
+    print(f"shape: {df.shape} -> {df[numeric_cols + ['value']].shape}")
+    print(df[numeric_cols + ['value']])
+    # Get the best 15 trials based on the objective value
+    best_trials_df = df[numeric_cols + ['value']].\
+        sort_values(by='value', ascending=False).head(num_best_runs)
+
+    # Extract parameters from these trials
+    params_df = best_trials_df[numeric_cols]
+
+    # Calculate the median for each parameter
+    median_params = params_df.median()  # .drop(['number', 'best_so_far'])
+
+    print(f"Median parameters from the best {num_best_runs} runs:")
+    print(median_params)
 
 
     # histogram
     df  = study.trials_dataframe()
     top = df.nsmallest(20, "value")
     top[["params_learning_rate", "params_dropout"]].hist()
+
 
 
 def run_Bayes_search(
@@ -369,8 +403,8 @@ def run_Bayes_search(
                   train_split_fraction=train_split_fraction,
                   val_ratio       = val_ratio,
                   forecast_hour   = forecast_hour,
-                  seed            = seed,
-                  force_calc_baselines=False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG',
+                  seed            = seed + trial.number,
+                  force_calc_baselines=False,
 
                   # XXX_EVERY (in epochs)
                   validate_every  = 1,
@@ -519,47 +553,15 @@ def run_Bayes_search(
     for trial in trials:
         study.add_trial(trial)
 
-    # for t in study.trials[:5]:
-    #     print(t.number, t.distributions)
-    # from collections import Counter
-    # print("params:", Counter(len(t.params) for t in study.trials))
 
-    # print(set(results_df.columns) - set(distributions_keys))
-    # print(set(distributions_keys) - set(results_df.columns))
-
-    # from collections import Counter
-    # print("state:", Counter(t.state for t in study.trials))
-
-    # print("t.value is None:", sum(t.value is None for t in study.trials))
-
-    # for k in study.trials[0].params:
-    #     vals = [t.params[k] for t in study.trials]
-    #     if len(set(vals)) == 1:
-    #         print("constant:", k)
-
-
-    # print(len(study.trials), "trials",
-    #       np.unique([t.value for t in study.trials]).size, "unique")
-    # # from collections import Counter
-    # # print(Counter(round(t.params.get("learning_rate"), 7) for t in study.trials))
-    # for p in ["learning_rate", "dropout", "num_layers"]:
-    #     print(p, sum(p in t.params for t in study.trials))
-    # # print([t.number for t in study.trials])
-    # print([t.value  for t in study.trials][:5])
-    # print(study.direction)
-    # # for t in study.trials[:5]:
-    # #     print(set(t.params) - set(t.distributions))
-    # #     print(set(t.distributions) - set(t.params))
-    # print(study.trials[0].params.keys())
-
-    # study.optimize(objective, n_trials=1)
     # Plotting
     plot_optuna(study)
 
 
     # Run optimization
-    print(f"Starting {num_runs} trials...")
+    print(f"\nStarting {num_runs} trials...")
     study.optimize(objective, n_trials=num_runs)
+
 
     # Print the best parameters found
     print("Best trial:")
@@ -571,7 +573,8 @@ def run_Bayes_search(
     # print(f"Best hyperparameters: {study.best_params}")
 
 
-    # plot_optuna(study)
+    plot_optuna(study)
+
 
     return study.best_params
 

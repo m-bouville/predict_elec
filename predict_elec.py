@@ -1,8 +1,10 @@
 # import sys
 
+import numpy  as np
 
-import MC_search, Bayes_search, run
-    # containers, architecture, utils, LR_RF, IO, plots, losses, metamodel,
+
+import MC_search, Bayes_search, run, utils
+    # containers, architecture, LR_RF, IO, plots, losses, metamodel,
 
 
 
@@ -20,9 +22,9 @@ import MC_search, Bayes_search, run
 
 
 if __name__ == "__main__":
-    num_runs: int  = 40
+    num_runs: int  = 1
 
-    from   constants import (SYSTEM_SIZE, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
+    from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
                VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
                VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
                FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
@@ -53,7 +55,8 @@ if __name__ == "__main__":
 
 
     else:  # single run
-        run.run_model(
+        (test_metrics, avg_weights_meta_NN, quantile_delta_coverage) = \
+            run.run_model(
                   # configuration bundles
                   baseline_cfg      = BASELINE_CFG,
                   NNTQ_parameters   = NNTQ_PARAMETERS,
@@ -77,3 +80,14 @@ if __name__ == "__main__":
                   cache_fname       = CACHE_FNAME,
                   verbose           = VERBOSE
                   )
+
+        flat_metrics = {}
+        for model in test_metrics.index:
+            for metric in test_metrics.columns:
+                key = f"test_{model}_{metric}".replace(" ", "_")
+                flat_metrics[key] = test_metrics.loc[model, metric].astype(np.float32)
+
+        _overall_loss = utils.overall_loss(flat_metrics, quantile_delta_coverage)
+
+        print(f"overall_loss = {_overall_loss:.3f}")
+
