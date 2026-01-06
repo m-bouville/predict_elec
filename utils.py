@@ -305,7 +305,7 @@ def subset_predictions_day_ahead(
     max_origin_time = -np.inf
 
     # Iterate once: no aggregation
-    for (X_scaled, y_scaled, idx_subset, forecast_origin_int) in subset_loader:
+    for (X_scaled, y_scaled, T_degC, idx_subset, forecast_origin_int) in subset_loader:
         idx_subset         = idx_subset         .cpu().numpy()   # origin indices
         forecast_origin_int= forecast_origin_int.cpu().numpy()
 

@@ -111,6 +111,14 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'smoothing_cross' in p.keys():
         p['smoothing_cross']= round(random.uniform(0.005,0.05),4)
 
+        # temperature-dependence (pinball loss, coverage penalty)
+    if 'threshold_cold_degC' in p.keys():
+        p['threshold_cold_degC']= round(random.uniform( 0.,  5.), 1)
+    if 'saturation_cold_degC' in p.keys():
+        p['saturation_cold_degC']=round(random.uniform(-8., -2.), 1)
+    if 'lambda_cold' in p.keys():
+        p['lambda_cold']= round(random.uniform(0., 1.), 2)
+
 
     # # quantiles
     # p['quantiles'] = random.choice(modifiers['quantiles'])

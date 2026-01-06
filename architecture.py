@@ -31,8 +31,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        data_subset  :  np.ndarray,
+        data_subset  : np.ndarray,
         dates_subset : pd.DatetimeIndex,
+        temperatures_subset: np.ndarray,
         input_length : int,
         pred_length  : int,
         features_in_future:int,
@@ -57,6 +58,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         """
         self.data_subset  = data_subset.astype(np.float32)
         self.dates_subset = dates_subset
+        self.temperatures_subset=temperatures_subset
         self.input_length = input_length
         self.pred_length  = pred_length
         self.features_in_future=int(features_in_future)
@@ -106,6 +108,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
         y = self.data_subset[idx_subset+1 : idx_subset+1 + self.pred_length,
                              self.target_index]
 
+        # Temperatures
+        T = self.temperatures_subset[idx_subset+1 : idx_subset+1+self.pred_length]
+
         # origin = self.forecast_origins[idx_days]
         # print(f"Type: {type(origin)}, Value: {origin}")
         # origin_int = int(origin.timestamp())
@@ -114,6 +119,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         return (
             torch.tensor(X),
             torch.tensor(y).unsqueeze(-1),  # (pred_length, 1)
+            torch.tensor(T).unsqueeze(-1),  # (pred_length, 1),
             idx_subset,
             int(self.forecast_origins[idx_days_subset].timestamp())
                 # pd.Timestamp != batchable
@@ -124,7 +130,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
 # 3. make_X_and_y
 # ============================================================
 
-def make_X_and_y(array, dates,
+def make_X_and_y(array, dates, temperatures,
                  train_split, n_valid,
                  feature_cols: List[str], target_col: str, minutes_per_step: int,
                  input_length:int, pred_length:int, features_in_future:bool,
@@ -153,6 +159,11 @@ def make_X_and_y(array, dates,
     train_dates = dates[idx_train]
     valid_dates = dates[idx_valid]
     test_dates  = dates[idx_test ]
+
+    # temperatures
+    train_Tavg_degC = temperatures[idx_train]
+    valid_Tavg_degC = temperatures[idx_valid]
+    test_Tavg_degC  = temperatures[idx_test ]
 
 
     # Map column names -> column indices in train_data
@@ -211,10 +222,11 @@ def make_X_and_y(array, dates,
 
 
 
-    def build_day_ahead(data_subset, date_slice):
+    def build_day_ahead(data_subset, date_slice, temperatures_subset):
         return DayAheadDataset(
             data_subset  = data_subset,
             dates_subset = date_slice,
+            temperatures_subset=temperatures_subset,
             input_length = input_length,
             pred_length  = pred_length,
             features_in_future=features_in_future,
@@ -222,9 +234,9 @@ def make_X_and_y(array, dates,
             target_index = target_idx
         ) # X_list, y_list, origin_list, target_dates_list
 
-    train_dataset_scaled = build_day_ahead(train_scaled, train_dates)
-    valid_dataset_scaled = build_day_ahead(valid_scaled, valid_dates)
-    test_dataset_scaled  = build_day_ahead(test_scaled,  test_dates )
+    train_dataset_scaled= build_day_ahead(train_scaled,train_dates,train_Tavg_degC)
+    valid_dataset_scaled= build_day_ahead(valid_scaled,valid_dates,valid_Tavg_degC)
+    test_dataset_scaled = build_day_ahead(test_scaled, test_dates, test_Tavg_degC)
 
     # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
     #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
@@ -262,15 +274,15 @@ def make_X_and_y(array, dates,
 
     train = containers.DataSplit("train", "training",
                         idx_train, X_train_GW, y_train_GW,
-                        train_dates, feature_cols,
+                        train_dates, train_Tavg_degC, feature_cols,
                         loader=train_loader, dataset_scaled=train_dataset_scaled)
     valid = containers.DataSplit("valid", "validation",
                         idx_valid, X_valid_GW, y_valid_GW,
-                        valid_dates, feature_cols,
+                        valid_dates, valid_Tavg_degC, feature_cols,
                         loader=valid_loader, dataset_scaled=valid_dataset_scaled)
     test  = containers.DataSplit("test",  "testing",
                         idx_test,  X_test_GW,  y_test_GW,
-                        test_dates,  feature_cols,
+                        test_dates,  test_Tavg_degC, feature_cols,
                         loader=test_loader,  dataset_scaled=test_dataset_scaled)
 
     data = containers.DatasetBundle(
@@ -635,7 +647,7 @@ class BlockWeighting(nn.Module):
 
 def subset_evolution_torch(
         model_NN, #: containers.NeuralNet
-        subset_loader : DataLoader
+        subset_loader: DataLoader
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Returns:
@@ -662,9 +674,10 @@ def subset_evolution_torch(
                      'median':    torch.zeros(valid_length, device=device)}
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
+    for (X_scaled, y_scaled, T_degC, _, origin_unix) in subset_loader:
         X_scaled_dev = X_scaled.to(device)   # (B, L, F)
         y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
+        T_degC_dev   = T_degC  .to(device)   # (B, H, 1)
 
         # origins_dev = [pd.Timestamp(t, unit='s')
         #                for t in origin_unix.tolist()].to(device)
@@ -682,7 +695,9 @@ def subset_evolution_torch(
                 pred_scaled_dev[:, -valid_length:, :],
                 y_scaled_dev   [:, -valid_length:, :], model_NN.quantiles,
                 **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
-                     'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross']})
+                     'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
+                     'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
+                Tavg_current=T_degC_dev[:, -valid_length:, :])
 
         amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -707,8 +722,7 @@ def subset_evolution_torch(
 @torch.no_grad()
 def subset_evolution_numpy(
         model_NN, #: containers.NeuralNet
-        subset_loader : DataLoader,
-
+        subset_loader: DataLoader
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Returns:
@@ -737,9 +751,10 @@ def subset_evolution_numpy(
     # print("initial:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
     # main loop
-    for (X_scaled, y_scaled, _, origin_unix) in subset_loader:
+    for (X_scaled, y_scaled, T_degC, _, origin_unix) in subset_loader:
         X_scaled_dev = X_scaled.to(device)
         y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()      # (B, H)
+        T_degC_cpu   = T_degC  [:, :, 0].cpu().numpy()      # (B, H)
 
         # origins_cpu = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()].cpu()
 
@@ -755,7 +770,9 @@ def subset_evolution_numpy(
             y_scaled_cpu   [:, -valid_length:],
             **{_name: getattr(model_NN, _name) for _name in ['quantiles', \
                  'lambda_cross', 'lambda_coverage', 'lambda_deriv', \
-                 'lambda_median', 'smoothing_cross']})
+                 'lambda_median', 'smoothing_cross',
+                 'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
+                Tavg_current=T_degC_cpu[:, -valid_length:])
 
         # print("batch:\n", loss_quantile_scaled_h_batch.round(2))
 

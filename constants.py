@@ -73,6 +73,15 @@ NNTQ_PARAMETERS: dict = {
     'lambda_deriv'     : 0.15,         # derivative weight in loss function
     'lambda_median'    : 0.6,
     'smoothing_cross'  : 0.025,
+
+        # temperature-dependence (pinball loss, coverage penalty):
+        #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
+        #       cropped to interval [0, 1])]}
+        #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
+    'saturation_cold_degC':-5.,
+    'threshold_cold_degC':  3.,
+    'lambda_cold'      :    0.5,
+
 }
 
 

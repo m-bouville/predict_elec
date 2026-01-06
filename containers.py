@@ -25,6 +25,7 @@ class DataSplit:
     X_dev:          torch.Tensor
     y_dev:          torch.Tensor
     dates:          pd.DatetimeIndex
+    Tavg_degC:      np.ndarray
 
     X_columns:      Optional[List[str]]    = None
 
@@ -298,6 +299,11 @@ class NeuralNet:
     lambda_deriv     : Optional[float] = None
     lambda_median    : Optional[float] = None
     smoothing_cross  : Optional[float] = None
+        # temperature-dependence (pinball loss, coverage penalty)
+    saturation_cold_degC:Optional[float]=None
+    threshold_cold_degC:Optional[float]= None
+    lambda_cold      : Optional[float] = None
+
 
 
     # will be created in __post_init__

@@ -587,7 +587,6 @@ def print_model_summary(
     num_time_steps: int,
     feature_cols: List[str],
     input_length: int, pred_length: int, valid_length: int, features_in_future:bool,
-    # incr_steps_test,
     batch_size: int,
     epochs: int,
     learning_rate: float,
@@ -604,8 +603,13 @@ def print_model_summary(
     lambda_coverage:float,
     lambda_deriv:   float,
     lambda_median:  float,
+        # temperature-dependence (pinball loss, coverage penalty)
+    saturation_cold_degC:float,
+    threshold_cold_degC: float,
+    lambda_cold:    float,
     # metamodel
-    meta_epochs: int, meta_learning_rate: float, meta_weight_decay: float, meta_batch_size: int,
+    meta_epochs: int, meta_learning_rate: float,
+    meta_weight_decay: float, meta_batch_size: int,
     meta_dropout: float, meta_num_cells, meta_patience: int, meta_factor: float
 ):
     # number of sliding windows
@@ -631,6 +635,10 @@ def print_model_summary(
     print(f"{'LAMBDA_COVERAGE':17s} ={lambda_coverage:8.2f}")
     print(f"{'LAMBDA_DERIV':17s} ={lambda_deriv:8.2f}")
     print(f"{'LAMBDA_MEDIAN':17s} ={lambda_median:8.2f}")
+    print("\n  TEMPERATURE DEPENDENCE")
+    print(f"{'SATURATION_COLD_DEGC':17s}={saturation_cold_degC:8.2f} °C")
+    print(f"{'THRESHOLD_COLD_DEGC':17s}={threshold_cold_degC:8.2f} °C")
+    print(f"{'LAMBDA_COLD':17s}  ={lambda_cold:8.2f}")
 
 
     print("\n===== TRAINING =====")

@@ -100,6 +100,7 @@ def normalize_features(df            : pd.DataFrame,
                        feature_cols  : List[str],
                        minutes_per_step: int,
                        dates         : pd.DatetimeIndex,
+                       temperatures  : pd.DataFrame,
                        train_split   : float,
                        n_valid       : int,
                        test_months   : int,
@@ -144,7 +145,7 @@ def normalize_features(df            : pd.DataFrame,
 
 
     data, X_test_scaled = architecture.make_X_and_y(
-            array, dates, train_split, n_valid,
+            array, dates, temperatures.to_numpy(), train_split, n_valid,
             feature_cols, target_col, minutes_per_step,
             input_length=input_length, pred_length=pred_length,
             features_in_future=features_in_future, batch_size=batch_size,
@@ -194,7 +195,8 @@ def training_loop(data          : containers.DatasetBundle,
         t_train_start = time.perf_counter()
 
         train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
-            architecture.subset_evolution_torch(NNTQ_model, data.train.loader)
+            architecture.subset_evolution_torch(
+                NNTQ_model, data.train.loader)  #, data.train.Tavg_degC)
 
         train_loss_quantile_h_scaled= \
             train_loss_quantile_h_scaled.detach().cpu().numpy()
@@ -211,7 +213,8 @@ def training_loop(data          : containers.DatasetBundle,
 
             t_valid_start     = time.perf_counter()
             valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                architecture.subset_evolution_numpy(NNTQ_model, data.valid.loader)
+                architecture.subset_evolution_numpy(
+                    NNTQ_model, data.valid.loader)  #, data.valid.Tavg_degC)
 
             if verbose >= 2:
                 print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
@@ -339,7 +342,7 @@ def run_model(
 
     # Create splits
     data, X_test_scaled = normalize_features(
-        df, target_col, feature_cols, minutes_per_step, dates,
+        df, target_col, feature_cols, minutes_per_step, dates, Tavg_full,
         train_split, n_valid, test_months,
         NNTQ_parameters['input_length'],
         NNTQ_parameters['pred_length'],
@@ -378,7 +381,8 @@ def run_model(
 
     # test loss
     test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
-       architecture.subset_evolution_numpy(NNTQ_model, data.test.loader)
+       architecture.subset_evolution_numpy(
+           NNTQ_model, data.test.loader)  #, data.test.Tavg_degC)
 
     if verbose >= 3:
         print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
