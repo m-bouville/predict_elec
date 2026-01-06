@@ -20,13 +20,36 @@ import numpy  as np
 # Pinball (quantile) loss
 # ----------------------------------------------------------------------
 
+def penalty_cold_torch(
+        saturation_cold_degC: float,
+        threshold_cold_degC : float,
+        Tavg_current        : torch.Tensor,  # /!\ assumes a single one (correct for a single day)
+    ) -> torch.Tensor:  # returns shape (B,)
+
+    # linear ramp
+    penalty = (Tavg_current - threshold_cold_degC) / \
+              (saturation_cold_degC - threshold_cold_degC)
+
+    # clip to [0, 1]
+    penalty = torch.clamp(penalty, 0., 1.)
+
+    return penalty
+
+
 def quantile_with_crossing_torch(
-    y_pred:         torch.Tensor,     # (B, V, Q)
-    y_true:         torch.Tensor,     # (B, V) or (B, V, 1)
-    quantiles:      Tuple[float, ...],
-    lambda_cross:   float,
-    lambda_coverage:float,
-    smoothing     : float
+    y_pred          :  torch.Tensor,     # (B, V, Q)
+    y_true          :  torch.Tensor,     # (B, V) or (B, V, 1)
+    quantiles       :  Tuple[float, ...],
+    lambda_cross    :  float,
+    lambda_coverage : float,
+    smoothing       : float,
+        # temperature-dependence (pinball loss, coverage penalty)
+    saturation_cold_degC:float,
+    threshold_cold_degC: float,
+    lambda_cold     : float,
+    Tavg_current    : torch.Tensor,  # (B, V, 1)
+            # /!\ assumes a single one (correct for a single day)
+
 ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Joint quantile loss with crossing penalty.
@@ -39,10 +62,13 @@ def quantile_with_crossing_torch(
     loss_coverage_h = torch.zeros(V, device=device)
     loss_crossing_h = torch.zeros(V, device=device)
 
+    _penalty_cold = lambda_cold * penalty_cold_torch(
+            saturation_cold_degC, threshold_cold_degC, Tavg_current.to(device)).mean()
+
     for i, tau in enumerate(quantiles):
         diff = y_true - y_pred[..., i]
         pin = torch.maximum(tau * diff, -(1 - tau) * diff)
-        loss_pinball_h += pin.mean(dim=0)
+        loss_pinball_h += ((1 + _penalty_cold) * pin).mean(dim=0)
 
         # Coverage penalty
         if lambda_coverage > 0.:
@@ -53,7 +79,7 @@ def quantile_with_crossing_torch(
             z = -diff / tau_smooth   # broadcast over B
             z = torch.clamp(z, -20., 20.)  # preventing overflow
             soft_ind   = torch.sigmoid(z)         # (B, V)
-            coverage_h = soft_ind.mean(dim=0)     # (V,)
+            coverage_h = ((1 + _penalty_cold) * soft_ind).mean(dim=0)     # (V,)
 
             err  = coverage_h - tau
             w    = torch.where(err > 0,  tau,  1 - tau)
@@ -72,14 +98,36 @@ def quantile_with_crossing_torch(
                     'coverage': loss_coverage_h, 'crossing': loss_crossing_h}
 
 
+def penalty_cold_numpy(
+        saturation_cold_degC: float,
+        threshold_cold_degC : float,
+        Tavg_current        : np.ndarray,  # /!\ assumes a single one (correct for a single day)
+    ) -> np.ndarray:  # returns shape (B,)
+
+    # linear ramp
+    penalty = (Tavg_current - threshold_cold_degC) / \
+              (saturation_cold_degC - threshold_cold_degC)
+
+    # clip to [0, 1]
+    penalty = np.clip(penalty, 0., 1.)
+
+    return penalty
+
+
 
 def quantile_with_crossing_numpy(
-        y_pred        : np.ndarray,     # (B, V, Q)
-        y_true        : np.ndarray,     # (B, V)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        smoothing     : float
+        y_pred          : np.ndarray,     # (B, V, Q)
+        y_true          : np.ndarray,     # (B, V)
+        quantiles       : Tuple[float, ...],
+        lambda_cross    : float,
+        lambda_coverage : float,
+        smoothing       : float,
+            # temperature-dependence (pinball loss, coverage penalty)
+        saturation_cold_degC:float,
+        threshold_cold_degC: float,
+        lambda_cold     : float,
+        Tavg_current    : np.ndarray,  # /!\ assumes a single one (correct for a single day)
+
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
 
     B, V, Q = y_pred.shape
@@ -87,6 +135,9 @@ def quantile_with_crossing_numpy(
     loss_pinball_h  = np.zeros(V)
     loss_coverage_h = np.zeros(V)
     loss_crossing_h = np.zeros(V)
+
+    _penalty_cold = lambda_cold * penalty_cold_numpy(
+                saturation_cold_degC, threshold_cold_degC, Tavg_current).mean()
 
     def sigmoid(x: float) -> float:
         return 1. / (1. + np.exp(-x))
@@ -99,7 +150,7 @@ def quantile_with_crossing_numpy(
         # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}"
 
         pin = np.maximum(tau * diff, -(1 - tau) * diff)
-        loss_pinball_h += pin.mean(axis=0)   # (V,)
+        loss_pinball_h += ((1 + _penalty_cold) * pin).mean(axis=0)   # (V,)
 
         # Coverage penalty
         if lambda_coverage > 0.:
@@ -110,13 +161,13 @@ def quantile_with_crossing_numpy(
             z = -diff / tau_smooth                # (B, V)
             z = np.clip(z, -20., 20.)  # preventing overflow
             soft_ind   = sigmoid(z)              # (B, V)
-            coverage_h = soft_ind.mean(axis=0)   # (V,)
+            coverage_h = ((1 + _penalty_cold) * soft_ind).mean(axis=0)   # (V,)
 
             err  = coverage_h - tau              # (V,)
             w    = np.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_coverage_h += lambda_coverage * alpha * w * err**2       # (V,)
+            loss_coverage_h += lambda_coverage * alpha * w * err**2     # (V,)
 
     # Crossing penalty
     if lambda_cross > 0.:
@@ -253,14 +304,19 @@ def derivative_numpy(
 # ----------------------------------------------------------------------
 
 def quantile_torch(
-        y_pred        : torch.Tensor,   # (B, V, Q)
-        y_true        : torch.Tensor,   # (B, V) or (B, V, 1)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-        lambda_median : float,
-        smoothing_cross:float
+        y_pred          : torch.Tensor,   # (B, V, Q)
+        y_true          : torch.Tensor,   # (B, V) or (B, V, 1)
+        quantiles       : Tuple[float, ...],
+        lambda_cross    : float,
+        lambda_coverage : float,
+        lambda_deriv    : float,
+        lambda_median   : float,
+        smoothing_cross : float,
+            # temperature-dependence (pinball loss, coverage penalty)
+        saturation_cold_degC:float,
+        threshold_cold_degC: float,
+        lambda_cold     : float,
+        Tavg_current    : float,  # /!\ assumes a single one (correct for a single day)
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Torch loss wrapper for quantile forecasts.
@@ -271,12 +327,16 @@ def quantile_torch(
     # Base quantile + crossing loss
     loss_quantile_with_crossing_h, dict_loss_quantile_with_crossing_h = \
         quantile_with_crossing_torch(
-            y_pred       = y_pred,
-            y_true       = y_true,
-            quantiles    = quantiles,
-            lambda_cross = lambda_cross,
-            lambda_coverage=lambda_coverage,
-            smoothing    = smoothing_cross
+            y_pred           = y_pred,
+            y_true           = y_true,
+            quantiles        = quantiles,
+            lambda_cross     = lambda_cross,
+            lambda_coverage  = lambda_coverage,
+            smoothing        = smoothing_cross,
+            saturation_cold_degC=saturation_cold_degC,
+            threshold_cold_degC=threshold_cold_degC,
+            lambda_cold      = lambda_cold,
+            Tavg_current     = Tavg_current
         )
 
     # Optional derivative loss (per quantile)
@@ -300,14 +360,20 @@ def quantile_torch(
 
 
 def quantile_numpy(
-        y_pred        : np.ndarray,     # (B, V, Q)
-        y_true        : np.ndarray,     # (B, V)
-        quantiles     : Tuple[float, ...],
-        lambda_cross  : float,
-        lambda_coverage:float,
-        lambda_deriv  : float,
-        lambda_median : float,
-        smoothing_cross:float
+        y_pred          : np.ndarray,     # (B, V, Q)
+        y_true          : np.ndarray,     # (B, V)
+        quantiles       : Tuple[float, ...],
+        lambda_cross    : float,
+        lambda_coverage : float,
+        lambda_deriv    : float,
+        lambda_median   : float,
+        smoothing_cross : float,
+            # temperature-dependence (pinball loss, coverage penalty)
+        saturation_cold_degC:float,
+        threshold_cold_degC: float,
+        lambda_cold     : float,
+        Tavg_current    : np.ndarray,     # (B, V)
+                # /!\ assumes a single one (correct for a single day)
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     NumPy loss wrapper for quantile forecasts.
@@ -319,12 +385,16 @@ def quantile_numpy(
 
     loss_quantile_with_crossing_h, dict_loss_quantile_with_crossing_h = \
         quantile_with_crossing_numpy(
-            y_pred       = y_pred,
-            y_true       = y_true,
-            quantiles    = quantiles,
-            lambda_cross = lambda_cross,
-            lambda_coverage=lambda_coverage,
-            smoothing    = smoothing_cross
+            y_pred           = y_pred,
+            y_true           = y_true,
+            quantiles        = quantiles,
+            lambda_cross     = lambda_cross,
+            lambda_coverage  = lambda_coverage,
+            smoothing        = smoothing_cross,
+            saturation_cold_degC=saturation_cold_degC,
+            threshold_cold_degC=threshold_cold_degC,
+            lambda_cold      = lambda_cold,
+            Tavg_current     = Tavg_current
         )
 
     if lambda_deriv > 0.:

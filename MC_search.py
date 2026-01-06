@@ -36,13 +36,13 @@ def sample_baseline_parameters(base_params: Dict[str, Dict[str, Any]])\
 
         elif _baseline == 'RF':
             if 'n_estimators' in p.keys():
-                p['n_estimators'   ] = int(round(random.uniform(300, 600), -1))
+                p['n_estimators'   ] = int(round(random.uniform(400, 600), -1))
             if 'max_depth' in p.keys():
                 p['max_depth'      ] = int(round(random.uniform( 15,  25)))
             if 'min_samples_leaf' in p.keys():
                 p['min_samples_leaf']= int(round(random.uniform( 10,  20)))
             if 'min_samples_split' in p.keys():
-                p['min_samples_split']= int(round(random.uniform( 15,  25)))
+                p['min_samples_split']=int(round(random.uniform( 15,  30)))
             if 'max_features' in p.keys():
                 p['max_features'   ] = random.choice(['sqrt', 0.5])
 
@@ -57,13 +57,13 @@ def sample_baseline_parameters(base_params: Dict[str, Dict[str, Any]])\
                 p['learning_rate'  ] = \
                     round(0.05 * 10**random.uniform(np.log10(0.3), np.log10( 3.)), 4)
             if 'n_estimators' in p.keys():   # More trees => more robust model
-                p['n_estimators'   ] = int(round(random.uniform(300, 600), -1))
+                p['n_estimators'   ] = int(round(random.uniform(400, 600), -1))
             if 'min_child_samples' in p.keys():
                 p['min_child_samples']=int(round(random.uniform( 15,  25)))
 
             if 'learning_rate' in p.keys():
                 p['learning_rate'  ] = \
-                    round(0.01  * 10 ** random.uniform(np.log10(0.3), np.log10( 3.)), 4)
+                    round(0.05  * 10 ** random.uniform(np.log10(0.3), np.log10( 3.)), 4)
 
             if 'subsample' in p.keys():  # Fraction of samples used to train each tree
                 p['subsample'      ] = round(random.uniform(0.6, 1. ), 3)
@@ -92,18 +92,18 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
         p['batch_size']  = random.choice([32, 64, 96, 128])
     if 'learning_rate' in p.keys():
         p['learning_rate']= \
-            round(0.01  * 10 ** random.uniform(np.log10(0.3), np.log10( 3.)), 4)
+            round(0.02  * 10 ** random.uniform(np.log10(0.3), np.log10( 3.)), 4)
     if 'weight_decay' in p.keys():
         p['weight_decay']= \
-            round(0.1e-6* 10 ** random.uniform(np.log10(0.1), np.log10(10.)), 9)
+            round(0.3e-6* 10 ** random.uniform(np.log10(0.1), np.log10(10.)), 9)
     if 'dropout' in p.keys():
-        p['dropout']     = round(random.uniform(0.02, 0.15), 3)
+        p['dropout']     = round(random.uniform(0.02, 0.2), 3)
 
     # quantile loss weights
     if 'lambda_cross' in p.keys():
         p['lambda_cross']   = round(random.uniform(0.5,  2.0), 3)
     if 'lambda_coverage' in p.keys():
-        p['lambda_coverage']= round(random.uniform(0.2,  1.0), 2)
+        p['lambda_coverage']= round(random.uniform(0.2,  1.2), 2)
     if 'lambda_deriv' in p.keys():
         p['lambda_deriv']   = round(random.uniform(0.0,  0.3), 4)
     if 'lambda_median' in p.keys():
@@ -117,7 +117,7 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'saturation_cold_degC' in p.keys():
         p['saturation_cold_degC']=round(random.uniform(-8., -2.), 1)
     if 'lambda_cold' in p.keys():
-        p['lambda_cold']= round(random.uniform(0., 1.), 2)
+        p['lambda_cold']= round(random.uniform(0., 1.), 3)
 
 
     # # quantiles
@@ -136,11 +136,11 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'model_dim' in p.keys():
         p['model_dim']  = int(128 * random.choice([0.75, 1.0, 1.25]))
     if 'ffn_size' in p.keys():
-        p['ffn_size']   = random.choice([2, 3, 4, 5])
+        p['ffn_size']   = random.choice([2, 3, 4, 5, 6])
     if 'num_heads' in p.keys():
-        p['num_heads']  = random.choice([2, 3, 4, 5])
+        p['num_heads']  = random.choice([2, 3, 4, 5, 6])
     if 'num_layers' in p.keys():
-        p['num_layers'] = random.choice([1, 2, 3, 4])
+        p['num_layers'] = random.choice([1, 2, 3, 4, 5])
 
     # enforce divisibility (Transformer constraint)
     if 'model_dim' in p and 'num_heads' in p:
@@ -156,7 +156,7 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'patience' in p.keys():
         p['patience']      = int(      random.uniform(4,    10))
     if 'min_delta' in p.keys():
-        p['min_delta']     =     round(random.uniform(15e-3,30e-3), 5)
+        p['min_delta']     =     round(random.uniform(15e-3,35e-3), 5)
 
     # derived quantities
     if 'input_length' in p and 'features_in_future' in p and \
@@ -178,7 +178,7 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
         p['epochs']      = int(random.uniform(8, 15))
 
     if 'batch_size' in p.keys():
-        p['batch_size']  = random.choice([128, 192, 256, 384])
+        p['batch_size']  = random.choice([192, 256, 384, 512])
 
     if 'learning_rate' in p.keys():
         p['learning_rate']= \
@@ -189,7 +189,7 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
             round(10e-6 * 10 ** random.uniform(np.log10(0.1), np.log10(10.)), 7)
 
     if 'dropout' in p.keys():
-        p['dropout']     = round(random.uniform(0.05, 0.2), 2)
+        p['dropout']     = round(random.uniform(0.02, 0.2), 2)
 
     # num_cells: scale but keep integers ≥ 4
     if 'num_cells' in p.keys():
@@ -199,7 +199,7 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
 
     # early stopping
     if 'patience' in p.keys():
-        p['patience'] =       random.choice ([3, 4, 5, 6])
+        p['patience'] =       random.choice ([2, 3, 4, 5, 6])
     if 'factor' in p.keys():
         p['factor']   = round(random.uniform(0.6, 0.85), 3)
 
@@ -229,7 +229,7 @@ def run_Monte_Carlo_search(
             seed                : int,
             force_calc_baselines: bool,
             cache_fname         : Optional[str] = None,
-            csv_path            : str    = "mc_results.csv"
+            csv_path            : str    = 'parameter_search.csv'
         ):
 
     import warnings

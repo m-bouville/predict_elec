@@ -1,7 +1,8 @@
 # import sys
 
 
-import MC_search, Bayes_search, run # containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
+import MC_search, Bayes_search, run
+    # containers, architecture, utils, LR_RF, IO, plots, losses, metamodel,
 
 
 
@@ -32,7 +33,7 @@ if __name__ == "__main__":
         Bayes_search.run_Bayes_search(
         # MC_search.run_Monte_Carlo_search(
                 num_runs            = num_runs,
-                csv_path            = "MC_results.csv",
+                csv_path            = 'parameter_search.csv',
 
                 # configuration bundles
                 base_baseline_params= BASELINE_CFG,
@@ -46,7 +47,7 @@ if __name__ == "__main__":
                 val_ratio           = VAL_RATIO,
                 forecast_hour       = FORECAST_HOUR,
                 seed                = SEED,
-                force_calc_baselines= False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG'
+                force_calc_baselines= False,
                 cache_fname         = CACHE_FNAME,
             )
 
@@ -56,7 +57,7 @@ if __name__ == "__main__":
                   # configuration bundles
                   baseline_cfg      = BASELINE_CFG,
                   NNTQ_parameters   = NNTQ_PARAMETERS,
-                  meta_NN_parameters= METAMODEL_NN_PARAMETERS,
+                  metamodel_NN_parameters= METAMODEL_NN_PARAMETERS,
 
                   dict_fnames       = DICT_FNAMES,
 
@@ -66,7 +67,7 @@ if __name__ == "__main__":
                   val_ratio         = VAL_RATIO,
                   forecast_hour     = FORECAST_HOUR,
                   seed              = SEED,
-                  force_calc_baselines=False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG',
+                  force_calc_baselines=VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG',
 
                   # XXX_EVERY (in epochs)
                   validate_every    = VALIDATE_EVERY,
@@ -74,5 +75,5 @@ if __name__ == "__main__":
                   plot_conv_every   = PLOT_CONV_EVERY,
 
                   cache_fname       = CACHE_FNAME,
-                  verbose          = VERBOSE
+                  verbose           = VERBOSE
                   )

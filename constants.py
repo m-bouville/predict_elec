@@ -76,7 +76,7 @@ NNTQ_PARAMETERS: dict = {
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
-        #       cropped to interval [0, 1])]}
+        #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
     'saturation_cold_degC':-5.,
     'threshold_cold_degC':  3.,
@@ -146,7 +146,7 @@ DICT_FNAMES = {
     "temperature": 'data/temperature-quotidienne-regionale.csv',
     "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
 }
-CACHE_FNAME = "cache/merged_aligned.csv"
+CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
 

@@ -5,7 +5,7 @@
 # ----------------------------------------------------------------------
 
 
-import os # , sys
+import os, sys
 from   typing import List, Tuple  # Dict  #, Optional
 
 import numpy  as np
@@ -72,7 +72,7 @@ def load_consumption(path, verbose: int = 0):
 
 
 # weights: https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
-
+#    latest update: November 10 2025
 def load_weights(path, verbose: int = 0) -> pd.Series:
     # weights (electricity consumption per region)
     df_weigths = pd.read_csv(path, sep=';')
@@ -416,23 +416,33 @@ def load_data(dict_fnames: dict, cache_fname: str,
         # d = d.add_prefix(f"{name}_")
         aligned.append(d)
 
-    merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
-    merged.index.name = "datetime"
+    df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
+    df_merged.index.name = "datetime"
 
     if cache_fname is not None:
-        merged.to_csv(cache_fname)
+        df_merged.to_csv(cache_fname)
 
         if verbose >= 2:
             print(f"Saved merged dataset to {cache_fname}")
-            print(merged.head())
+            print(df_merged.head())
 
     if verbose >= 3:
-        plots.data(merged.drop(columns=['year', 'month', 'timeofday'])\
+        plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date")
 
-    return merged, dates_df
+    # quantiles for input
+    if verbose >= 2:
+        quantiles_pc = [0.5, 1, 2, 5, 50, 95, 98, 99, 99.5]
+        quantiles_df = df_merged[['consumption_GW','Tmin_degC','Tavg_degC','Tmax_degC']]\
+                .quantile([q/100 for q in quantiles_pc], axis=0)
+        quantiles_df.index = [f'q{q}' for q in quantiles_pc]
+
+        print(quantiles_df)
+
+
+    return df_merged, dates_df
 
 
 

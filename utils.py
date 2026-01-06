@@ -234,7 +234,7 @@ def overall_loss(flat_metrics           : Dict[str, float],
 
 
 
-def recalculate_loss(csv_path       : str   = 'mc_results.csv',
+def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
                      weight_coverage: float = 10.) -> None:
     # Load the CSV file containing MC runs
     results_df = pd.read_csv(csv_path, index_col=False)

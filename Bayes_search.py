@@ -47,8 +47,8 @@ def sample_baseline_parameters(
             if ('type' in p) and ('alpha' in p):
                 if p['type'] == 'lasso':
                     p['alpha'] = trial.suggest_float('LR_alpha', 0.005, 0.04,log=True)
-                else:
-                    p['alpha'] = trial.suggest_float('LR_alpha', 0.5, 2.0, log=True)
+                else:  # ridge
+                    p['alpha'] = trial.suggest_float('LR_alpha', 0.2, 2.0, log=True)
 
         elif _baseline == 'RF':
             if 'n_estimators' in p:  # number of trees in the Random Forest
@@ -57,10 +57,12 @@ def sample_baseline_parameters(
                 p['max_depth'] = trial.suggest_int('RF_max_depth', 15, 25)
             if 'min_samples_leaf' in p:   # minimum number of samples required a leaf node
                 p['min_samples_leaf'] = trial.suggest_int('RF_min_samples_leaf', 10, 20)
-            if 'min_samples_split' in p:   # minimum number of samples to split an internal node
+            if 'min_samples_split' in p:   # min number of samples to split an internal node
                 p['min_samples_split'] = trial.suggest_int('RF_min_samples_split', 15, 25)
             if 'max_features' in p:    # number of features when looking for the best split
-                p['max_features']=trial.suggest_categorical('RF_max_features', ['sqrt', '0.5'])
+                p['max_features']=trial.suggest_categorical('RF_max_features',['sqrt','0.5'])
+                if p['max_features'] != 'sqrt':  # this is a float stored as str
+                    p['max_features'] = float(p['max_features'])
 
         elif _baseline == 'GB':
             if 'boosting_type' in p:   # TODO add more?
@@ -70,7 +72,7 @@ def sample_baseline_parameters(
             if 'max_depth' in p:
                 p['max_depth'] = trial.suggest_categorical('GB_max_depth', [3, 4, 5, 6])
             if 'learning_rate' in p:
-                p['learning_rate']=trial.suggest_float('GB_learning_rate', 0.015, 0.15, log=True)
+                p['learning_rate']=trial.suggest_float('GB_learning_rate', 0.015,0.15,log=True)
             if 'n_estimators' in p:
                 p['n_estimators'] = trial.suggest_int('GB_n_estimators', 300, 600, step=10)
             if 'min_child_samples' in p:
@@ -117,15 +119,24 @@ def sample_NNTQ_parameters(
     if 'smoothing_cross' in p:
         p['smoothing_cross']= trial.suggest_float('smoothing_cross', 0.005, 0.05)
 
+        # temperature-dependence (pinball loss, coverage penalty)
+    if 'threshold_cold_degC' in p:
+        p['threshold_cold_degC']=trial.suggest_float('threshold_cold_degC',0.,5.,step=0.1)
+    if 'saturation_cold_degC' in p:
+        p['saturation_cold_degC']=trial.suggest_float('saturation_cold_degC',
+                                                      -8., -2., step=0.1)
+    if 'lambda_cold' in p:
+        p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0., 1.)
+
     # Architecture
     if 'model_dim' in p:
         p['model_dim'  ] = trial.suggest_categorical('model_dim_scale', [96, 128, 156])
     if 'ffn_size' in p:
-        p['ffn_size'   ] = trial.suggest_categorical('ffn_size',  [2, 3, 4, 5])
+        p['ffn_size'   ] = trial.suggest_categorical('ffn_size',  [2, 3, 4, 5, 6])
     if 'num_heads' in p:
-        p['num_heads'  ] = trial.suggest_categorical('num_heads', [2, 3, 4, 5])
+        p['num_heads'  ] = trial.suggest_categorical('num_heads', [2, 3, 4, 5, 6])
     if 'num_layers' in p:
-        p['num_layers' ] = trial.suggest_categorical('num_layers',[1, 2, 3, 4])
+        p['num_layers' ] = trial.suggest_categorical('num_layers',[1, 2, 3, 4, 5])
 
     if 'epochs' in p:
         p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 2, 8)
@@ -164,21 +175,22 @@ def sample_metamodel_NN_parameters(
     if 'epochs' in p:
         p['epochs']      = trial.suggest_int('metaNN_epochs', 8, 15)
     if 'batch_size' in p:
-        p['batch_size']  = trial.suggest_categorical('metaNN_batch_size', [128, 192, 256, 384, 512])
+        p['batch_size']  = trial.suggest_categorical('metaNN_batch_size',
+                                                     [128, 192, 256, 384, 512])
     if 'learning_rate' in p:
-        p['learning_rate']=trial.suggest_float('metaNN_learning_rate', 0.15e-3, 1.5e-3, log=True)
+        p['learning_rate']=trial.suggest_float('metaNN_learning_rate',0.15e-3,1.5e-3,log=True)
     if 'weight_decay' in p:    # BUG: 0 in csv at start
         p['weight_decay']= trial.suggest_float('metaNN_weight_decay', 0., 1e-5, log=False)
     if 'dropout' in p:
         p['dropout']     = trial.suggest_float('metaNN_dropout', 0.05, 0.2)
 
     if 'num_cells' in p:
-        p['num_cells']= [trial.suggest_categorical('metaNN_num_cells_0', [24, 32, 40]),
-                         trial.suggest_categorical('metaNN_num_cells_1', [12, 16, 20])]
+        p['num_cells']= [trial.suggest_categorical('metaNN_num_cells_0', [24,32,40,48]),
+                         trial.suggest_categorical('metaNN_num_cells_1', [12,16,20,24])]
 
     # Early stopping
     if 'metaNN_patience' in p:
-        p['patience'] = trial.suggest_categorical('patience', [3, 4, 5, 6])
+        p['patience'] = trial.suggest_categorical('patience', [2, 3, 4, 5, 6])
     if 'metaNN_factor' in p:
         p['factor'  ] = trial.suggest_float('factor', 0.6, 0.85)
 
@@ -211,38 +223,44 @@ distributions_baselines = {
     # gradient boosting
     'GB_boosting_type': CategoricalDistribution(choices=['gbdt']),
     'GB_num_leaves': CategoricalDistribution(choices=[15, 31]),
-    'GB_max_depth': CategoricalDistribution(choices=[3, 4, 5, 6]),
-    'GB_learning_rate': FloatDistribution(low=0.002, high=0.15, log=True),
+    'GB_max_depth':  CategoricalDistribution(choices=[3, 4, 5, 6]),
+    'GB_learning_rate':FloatDistribution(low=0.002, high=0.15, log=True),
     'GB_n_estimators': IntDistribution(low=300, high=600, step=10),
-    'GB_min_child_samples': IntDistribution(low=15, high=25, step=1),
-    'GB_subsample': FloatDistribution(low=0.6, high=1.0),
-    'GB_colsample_bytree': FloatDistribution(low=0.6, high=1.0),
-    'GB_reg_alpha': FloatDistribution(low=0.03, high=0.3, log=True),
+    'GB_min_child_samples':IntDistribution(low=15, high=25, step=1),
+    'GB_subsample':   FloatDistribution(low=0.6, high=1.0),
+    'GB_colsample_bytree':FloatDistribution(low=0.6, high=1.0),
+    'GB_reg_alpha':  FloatDistribution(low=0.03, high=0.3, log=True),
     'GB_reg_lambda': FloatDistribution(low=0.03, high=0.3, log=True)
 }
 
 distributions_NNTQ = {
     'patch_length': IntDistribution(low=24, high=24),  # constant
-    'stride': IntDistribution(low=12, high=12),  # constant
-    'epochs': IntDistribution(low=20, high=40, step=1),
+    'stride':     IntDistribution(low=12, high=12),  # constant
+    'epochs':     IntDistribution(low=20, high=40, step=1),
     'batch_size': CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate': FloatDistribution(low=0.002, high=0.3, log=True),
+    'learning_rate':FloatDistribution(low=0.002, high=0.3, log=True),
     'weight_decay': FloatDistribution(low=0., high=1e-5),  # BUG: 0 in csv at start
-    'dropout': FloatDistribution(low=0.02, high=0.15),
-    'lambda_cross': FloatDistribution(low=0.5, high=2.0),
-    'lambda_coverage': FloatDistribution(low=0.2, high=1.0),
-    'lambda_deriv': FloatDistribution(low=0.0, high=0.3),
-    'lambda_median': FloatDistribution(low=0.2, high=1.0),
-    'smoothing_cross': FloatDistribution(low=0.005, high=0.05),
-    'model_dim':      IntDistribution(low=95, high=160, step=1),
-    'ffn_size': CategoricalDistribution(choices=[2, 3, 4, 5]),
-    'num_heads': CategoricalDistribution(choices=[2, 3, 4, 5]),
-    'num_layers': CategoricalDistribution(choices=[1, 2, 3, 4]),
-    'geo_block_ratio': FloatDistribution(low=1., high=1.),  # constant
+    'dropout':    FloatDistribution(low=0.02, high=0.15),
+    # quantile loss
+    'lambda_cross':   FloatDistribution(low=0.5, high=2.0),
+    'lambda_coverage':FloatDistribution(low=0.2, high=1.0),
+    'lambda_deriv':   FloatDistribution(low=0.0, high=0.3),
+    'lambda_median':  FloatDistribution(low=0.2, high=1.0),
+    'smoothing_cross':FloatDistribution(low=0.005,high=0.05),
+        # temperature-dependence (pinball loss, coverage penalty)
+    'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
+    'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
+    'lambda_cold':    FloatDistribution(low=0., high=1.),
+
+    'model_dim':    IntDistribution(low=95, high=160, step=1),
+    'ffn_size':     CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
+    'num_heads':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
+    'num_layers':   CategoricalDistribution(choices=[1, 2, 3, 4, 5]),
+    'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
     'num_geo_blocks': IntDistribution(low=2, high=8, step=1),
     'warmup_steps': IntDistribution(low=1500, high=4000, step=50),
-    'patience': IntDistribution(low=3, high=10, step=1),
-    'min_delta': FloatDistribution(low=15e-3, high=30e-3),
+    'patience':     IntDistribution(low=3, high=10, step=1),
+    'min_delta':    FloatDistribution(low=15e-3, high=30e-3),
 }
 
 distributions_metamodel_NN = {
@@ -251,11 +269,59 @@ distributions_metamodel_NN = {
     'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
     'metaNN_weight_decay':FloatDistribution(low=1e-8, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
-    'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40]),
-    'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20]),
-    'metaNN_patience':    CategoricalDistribution(choices=[3, 4, 5, 6]),
+    'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40, 48]),
+    'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20, 24]),
+    'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
     'metaNN_factor':      FloatDistribution(low=0.6, high=0.85),
 }
+
+
+# run several plotting functions
+def plot_optuna(study) -> None:
+    print("Plotting Optuna results so far...")
+
+    # BUG (strangely) does not display anything
+    # # Plot convergence
+    # fig = optuna.visualization.plot_optimization_history(study)
+    # fig.show()
+
+    # # Plot parameter importances
+    # optuna.visualization.plot_param_importances   (study).show()
+
+    # optuna.visualization.plot_parallel_coordinate(
+    #     study,
+    #     params=list(study.trials[0].params.keys())[:3]
+    # ).show()
+
+    # # Parallel Coordinate Plot (structure discovery)
+    # optuna.visualization.plot_parallel_coordinate(
+    #     study,
+    #     params=["learning_rate", "dropout", "num_layers"]
+    # ).show()
+
+
+    # Convergence
+    df = study.trials_dataframe()
+    df = df.sort_values("number")
+
+    df["best_so_far"] = df["value"].cummin()
+    df.plot(x="number", y=["value", "best_so_far"])
+
+
+    # Parameter importance (quick + honest)
+    dict_corr = dict()
+    numeric_cols = df.select_dtypes(include=[np.number]).drop(columns='value').columns
+    for p in numeric_cols:
+        dict_corr[p] = np.corrcoef(df[p], df["value"])[0, 1]
+    df_corr = pd.Series(dict_corr).sort_values(ascending=False)
+    print(df_corr[:5])
+    df_corr.plot(kind="bar", title="Parameter Importance (Correlation with 'value')")
+
+
+    # histogram
+    df  = study.trials_dataframe()
+    top = df.nsmallest(20, "value")
+    top[["params_learning_rate", "params_dropout"]].hist()
 
 
 def run_Bayes_search(
@@ -273,7 +339,7 @@ def run_Bayes_search(
             seed                : int,
             force_calc_baselines: bool,
             cache_fname         : Optional[str] = None,
-            csv_path            : str    = 'mc_results.csv'
+            csv_path            : str    = 'parameter_search.csv'
         ):
 
     import warnings
@@ -418,15 +484,20 @@ def run_Bayes_search(
     study   = optuna.create_study(direction='minimize',
                                   sampler=optuna.samplers.TPESampler())
 
+    distributions_keys = (distributions_baselines | \
+                    distributions_NNTQ | distributions_metamodel_NN).keys()
+
     # Create a list of FrozenTrial objects
     trials = []
     for index, row in results_df.iterrows():
         # print(index, row)
         _params = {k: row[k] for k in row.keys()
                   if k not in ['timestamp', 'overall_loss']}
+        assert set(_params.keys()) - set(distributions_keys) == set()
+        assert set(distributions_keys) - set(_params.keys()) == set()
+
         trial = optuna.trial.FrozenTrial(
-            number        = index,
-            # number = len(trials),  # Trial number
+            number        = index,  # Trial number
             state         = optuna.trial.TrialState.COMPLETE,  # State of the trial
             datetime_start=   pd.to_datetime(row['timestamp'])-timedelta(minutes=1.5),
             datetime_complete=pd.to_datetime(row['timestamp']),
@@ -437,7 +508,7 @@ def run_Bayes_search(
                             distributions_NNTQ | distributions_metamodel_NN,
             system_attrs  = {},  # system attributes (can be empty)
             intermediate_values={},  # (can be empty)
-            trial_id      = index  # ID du trial
+            trial_id      = index  # ID of the trial
         )
         trials.append(trial)
 
@@ -448,8 +519,47 @@ def run_Bayes_search(
     for trial in trials:
         study.add_trial(trial)
 
+    # for t in study.trials[:5]:
+    #     print(t.number, t.distributions)
+    # from collections import Counter
+    # print("params:", Counter(len(t.params) for t in study.trials))
+
+    # print(set(results_df.columns) - set(distributions_keys))
+    # print(set(distributions_keys) - set(results_df.columns))
+
+    # from collections import Counter
+    # print("state:", Counter(t.state for t in study.trials))
+
+    # print("t.value is None:", sum(t.value is None for t in study.trials))
+
+    # for k in study.trials[0].params:
+    #     vals = [t.params[k] for t in study.trials]
+    #     if len(set(vals)) == 1:
+    #         print("constant:", k)
+
+
+    # print(len(study.trials), "trials",
+    #       np.unique([t.value for t in study.trials]).size, "unique")
+    # # from collections import Counter
+    # # print(Counter(round(t.params.get("learning_rate"), 7) for t in study.trials))
+    # for p in ["learning_rate", "dropout", "num_layers"]:
+    #     print(p, sum(p in t.params for t in study.trials))
+    # # print([t.number for t in study.trials])
+    # print([t.value  for t in study.trials][:5])
+    # print(study.direction)
+    # # for t in study.trials[:5]:
+    # #     print(set(t.params) - set(t.distributions))
+    # #     print(set(t.distributions) - set(t.params))
+    # print(study.trials[0].params.keys())
+
+    # study.optimize(objective, n_trials=1)
+    # Plotting
+    plot_optuna(study)
+
+
     # Run optimization
-    study.optimize(objective, n_trials=50)
+    print(f"Starting {num_runs} trials...")
+    study.optimize(objective, n_trials=num_runs)
 
     # Print the best parameters found
     print("Best trial:")
@@ -459,6 +569,9 @@ def run_Bayes_search(
     for key, value in trial.params.items():
         print(f"    {key}: {value}")
     # print(f"Best hyperparameters: {study.best_params}")
+
+
+    # plot_optuna(study)
 
     return study.best_params
 

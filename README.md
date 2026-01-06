@@ -32,7 +32,7 @@ Gearing the model toward this specific case has two (advantageous) consequences:
 
 
 ### Leakage Control
-- All features used to predict _h_ + 36 are available at _h_: no consumption data from D+1 are used.
+- Features used to predict _h_ + 36 are available at _h_: no consumption data from D+1 are used.
 - Baseline model predictions are generated out-of-sample only.
 - Meta-models are trained on validation predictions exclusively.
 
@@ -45,9 +45,9 @@ The strategy is based on a **two-stage architecture** with a strict separation o
 1. First, a Neural Network uses Transformers to predict Quantiles (hereafter, NNTQ), in order to estimate the uncertainty of the forecast.
 2. Then, a meta-model forecasts the operational point as the mean.
 
-There is **no feedback loop** between the two stages.
+There is no feedback loop between the two stages.
 
-The main file is `predict_elec.py`.
+The main file is `predict_elec.py`. Random and Bayesian hyperparameter searches are available.
 
 
 ### Stage 1 — Quantile Neural Network
@@ -56,13 +56,14 @@ The main file is `predict_elec.py`.
 - exogenous features (temperature, school holidays);
 - week-ends plus Fourier-like sine waves at different scales (day, year);
 - moving averages of recent consumption (but not so recent as to cause leaks);
-- predictions from baseline models --**linear regression (LR)**, **random forest, (RF)** and **gradient boosting (GB)**-- used as features, *not* ensembled directly (yet).
+- predictions from baseline models --**linear regression (LR)**, **random forest, (RF)** and **gradient boosting (LGBM)**-- used as features, *not* ensembled directly (yet).
 
 **Output**
 - Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
 
 **Training**
-- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives);
+- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives)
+  - Since extreme cold does not change the demand as much as it increases uncertainty and tail risk, pinball and coverage losses have a different penalty in the cold.
 - Direct multi-horizon prediction
 
 **Role**
@@ -70,13 +71,13 @@ The main file is `predict_elec.py`.
   - calibrated uncertainty estimates (e.g. deciles),
   - a statistically meaningful median (`q50`).
 
-This stage is **self-contained** and remains unchanged by the downstream metamodel.
+This stage is self-contained and remains unchanged by the downstream metamodel.
 
 
 ### Stage 2 — Mean-Based Meta-Model
 
 **Input**
-- LR, RF an GB predictions
+- LR, RF and LGBM predictions
 - Median (`q50`) output from stage 1
 - features similar to those used in stage 1.
 
@@ -97,7 +98,7 @@ This stage is **self-contained** and remains unchanged by the downstream metamod
 
 ## Issues and plans
 - **Systematic bias in predictions**
-  - Bias is visible in LR, RF and NN in validation and testing (but not training).
+  - Bias is visible in LR, RF, LGBM and NN in validation and testing (but not training).
 
 - **Empirical coverage of predicted quantiles**
   - While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
