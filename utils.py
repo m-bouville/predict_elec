@@ -179,142 +179,6 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
 
 
 # -------------------------------------------------------
-# for MC_search, Bayes_search
-# -------------------------------------------------------
-
-def expand_sequence(name: str, values: Sequence, length: int,
-                    prefix: Optional[str]="", fill_value=np.nan) -> Dict[str, Any]:
-    """
-    Expand a list/tuple into fixed-length columns.
-    Shorter lists are padded with fill_value.
-    Longer lists raise an error (by default).
-    """
-    if not isinstance(values, (list, tuple)):
-        raise TypeError(f"{name} must be list or tuple, got {type(values)}")
-
-    if len(values) > length:
-        raise ValueError(f"{name} length {len(values)} > fixed length {length}")
-
-    output = {}
-    for i in range(length):
-        output[f"{prefix}{name}_{i}"] = values[i] if i < len(values) else fill_value
-
-    return output
-
-def flatten_dict(d, parent_key="", sep="_"):
-    """
-    Flatten a nested dict using namespaced keys.
-    Example:
-      {"rf": {"n_estimators": 500}} →
-      {"baseline__rf__n_estimators": 500}
-    """
-    items = {}
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-
-        if isinstance(v, dict):
-            items.update(flatten_dict(v, new_key, sep=sep))
-        else:
-            items[new_key] = v
-    return items
-
-def overall_loss(
-         flat_metrics           : Dict[str, float],
-         quantile_delta_coverage: Dict[str, float],
-
-         # constants
-         max_quantile_delta_coverage: float = 0.25,
-                 # prevents one quantile from dominating completely
-
-         weight_coverage        : float   = 5.,
-                 # coverage and bias, MAE have different scales
-
-         quantile_weights       : Dict[str, float] = \
-             {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
-                 # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
-
-         metric_weights         : Dict[str, float] = \
-             {'bias': 2., 'RMSE': 1., 'MAE': 1.},
-                 # RMSE and MAE are variants of each other, bias is different
-
-         model_weights         : Dict[str, float] = \
-             {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
-              'meta_LR'     : 3., 'meta_NN'     : 4.},
-            # LR, RF and LGBM are just underlying models to the metamodels;
-            #      improving them intrinsically is good, but secondary
-    ) -> float:
-
-    _loss_quantile_coverage = \
-        np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
-                    for q, gap in quantile_delta_coverage.items()])
-                # was np.mean
-
-    dict_by_metric = {k: [] for k in list(metric_weights.keys())}
-
-    for key, value in flat_metrics.items():
-        parts  = key.replace("test_", "").split('_')
-        model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
-        metric = parts[-1]             # Ex: "bias", "RMSE", etc.
-
-        dict_by_metric[metric].append(model_weights[model] * abs(value))
-
-    for metric in dict_by_metric.keys():
-        assert len(dict_by_metric[metric]) == len(model_weights)
-
-    dict_avg_metrics = {metric: np.sum(_list) / np.sum(list(model_weights.values()))
-                            for (metric, _list) in dict_by_metric.items()}
-
-    avg_metric = np.sum([value * metric_weights[metric]
-                        for (metric, value) in dict_avg_metrics.items()]) / \
-                    np.sum((list(metric_weights.values())))
-    # print(avg_metrics)
-
-    return float(round(_loss_quantile_coverage*weight_coverage + avg_metric, 4))
-
-
-def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
-                     weight_coverage: float = 10.) -> None:
-    # Load the CSV file containing MC runs
-    results_df = pd.read_csv(csv_path, index_col=False)
-
-    # clean up dates
-    results_df['timestamp'] = pd.to_datetime(
-        results_df['timestamp'],
-        errors   = 'coerce',
-        infer_datetime_format=True,
-        dayfirst = True
-    )
-
-    # print(pd.concat([results_df[['timestamp']], dates], axis=1))
-
-    _list_overall_losses = []
-    for index, row in results_df.iterrows():
-        flat_metrics = (row \
-        [['test_NN_bias',     'test_NN_RMSE',     'test_NN_MAE',
-          'test_LR_bias',     'test_LR_RMSE',     'test_LR_MAE',
-          'test_RF_bias',     'test_RF_RMSE',     'test_RF_MAE',
-          'test_GB_bias',     'test_GB_RMSE',     'test_GB_MAE',
-          'test_meta_LR_bias','test_meta_LR_RMSE','test_meta_LR_MAE',
-          'test_meta_NN_bias','test_meta_NN_RMSE','test_meta_NN_MAE']]).to_dict()
-
-        quantile_delta_coverage = \
-            row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
-
-        _overall_loss = overall_loss(flat_metrics, quantile_delta_coverage, weight_coverage)
-        _list_overall_losses.append(_overall_loss)
-
-    # print(_list_overall_losses)
-
-    results_df['overall_loss'] = _list_overall_losses
-    results_df.to_csv(csv_path, index=False)
-
-
-# recalculate_loss()
-
-
-
-
-# -------------------------------------------------------
 # Testing
 # -------------------------------------------------------
 
@@ -689,13 +553,15 @@ def worst_days_by_loss(
     temperature: np.ndarray,
     holidays   : np.ndarray,
     num_steps_per_day: int,
-    top_n      : int = 10
-) -> pd.DataFrame:
+    top_n      : int,
+    verbose    : int = 0,
+) -> (pd.DataFrame, float):
     """
     Returns DataFrame of worst days by mean loss
     """
 
-    print(f"\nWorst days ({split})")
+    if verbose > 0:
+        print(f"\nWorst days ({split})")
 
     diff   = y_pred - y_true
     diff_pc= diff / y_pred * 100
@@ -732,6 +598,8 @@ def worst_days_by_loss(
 
     daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
 
+    avg_abs_diff = float(daily['abs_diff'].mean())
+
     daily['day_name'] = daily['date'].dt.day_name()
     daily['day'     ] = daily['date'].dt.day
     daily['month'   ] = daily['date'].dt.month
@@ -745,42 +613,44 @@ def worst_days_by_loss(
     daily['Tavg_degC']= daily['Tavg_degC'].astype(np.float32).round(1)
     daily['holiday' ] = daily['holiday'  ].astype(np.int16)
 
+
     daily = daily[['day_name', 'day', 'month', # 'year', 'holiday',
                    'Tavg_degC', 'diff', 'diff_pc', # 'max_diff',
                    'ramp']].head(top_n)
 
 
     # plots
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=daily, x='month', bins=12, discrete=True)
-    plt.title('Histogram of Months for Bad Days')
-    plt.xlabel('Month')
-    plt.ylabel('Frequency')
-    plt.xticks(range(1, 13))
-    plt.show()
+    if verbose > 0:
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=daily, x='month', bins=12, discrete=True)
+        plt.title('Histogram of Months for Bad Days')
+        plt.xlabel('Month')
+        plt.ylabel('Frequency')
+        plt.xticks(range(1, 13))
+        plt.show()
 
-    # plt.figure(figsize=(10, 6))
-    # sns.histplot(data=daily, x='year',bins=len(daily['year'].unique()),discrete=True)
-    # plt.title('Histogram of Years for Bad Days')
-    # plt.xlabel('Year')
-    # plt.ylabel('Frequency')
-    # plt.show()
+        # plt.figure(figsize=(10, 6))
+        # sns.histplot(data=daily, x='year',bins=len(daily['year'].unique()),discrete=True)
+        # plt.title('Histogram of Years for Bad Days')
+        # plt.xlabel('Year')
+        # plt.ylabel('Frequency')
+        # plt.show()
 
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=daily, x='Tavg_degC', bins=20, kde=True)
-    plt.title('Histogram of Average Temperature for Bad Days')
-    plt.xlabel('Average Temperature (°C)')
-    plt.ylabel('Frequency')
-    plt.show()
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=daily, x='Tavg_degC', bins=20, kde=True)
+        plt.title('Histogram of Average Temperature for Bad Days')
+        plt.xlabel('Average Temperature (°C)')
+        plt.ylabel('Frequency')
+        plt.show()
 
-    plt.figure(figsize=(10, 6))
-    sns.histplot(data=daily, x='day_name', shrink=0.8)
-    plt.title('Histogram of Days of the Week for Bad Days')
-    plt.xlabel('Day of the Week')
-    plt.ylabel('Frequency')
-    plt.xticks(rotation=45)
-    plt.show()
+        plt.figure(figsize=(10, 6))
+        sns.histplot(data=daily, x='day_name', shrink=0.8)
+        plt.title('Histogram of Days of the Week for Bad Days')
+        plt.xlabel('Day of the Week')
+        plt.ylabel('Frequency')
+        plt.xticks(rotation=45)
+        plt.show()
 
 
-    return daily
+    return daily, avg_abs_diff
 

@@ -25,7 +25,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 RUN_FAST     = False         # True: smaller system: runs faster, for debugging
 
-VERBOSE: int = 2 if RUN_FAST else 1
+VERBOSE: int = 1  # 2 if RUN_FAST else 1
 
 SEED         =   0              # For reproducibility
 
@@ -68,10 +68,10 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.9,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.7,
-    'lambda_deriv'     : 0.2,         # derivative weight in loss function
-    'lambda_median'    : 0.7,
+    'lambda_cross'     : 0.7,          # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.5,
+    'lambda_deriv'     : 0.1,         # derivative weight in loss function
+    'lambda_median'    : 0.6,
     'smoothing_cross'  : 0.032,
 
         # temperature-dependence (pinball loss, coverage penalty):
@@ -80,14 +80,14 @@ NNTQ_PARAMETERS: dict = {
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
     'saturation_cold_degC':-5.,
     'threshold_cold_degC':  3.,
-    'lambda_cold'      :    0.02,
+    'lambda_cold'      :    0.1,
 
 }
 
 
 EPOCHS       = [  2,  30] # Number of training epochs
-MODEL_DIM    = [ 48, 120] # Transformer embedding dimension
-NUM_HEADS    = [  2,   4] # Number of attention heads
+MODEL_DIM    = [ 48, 180] # Transformer embedding dimension
+NUM_HEADS    = [  2,   6] # Number of attention heads
 FFN_SIZE     = [  4,   5] # expansion factor
 NUM_LAYERS   = [  1,   4] # Number of transformer encoder layers
 NUM_GEO_BLOCKS=[  2,   3]

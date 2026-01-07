@@ -1,10 +1,12 @@
 import gc
 # import sys
 import inspect
+import os
 
-from   typing import List, Tuple, Dict, Any  #, Sequence, Optional
+from   typing   import Dict, Any, Optional, List, Tuple, Sequence
 
 import time
+from   datetime import datetime
 
 import torch
 
@@ -249,27 +251,97 @@ def training_loop(data          : containers.DatasetBundle,
             dict_valid_loss_quantile_h)
 
 
+
+def post_process_run(baseline_parameters   : Dict[str, Any],
+                     NNTQ_parameters       : Dict[str, Any],
+                     metamodel_parameters  : Dict[str, Any],
+                     df_metrics            : pd.DataFrame(),
+                     quantile_delta_coverage:Dict[str, float],
+                     avg_weights_meta_NN   : Dict[str, float],
+                     avg_abs_worst_days_train:float,
+                     run_id                : int,
+                     csv_path              : str  = 'parameter_search.csv'
+                     ) -> [Dict[str, Any], float]:
+    flat_metrics = {}
+    for model in df_metrics.index:
+        for metric in df_metrics.columns:
+            key = f"test_{model}_{metric}".replace(" ", "_")
+            flat_metrics[key] = float(df_metrics.loc[model, metric])
+
+    # learning_rate and weight_decay are so small
+    NNTQ_parameters    ['learning_rate' ]= NNTQ_parameters  ['learning_rate'] * 1e6
+    metamodel_parameters['learning_rate']=metamodel_parameters['learning_rate']*1e6
+
+    NNTQ_parameters    ['weight_decay' ]= NNTQ_parameters  ['weight_decay'] * 1e6
+    metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
+
+    # flatten sequences
+    _dict_quantiles = expand_sequence(name="quantiles",
+           values=NNTQ_parameters["quantiles"],  length=5, prefix="")
+    del NNTQ_parameters["quantiles"]
+    NNTQ_parameters.update(_dict_quantiles)
+
+
+    _dict_num_cells = expand_sequence(name="num_cells",
+           values=metamodel_parameters["num_cells"], length=2, prefix="")
+    del metamodel_parameters["num_cells"]
+    metamodel_parameters.update(_dict_num_cells)
+
+    _overall_loss = overall_loss(
+        flat_metrics, quantile_delta_coverage, avg_abs_worst_days_train)
+
+    row = {
+        "run"      : run_id,
+        "timestamp": datetime.now(),   # Excel-compatible
+        **(flatten_dict(baseline_parameters, parent_key="")),
+        **NNTQ_parameters,
+        **{"metaNN_"+key: value for (key, value) in metamodel_parameters.items()},
+        **quantile_delta_coverage,
+        **{"avg_weight_meta_NN_"+key: value
+           for (key, value) in avg_weights_meta_NN.items()},
+        **flat_metrics,
+        'avg_abs_worst_days_train': avg_abs_worst_days_train,
+        "overall_loss": _overall_loss
+    }
+    # print(row)
+
+    df_row = pd.DataFrame([row])
+    df_row.to_csv(
+        csv_path,
+        mode   = "a",
+        header = not os.path.exists(csv_path),
+        index  = False,
+        float_format="%.6f"
+    )
+
+    return row, _overall_loss
+
+
 def run_model(
         # configuration bundles
-        baseline_cfg    : Dict[str, Dict[str, Any]],
-        NNTQ_parameters : Dict[str, Any],
+        baseline_cfg      : Dict[str, Dict[str, Any]],
+        NNTQ_parameters   : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
-        dict_fnames     : Dict[str, str],
+        dict_fnames       : Dict[str, str],
         # statistics of the dataset
-        minutes_per_step: int,
+        minutes_per_step  : int,
         train_split_fraction:float,
-        val_ratio       : float,
-        forecast_hour   : int,
-        seed            : int,
+        val_ratio         : float,
+        forecast_hour     : int,
+        seed              : int,
         force_calc_baselines:bool,
         # XXX_EVERY (in epochs)
-        validate_every  : int,
-        display_every   : int,
-        plot_conv_every : int,
+        validate_every    : int,
+        display_every     : int,
+        plot_conv_every   : int,
+        run_id            : int,
 
-        cache_fname     : str = "cache",
-        verbose         : int  = 0
-        ) -> Tuple[pd.DataFrame, Dict[str, float], Dict[str, float]]:
+        cache_fname       : str  = "cache",
+        csv_path          : str  = 'parameter_search.csv',
+        num_worst_days    : int  = 40,
+        verbose           : int  = 0
+    ) -> Tuple[Dict[str, Any], pd.DataFrame, \
+               Dict[str, float], Dict[str, float], float, float]:
 
     np.   random.seed(seed)
     torch.manual_seed(seed)
@@ -419,16 +491,15 @@ def run_model(
         print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
-
-
+    top_bad_days_train_df, avg_abs_diff_train = data.train.worst_days_by_loss(
+        temperature_full = Tavg_full,
+        holidays_full    = holidays_full,
+        num_steps_per_day= num_steps_per_day,
+        top_n            = num_worst_days,
+        verbose          = verbose
+    )
     if verbose >= 3:
-        top_bad_days_train = data.train.worst_days_by_loss(
-            temperature_full = Tavg_full,
-            holidays_full    = holidays_full,
-            num_steps_per_day= num_steps_per_day,
-            top_n            = 40,
-        )
-        print(top_bad_days_train.to_string())
+        print(top_bad_days_train_df.to_string())
 
 
 
@@ -553,8 +624,152 @@ def run_model(
         torch.cuda.empty_cache()
         # torch.cuda.synchronize()
 
+    dict_row, overall_loss = post_process_run(
+        baseline_cfg, NNTQ_parameters, metamodel_NN_parameters,
+        test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
+        avg_abs_diff_train, run_id, csv_path)
 
-    return test_metrics, avg_weights_meta_NN, quantile_delta_coverage
+    return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+        (num_worst_days, avg_abs_diff_train), overall_loss
 
 
+
+# -------------------------------------------------------
+# overall_all loss
+# -------------------------------------------------------
+
+def expand_sequence(name: str, values: Sequence, length: int,
+                    prefix: Optional[str]="", fill_value=np.nan) -> Dict[str, Any]:
+    """
+    Expand a list/tuple into fixed-length columns.
+    Shorter lists are padded with fill_value.
+    Longer lists raise an error (by default).
+    """
+    if not isinstance(values, (list, tuple)):
+        raise TypeError(f"{name} must be list or tuple, got {type(values)}")
+
+    if len(values) > length:
+        raise ValueError(f"{name} length {len(values)} > fixed length {length}")
+
+    output = {}
+    for i in range(length):
+        output[f"{prefix}{name}_{i}"] = values[i] if i < len(values) else fill_value
+
+    return output
+
+def flatten_dict(d, parent_key="", sep="_"):
+    """
+    Flatten a nested dict using namespaced keys.
+    Example:
+      {"rf": {"n_estimators": 500}} →
+      {"baseline__rf__n_estimators": 500}
+    """
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
+        if isinstance(v, dict):
+            items.update(flatten_dict(v, new_key, sep=sep))
+        else:
+            items[new_key] = v
+    return items
+
+def overall_loss(
+         flat_metrics           : Dict[str, float],
+         quantile_delta_coverage: Dict[str, float],
+         avg_abs_worst_days     : float,
+
+         # constants
+         max_quantile_delta_coverage: float = 0.25,
+                 # prevents one quantile from dominating completely
+
+         weight_coverage        : float   = 5.,
+                 # coverage and bias, MAE have different scales
+
+         weight_worst_days      : float   = 0.2,
+                # was not saved initially: start slow
+
+         quantile_weights       : Dict[str, float] = \
+             {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
+                 # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
+
+         metric_weights         : Dict[str, float] = \
+             {'bias': 2., 'RMSE': 1., 'MAE': 1.},
+                 # RMSE and MAE are variants of each other, bias is different
+
+         model_weights         : Dict[str, float] = \
+             {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
+              'meta_LR'     : 3., 'meta_NN'     : 4.},
+            # LR, RF and LGBM are just underlying models to the metamodels;
+            #      improving them intrinsically is good, but secondary
+    ) -> float:
+
+    _loss_quantile_coverage = \
+        np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
+                    for q, gap in quantile_delta_coverage.items()])
+                # was np.mean
+
+    dict_by_metric = {k: [] for k in list(metric_weights.keys())}
+
+    for key, value in flat_metrics.items():
+        parts  = key.replace("test_", "").split('_')
+        model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
+        metric = parts[-1]             # Ex: "bias", "RMSE", etc.
+
+        dict_by_metric[metric].append(model_weights[model] * abs(value))
+
+    for metric in dict_by_metric.keys():
+        assert len(dict_by_metric[metric]) == len(model_weights)
+
+    dict_avg_metrics = {metric: np.sum(_list) / np.sum(list(model_weights.values()))
+                            for (metric, _list) in dict_by_metric.items()}
+
+    avg_metric = np.sum([value * metric_weights[metric]
+                        for (metric, value) in dict_avg_metrics.items()]) / \
+                    np.sum((list(metric_weights.values())))
+    # print(avg_metrics)
+
+    return float(round(_loss_quantile_coverage * weight_coverage + \
+                       avg_metric + \
+                       avg_abs_worst_days * weight_worst_days, 4))
+
+
+def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
+                     weight_coverage: float = 10.) -> None:
+    # Load the CSV file containing MC runs
+    results_df = pd.read_csv(csv_path, index_col=False)
+
+    # clean up dates
+    results_df['timestamp'] = pd.to_datetime(
+        results_df['timestamp'],
+        errors   = 'coerce',
+        infer_datetime_format=True,
+        dayfirst = True
+    )
+
+    # print(pd.concat([results_df[['timestamp']], dates], axis=1))
+
+    _list_overall_losses = []
+    for index, row in results_df.iterrows():
+        flat_metrics = (row \
+        [['test_NN_bias',     'test_NN_RMSE',     'test_NN_MAE',
+          'test_LR_bias',     'test_LR_RMSE',     'test_LR_MAE',
+          'test_RF_bias',     'test_RF_RMSE',     'test_RF_MAE',
+          'test_GB_bias',     'test_GB_RMSE',     'test_GB_MAE',
+          'test_meta_LR_bias','test_meta_LR_RMSE','test_meta_LR_MAE',
+          'test_meta_NN_bias','test_meta_NN_RMSE','test_meta_NN_MAE']]).to_dict()
+
+        quantile_delta_coverage = \
+            row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
+
+        _overall_loss = overall_loss(flat_metrics, quantile_delta_coverage, weight_coverage)
+        _list_overall_losses.append(_overall_loss)
+
+    # print(_list_overall_losses)
+
+    results_df['overall_loss'] = _list_overall_losses
+    results_df.to_csv(csv_path, index=False)
+
+
+# recalculate_loss()
 

@@ -22,7 +22,10 @@ import MC_search, Bayes_search, run, utils
 
 
 if __name__ == "__main__":
-    num_runs: int  = 30
+    num_runs: int  = 20
+
+    # parameter_search_function = MC_search.run_Monte_Carlo_search
+    parameter_search_function = Bayes_search.run_Bayes_search
 
     from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
                VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
@@ -32,8 +35,7 @@ if __name__ == "__main__":
                )
 
     if num_runs > 1:   # search for hyperparameters
-        Bayes_search.run_Bayes_search(
-        # MC_search.run_Monte_Carlo_search(
+        parameter_search_function(
                 num_runs            = num_runs,
                 csv_path            = 'parameter_search.csv',
 
@@ -55,8 +57,7 @@ if __name__ == "__main__":
 
 
     else:  # single run
-        (test_metrics, avg_weights_meta_NN, quantile_delta_coverage) = \
-            run.run_model(
+        run.run_model(
                   # configuration bundles
                   baseline_cfg      = BASELINE_CFG,
                   NNTQ_parameters   = NNTQ_PARAMETERS,
@@ -70,24 +71,16 @@ if __name__ == "__main__":
                   val_ratio         = VAL_RATIO,
                   forecast_hour     = FORECAST_HOUR,
                   seed              = SEED,
-                  force_calc_baselines=VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG',
+                  force_calc_baselines=VERBOSE >= 3,
 
                   # XXX_EVERY (in epochs)
                   validate_every    = VALIDATE_EVERY,
                   display_every     = DISPLAY_EVERY,
                   plot_conv_every   = PLOT_CONV_EVERY,
+                  run_id            = 0,
 
                   cache_fname       = CACHE_FNAME,
                   verbose           = VERBOSE
                   )
 
-        flat_metrics = {}
-        for model in test_metrics.index:
-            for metric in test_metrics.columns:
-                key = f"test_{model}_{metric}".replace(" ", "_")
-                flat_metrics[key] = test_metrics.loc[model, metric].astype(np.float32)
-
-        _overall_loss = utils.overall_loss(flat_metrics, quantile_delta_coverage)
-
-        print(f"overall_loss = {_overall_loss:.3f}")
 

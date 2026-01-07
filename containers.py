@@ -73,7 +73,8 @@ class DataSplit:
                            temperature_full: pd.Series,
                            holidays_full   : pd.Series,
                            num_steps_per_day:int,
-                           top_n           : int) -> pd.DataFrame:
+                           top_n           : int,
+                           verbose         : int = 0) -> (pd.DataFrame, float):
         return utils.worst_days_by_loss(
             split       = self.name,
             y_true      = self.true_GW,
@@ -82,6 +83,7 @@ class DataSplit:
             holidays    = holidays_full   .iloc[self.idx],
             num_steps_per_day=num_steps_per_day,
             top_n       = top_n,
+            verbose     = verbose
         )
 
         # import matplotlib.pyplot as plt

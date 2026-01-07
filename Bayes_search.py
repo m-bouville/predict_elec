@@ -1,9 +1,9 @@
-import os
+# import os
 import copy
 
 from   typing   import Dict, Any, Optional  # List, Tuple, Sequence,
 
-from   datetime import datetime, timedelta
+from   datetime import timedelta  # datetime
 
 import numpy    as np
 import pandas   as pd
@@ -15,7 +15,7 @@ from   optuna.distributions import \
 # import matplotlib.pyplot as plt
 
 
-import run, utils
+import run
 
 
 
@@ -112,13 +112,13 @@ def sample_NNTQ_parameters(
 
     # quantile loss weights
     if 'lambda_cross' in p:
-        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0.5, 2.0)
+        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0.,  0.8)
     if 'lambda_coverage' in p:
-        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.2, 1.0)
+        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.,  0.8)
     if 'lambda_deriv' in p:
-        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0.0, 0.3)
+        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0.0, 0.2)
     if 'lambda_median' in p:
-        p['lambda_median' ] = trial.suggest_float('lambda_median',  0.2, 1.0)
+        p['lambda_median' ] = trial.suggest_float('lambda_median',  0.,  0.8)
     if 'smoothing_cross' in p:
         p['smoothing_cross']= trial.suggest_float('smoothing_cross',0.005,0.05)
 
@@ -237,10 +237,10 @@ distributions_NNTQ = {
     'weight_decay': FloatDistribution(low=0., high=1e-5),  # BUG: 0 in csv at start
     'dropout':    FloatDistribution(low=0.02, high=0.15),
     # quantile loss
-    'lambda_cross':   FloatDistribution(low=0.5, high=2.0),
-    'lambda_coverage':FloatDistribution(low=0.2, high=1.0),
-    'lambda_deriv':   FloatDistribution(low=0.0, high=0.3),
-    'lambda_median':  FloatDistribution(low=0.2, high=1.0),
+    'lambda_cross':   FloatDistribution(low=0., high=2.0),
+    'lambda_coverage':FloatDistribution(low=0., high=1.0),
+    'lambda_deriv':   FloatDistribution(low=0., high=0.3),
+    'lambda_median':  FloatDistribution(low=0., high=1.0),
     'smoothing_cross':FloatDistribution(low=0.005,high=0.05),
         # temperature-dependence (pinball loss, coverage penalty)
     'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
@@ -272,7 +272,9 @@ distributions_metamodel_NN = {
 
 
 # run several plotting functions
-def plot_optuna(study) -> None:
+def plot_optuna(study,
+                num_best_runs: int = 15,
+                num_important_parameters: int = 12) -> None:
     print("Plotting Optuna results so far...")
 
     # BUG (strangely) does not display anything
@@ -296,6 +298,7 @@ def plot_optuna(study) -> None:
 
 
     # Convergence
+    ######################♠
     df = study.trials_dataframe()
     df = df.sort_values("number")
 
@@ -303,7 +306,8 @@ def plot_optuna(study) -> None:
     df.plot(x="number", y=["value", "best_so_far"])
 
 
-    # Parameter importance (quick + honest)
+    # Parameter importance
+    ######################
     cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio', \
                      'lasso_max_iter', 'patch_length', 'stride']
     dict_corr = dict()
@@ -326,15 +330,15 @@ def plot_optuna(study) -> None:
     df_corr_sorted_signed = df_corr.loc[df_corr_sorted.index]
 
     print("Parameter Importance (_negative_ correlation with `value`, in %)")
-    print(df_corr_sorted_signed[:25].round(4))
+    print(df_corr_sorted_signed[:num_important_parameters].round(4))
     # plt.figure()
-    # df_corr_sorted_signed.plot(kind="bar", title="Parameter Importance (Correlation with 'value')")
+    # df_corr_sorted_signed.plot(kind="bar",
+    #   title="Parameter Importance (Correlation with 'value')")
     # plt.show()
 
 
     # best parameters (more robust than just the very best)
-    num_best_runs = 15
-
+    ######################♠
     print(f"shape: {df.shape} -> {df[numeric_cols + ['value']].shape}")
     # print(df[numeric_cols + ['value']])
     # Get the best 15 trials based on the objective value
@@ -352,8 +356,9 @@ def plot_optuna(study) -> None:
 
 
     # histogram
+    ######################♠
     df  = study.trials_dataframe()
-    top = df.nsmallest(20, "value")
+    top = df.nsmallest(num_best_runs, "value")
     top[["params_learning_rate", "params_dropout"]].hist()
 
 
@@ -391,7 +396,8 @@ def run_Bayes_search(
         NNTQ_parameters     = sample_NNTQ_parameters        (trial, base_NNTQ_params)
         metamodel_parameters= sample_metamodel_NN_parameters(trial, base_meta_NN_params)
 
-        df_metrics, avg_weights_meta_NN, quantile_delta_coverage = run.run_model(
+        dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+            (num_worst_days, avg_abs_worst_days_train), overall_loss = run.run_model(
                   # configuration bundles
                   baseline_cfg    = baseline_parameters,
                   NNTQ_parameters = NNTQ_parameters,
@@ -411,62 +417,17 @@ def run_Bayes_search(
                   display_every   = 1,  # dummy
                   plot_conv_every = 1,  # dummy
 
+                  run_id          = trial.number,
                   cache_fname     = cache_fname,
                   verbose         = 0
         )
 
-        flat_metrics = {}
-        for model in df_metrics.index:
-            for metric in df_metrics.columns:
-                key = f"test_{model}_{metric}".replace(" ", "_")
-                flat_metrics[key] = df_metrics.loc[model, metric].astype(np.float32)
+        # _, overall_loss = run.post_process_run(
+        #     baseline_parameters, NNTQ_parameters, metamodel_parameters,
+        #     df_metrics, quantile_delta_coverage, avg_weights_meta_NN,
+        #     avg_abs_worst_days_train, trial.number, csv_path)
 
-
-        # learning_rate and weight_decay are so small
-        NNTQ_parameters    ['learning_rate' ]= NNTQ_parameters  ['learning_rate'] * 1e6
-        metamodel_parameters['learning_rate']=metamodel_parameters['learning_rate']*1e6
-
-        NNTQ_parameters    ['weight_decay' ]= NNTQ_parameters  ['weight_decay'] * 1e6
-        metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
-
-        # flatten sequences
-        _dict_quantiles = utils.expand_sequence(name="quantiles",
-               values=NNTQ_parameters["quantiles"],  length=5, prefix="")
-        del NNTQ_parameters["quantiles"]
-        NNTQ_parameters.update(_dict_quantiles)
-
-
-        _dict_num_cells = utils.expand_sequence(name="num_cells",
-               values=metamodel_parameters["num_cells"], length=2, prefix="")
-        del metamodel_parameters["num_cells"]
-        metamodel_parameters.update(_dict_num_cells)
-
-        _overall_loss = utils.overall_loss(flat_metrics, quantile_delta_coverage)
-
-        row = {
-            "run"      : trial.number,
-            "timestamp": datetime.now(),   # Excel-compatible
-            **(utils.flatten_dict(baseline_parameters, parent_key="")),
-            **NNTQ_parameters,
-            **{"metaNN_"+key: value for (key, value) in metamodel_parameters.items()},
-            **quantile_delta_coverage,
-            **{"avg_weight_meta_NN_"+key: value
-               for (key, value) in avg_weights_meta_NN.items()},
-            **flat_metrics,
-            "overall_loss": _overall_loss
-        }
-        # print(row)
-
-        df_row = pd.DataFrame([row])
-        df_row.to_csv(
-            csv_path,
-            mode   = "a",
-            header = not os.path.exists(csv_path),
-            index  = False,
-            float_format="%.6f"
-        )
-
-        return float(_overall_loss)
+        return float(overall_loss)
 
 
     # Load the CSV file containing MC runs
@@ -484,12 +445,13 @@ def run_Bayes_search(
         # ,'GB_boosting_type'
 
     # output
-    cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # covergae
+    cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
     for _model in ['NN', 'LR', 'RF', 'GB']:
         cols_not_paras.append(f'avg_weight_meta_NN_{_model}')
     for _model in ['NN', 'LR', 'RF', 'GB', 'meta_LR', 'meta_NN']:
         for _metric in ['bias', 'RMSE', 'MAE']:
             cols_not_paras.append(f'test_{_model}_{_metric}')
+    cols_not_paras.append('avg_abs_worst_days_train')
     # print(cols_not_paras)
     # print([e for e in results_df.columns if e not in cols_not_paras])
     _superfluous = [e for e in cols_not_paras if e not in results_df.columns]
@@ -503,11 +465,12 @@ def run_Bayes_search(
         results_df[['learning_rate', 'weight_decay',
                     'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6
 
-    assert[e for e in distributions_baselines | \
-                   distributions_NNTQ | distributions_metamodel_NN \
-                       if e not in results_df.columns] == []
-    assert{e for e in results_df.columns  if e not in distributions_baselines | \
-         distributions_NNTQ | distributions_metamodel_NN} == {'timestamp', 'overall_loss'}
+    assert [e for e in distributions_baselines | \
+                       distributions_NNTQ | distributions_metamodel_NN \
+                if e not in results_df.columns] == []
+    assert {e for e in results_df.columns  if e not in distributions_baselines | \
+         distributions_NNTQ | distributions_metamodel_NN} == \
+                {'timestamp', 'overall_loss'}
 
     # can be 'sqrt' or a float => type issues
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
@@ -526,9 +489,11 @@ def run_Bayes_search(
     for index, row in results_df.iterrows():
         # print(index, row)
         _params = {k: row[k] for k in row.keys()
-                  if k not in ['timestamp', 'overall_loss']}
-        assert set(_params.keys()) - set(distributions_keys) == set()
-        assert set(distributions_keys) - set(_params.keys()) == set()
+            if k not in ['timestamp', 'overall_loss']}
+        assert set(_params.keys()) - set(distributions_keys) == set(), \
+               set(_params.keys()) - set(distributions_keys)
+        assert set(distributions_keys) - set(_params.keys()) == set(), \
+               set(distributions_keys) - set(_params.keys())
 
         trial = optuna.trial.FrozenTrial(
             number        = index,  # Trial number
@@ -550,12 +515,12 @@ def run_Bayes_search(
 
 
     # Add previous trials to the study
-    for trial in trials:
+    for index, trial in enumerate(trials):
         study.add_trial(trial)
 
 
     # Plotting
-    plot_optuna(study)
+    # plot_optuna(study)
 
 
     # Run optimization
@@ -573,6 +538,7 @@ def run_Bayes_search(
     # print(f"Best hyperparameters: {study.best_params}")
 
 
+    # Plotting
     plot_optuna(study)
 
 

@@ -1,17 +1,17 @@
-import os
+# import os
 import copy
 from   tqdm     import trange
 
 from   typing   import Dict, Any, Optional  # List, Tuple, Sequence,
 
-from   datetime import datetime
+# from   datetime import datetime
 
 import numpy    as np
 import pandas   as pd
 import random
 
 
-import run, utils
+import run
 
 
 
@@ -42,7 +42,7 @@ def sample_baseline_parameters(base_params: Dict[str, Dict[str, Any]])\
             if 'min_samples_leaf' in p.keys():
                 p['min_samples_leaf']= int(round(random.uniform( 10,  20)))
             if 'min_samples_split' in p.keys():
-                p['min_samples_split']=int(round(random.uniform( 15,  30)))
+                p['min_samples_split']=int(round(random.uniform( 15,  25)))
             if 'max_features' in p.keys():
                 p['max_features'   ] = random.choice(['sqrt', 0.5])
 
@@ -101,13 +101,13 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
 
     # quantile loss weights
     if 'lambda_cross' in p.keys():
-        p['lambda_cross']   = round(random.uniform(0.5,  2.0), 3)
+        p['lambda_cross']   = round(random.uniform(0.2,  1.), 3)
     if 'lambda_coverage' in p.keys():
-        p['lambda_coverage']= round(random.uniform(0.2,  1.2), 2)
+        p['lambda_coverage']= round(random.uniform(0.2,  1.), 2)
     if 'lambda_deriv' in p.keys():
         p['lambda_deriv']   = round(random.uniform(0.0,  0.3), 4)
     if 'lambda_median' in p.keys():
-        p['lambda_median']  = round(random.uniform(0.2,  1.0), 3)
+        p['lambda_median']  = round(random.uniform(0.2,  0.5), 3)
     if 'smoothing_cross' in p.keys():
         p['smoothing_cross']= round(random.uniform(0.005,0.05),4)
 
@@ -117,7 +117,7 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'saturation_cold_degC' in p.keys():
         p['saturation_cold_degC']=round(random.uniform(-8., -2.), 1)
     if 'lambda_cold' in p.keys():
-        p['lambda_cold']= round(random.uniform(0., 1.), 3)
+        p['lambda_cold']= round(random.uniform(0., 0.2), 3)
 
 
     # # quantiles
@@ -237,7 +237,7 @@ def run_Monte_Carlo_search(
     warnings.filterwarnings("ignore", category=UserWarning)  # TODO fix for real
 
     # rng = np.random.default_rng(seed)
-    results = []
+    list_results = []
 
     for run_id in trange(num_runs, desc="MC runs"):
         # print(f"Starting run {run_id} out of {num_runs}")
@@ -248,7 +248,8 @@ def run_Monte_Carlo_search(
         NNTQ_parameters     = sample_NNTQ_parameters        (base_NNTQ_params)
         metamodel_parameters= sample_metamodel_NN_parameters(base_meta_NN_params)
 
-        df_metrics, avg_weights_meta_NN, quantile_delta_coverage = run.run_model(
+        dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+            (num_worst_days, avg_abs_worst_days_train), overall_loss = run.run_model(
                   # configuration bundles
                   baseline_cfg    = baseline_parameters,
                   NNTQ_parameters = NNTQ_parameters,
@@ -267,59 +268,17 @@ def run_Monte_Carlo_search(
                   validate_every  = 1,
                   display_every   = 1,  # dummy
                   plot_conv_every = 1,  # dummy
+                  run_id          = run_id,
 
                   cache_fname     = cache_fname,
                   verbose         = 0
         )
 
-        flat_metrics = {}
-        for model in df_metrics.index:
-            for metric in df_metrics.columns:
-                key = f"test_{model}_{metric}".replace(" ", "_")
-                flat_metrics[key] = df_metrics.loc[model, metric].astype(np.float32)
+        # row, overall_loss = run.post_process_run(
+        #     baseline_parameters, NNTQ_parameters, metamodel_parameters,
+        #     df_metrics, quantile_delta_coverage, avg_weights_meta_NN,
+        #     avg_abs_worst_days_train, run_id, csv_path)
+        list_results.append(dict_row)
 
+    return pd.DataFrame(list_results)
 
-        # learning_rate and weight_decay are so small
-        NNTQ_parameters    ['learning_rate' ]= NNTQ_parameters  ['learning_rate'] * 1e6
-        metamodel_parameters['learning_rate']=metamodel_parameters['learning_rate']*1e6
-
-        NNTQ_parameters    ['weight_decay' ]= NNTQ_parameters  ['weight_decay'] * 1e6
-        metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
-
-        # flatten sequences
-        _dict_quantiles = utils.expand_sequence(name="quantiles",
-               values=NNTQ_parameters["quantiles"],  length=5, prefix="")
-        del NNTQ_parameters["quantiles"]
-        NNTQ_parameters.update(_dict_quantiles)
-
-
-        _dict_num_cells = utils.expand_sequence(name="num_cells",
-               values=metamodel_parameters["num_cells"], length=2, prefix="")
-        del metamodel_parameters["num_cells"]
-        metamodel_parameters.update(_dict_num_cells)
-
-        _overall_loss = utils.overall_loss(df_metrics, quantile_delta_coverage)
-
-        row = {
-            "run"      : run_id,
-            "timestamp": datetime.now(),   # Excel-compatible
-            **(utils.flatten_dict(baseline_parameters, parent_key="")),
-            **NNTQ_parameters,
-            **{"metaNN_"+key: value for (key, value) in metamodel_parameters.items()},
-            **quantile_delta_coverage,
-            **{"avg_weight_meta_NN_"+key: value
-               for (key, value) in avg_weights_meta_NN.items()},
-            **flat_metrics,
-            "overall_loss": _overall_loss
-        }
-        # print(row)
-
-        df_row = pd.DataFrame([row])
-        df_row.to_csv(
-            csv_path,
-            mode   = "a",
-            header = not os.path.exists(csv_path),
-            index  = False,
-            float_format="%.6f"
-        )
-    return pd.DataFrame(results)
