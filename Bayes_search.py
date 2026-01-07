@@ -262,7 +262,7 @@ distributions_metamodel_NN = {
     'metaNN_epochs':      IntDistribution(low=8, high=15, step=1),
     'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512, 640]),
     'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
-    'metaNN_weight_decay':FloatDistribution(low=1e-8, high=10e-5, log=True),
+    'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
     'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40, 48]),
     'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20, 24]),
@@ -336,7 +336,7 @@ def plot_optuna(study) -> None:
     num_best_runs = 15
 
     print(f"shape: {df.shape} -> {df[numeric_cols + ['value']].shape}")
-    print(df[numeric_cols + ['value']])
+    # print(df[numeric_cols + ['value']])
     # Get the best 15 trials based on the objective value
     best_trials_df = df[numeric_cols + ['value']].\
         sort_values(by='value', ascending=False).head(num_best_runs)
@@ -347,7 +347,7 @@ def plot_optuna(study) -> None:
     # Calculate the median for each parameter
     median_params = params_df.median()  # .drop(['number', 'best_so_far'])
 
-    print(f"Median parameters from the best {num_best_runs} runs:")
+    print(f"\nMedian parameters from the best {num_best_runs} runs:")
     print(median_params)
 
 

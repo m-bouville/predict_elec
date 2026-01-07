@@ -68,7 +68,7 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 1.,          # enforcing correct order of quantiles
+    'lambda_cross'     : 0.9,          # enforcing correct order of quantiles
     'lambda_coverage'  : 0.7,
     'lambda_deriv'     : 0.2,         # derivative weight in loss function
     'lambda_median'    : 0.7,
@@ -80,18 +80,18 @@ NNTQ_PARAMETERS: dict = {
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
     'saturation_cold_degC':-5.,
     'threshold_cold_degC':  3.,
-    'lambda_cold'      :    0.05,
+    'lambda_cold'      :    0.02,
 
 }
 
 
-EPOCHS       = [  2,  25] # Number of training epochs
+EPOCHS       = [  2,  30] # Number of training epochs
 MODEL_DIM    = [ 48, 120] # Transformer embedding dimension
 NUM_HEADS    = [  2,   4] # Number of attention heads
 FFN_SIZE     = [  4,   5] # expansion factor
-NUM_LAYERS   = [  1,   3] # Number of transformer encoder layers
+NUM_LAYERS   = [  1,   4] # Number of transformer encoder layers
 NUM_GEO_BLOCKS=[  2,   3]
-WARMUP_STEPS =[4000,2400]
+WARMUP_STEPS =[4000,2200]
 PATIENCE     = [  5,   5]  # DEBUG: patience > nb epochas
 
 # Pick correct value from list of possibilites
@@ -226,9 +226,9 @@ baseline_cfg = [
         "boosting_type": "gbdt",
         "num_leaves":       32-1,     # Default number of leaves
         "max_depth":         5,       # Moderate tree depth
-        "learning_rate":     0.05,    # Lower learning rate for stability
+        "learning_rate":     0.06,    # Lower learning rate for stability
         "n_estimators":    500,       # More trees for a robust model
-        "min_child_samples":20,       # Minimum samples per leaf
+        "min_child_samples":22,       # Minimum samples per leaf
         "subsample":         0.85,    # Fraction of samples used to train each tree
         "colsample_bytree":  0.8,    # Fraction of features used for each tree
         "reg_alpha":         0.1,     # L1 regularization

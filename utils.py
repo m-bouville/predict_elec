@@ -17,7 +17,6 @@ import pandas as pd
 
 # from   sklearn.model_selection import TimeSeriesSplit
 
-
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -70,7 +69,11 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df['is_weekend' ] = (((df.index.dayofweek == 4) & (df.index.hour >= 16)) |
                           (df.index.dayofweek.isin([5, 6]))).astype(np.int16)
 
-    df['is_evening' ] = (df.index.hour     >= 21).astype(np.int16)
+    # peak hours. /!\ UTC: [6, 8) means [7, 9) local in winter
+    df['is_morning_peak']= ((df.index.hour >= 6) & (df.index.hour < 8)).astype(np.int16)
+    df['is_evening_peak']= ((df.index.hour >=17) & (df.index.hour <19)).astype(np.int16)
+
+    df['is_evening'    ] = (df.index.hour >= 21).astype(np.int16)
         # there is a peak of coverage loss between about 9pm and midninght, UTC
 
     df['is_August'  ] = ((df.index.month    == 8) \
@@ -129,7 +132,7 @@ def df_features(dict_fnames: Dict[str, str], cache_fname: str,
     # Fourier-like sine waves, weekends
     df_calendar    = df_features_calendar(df.index, verbose)
 
-    # /!\ moving averages and offsets based on consumption may leak
+    # `lag` ensures moving averages and offsets based on consumption do not leak
     df_consumption = df_features_past_consumption(
             df['consumption_GW'], lag, num_steps_per_day, verbose)
     # df_consumption = pd.DataFrame()
@@ -215,23 +218,58 @@ def flatten_dict(d, parent_key="", sep="_"):
             items[new_key] = v
     return items
 
-def overall_loss(flat_metrics           : Dict[str, float],
-                 quantile_delta_coverage: Dict[str, float],
-                 weight_coverage        : float   = 10.) -> float:
-    _loss_quantile_coverage = np.mean([abs(e) for e in list(quantile_delta_coverage.values())])
+def overall_loss(
+         flat_metrics           : Dict[str, float],
+         quantile_delta_coverage: Dict[str, float],
 
-    avg_metrics = {}
-    for _metric in ['bias', 'RMSE', 'MAE']:
-        values = [
-            abs(v) for key, v in flat_metrics.items() if _metric in key
-        ]
-        avg_metrics[_metric] = float(np.mean(values))
+         # constants
+         max_quantile_delta_coverage: float = 0.25,
+                 # prevents one quantile from dominating completely
 
+         weight_coverage        : float   = 5.,
+                 # coverage and bias, MAE have different scales
+
+         quantile_weights       : Dict[str, float] = \
+             {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
+                 # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
+
+         metric_weights         : Dict[str, float] = \
+             {'bias': 2., 'RMSE': 1., 'MAE': 1.},
+                 # RMSE and MAE are variants of each other, bias is different
+
+         model_weights         : Dict[str, float] = \
+             {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
+              'meta_LR'     : 3., 'meta_NN'     : 4.},
+            # LR, RF and LGBM are just underlying models to the metamodels;
+            #      improving them intrinsically is good, but secondary
+    ) -> float:
+
+    _loss_quantile_coverage = \
+        np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
+                    for q, gap in quantile_delta_coverage.items()])
+                # was np.mean
+
+    dict_by_metric = {k: [] for k in list(metric_weights.keys())}
+
+    for key, value in flat_metrics.items():
+        parts  = key.replace("test_", "").split('_')
+        model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
+        metric = parts[-1]             # Ex: "bias", "RMSE", etc.
+
+        dict_by_metric[metric].append(model_weights[model] * abs(value))
+
+    for metric in dict_by_metric.keys():
+        assert len(dict_by_metric[metric]) == len(model_weights)
+
+    dict_avg_metrics = {metric: np.sum(_list) / np.sum(list(model_weights.values()))
+                            for (metric, _list) in dict_by_metric.items()}
+
+    avg_metric = np.sum([value * metric_weights[metric]
+                        for (metric, value) in dict_avg_metrics.items()]) / \
+                    np.sum((list(metric_weights.values())))
     # print(avg_metrics)
 
-    return float(round(_loss_quantile_coverage*weight_coverage + \
-                       np.mean(list(avg_metrics.values())), 4))
-
+    return float(round(_loss_quantile_coverage*weight_coverage + avg_metric, 4))
 
 
 def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
@@ -269,6 +307,9 @@ def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
 
     results_df['overall_loss'] = _list_overall_losses
     results_df.to_csv(csv_path, index=False)
+
+
+# recalculate_loss()
 
 
 

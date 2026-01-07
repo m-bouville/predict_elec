@@ -22,7 +22,7 @@ import MC_search, Bayes_search, run, utils
 
 
 if __name__ == "__main__":
-    num_runs: int  = 1
+    num_runs: int  = 30
 
     from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
                VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
