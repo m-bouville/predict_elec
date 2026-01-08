@@ -1,10 +1,18 @@
 # import sys
 
-import numpy  as np
+# import numpy  as np
 
 
-import MC_search, Bayes_search, run, utils
+import run
     # containers, architecture, LR_RF, IO, plots, losses, metamodel,
+    # MC_search, Bayes_search,  utils
+
+from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
+           VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
+           VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
+           FORECAST_HOUR, MINUTES_PER_STEP, #NUM_STEPS_PER_DAY,
+           NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
+           )
 
 
 
@@ -12,75 +20,60 @@ import MC_search, Bayes_search, run, utils
 # BUG bias => bad coverage of quantiles.
 # TODO make future T° noisy to mimic the uncertainty of forecasts
 # BUG RF and Boosting generalize poorly
-# TODO make the metamodel reduce the bias
+# TODO make the metamodel reduce the bias (how?)
 # TODO have separate public holidays, as with the school holidays
 # BUG GB complains about pd vs. np
-# [in progress] MC hyperparameter search
-#   - TODO add parameters for lasso, LR, RF, GB
+# [in progress] split hyperparameter search: one for NNTQ, one for metamodel
 # TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
 
 
 
+
+
+
+
 if __name__ == "__main__":
-    num_runs: int  = 20
-
-    # parameter_search_function = MC_search.run_Monte_Carlo_search
-    parameter_search_function = Bayes_search.run_Bayes_search
-
-    from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
-               VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
-               VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
-               FORECAST_HOUR, MINUTES_PER_STEP, NUM_STEPS_PER_DAY,
-               NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
-               )
-
-    if num_runs > 1:   # search for hyperparameters
-        parameter_search_function(
-                num_runs            = num_runs,
-                csv_path            = 'parameter_search.csv',
-
-                # configuration bundles
-                base_baseline_params= BASELINE_CFG,
-                base_NNTQ_params    = NNTQ_PARAMETERS,
-                base_meta_NN_params = METAMODEL_NN_PARAMETERS,
-                dict_fnames         = DICT_FNAMES,
-
-                # statistics of the dataset
-                minutes_per_step    = MINUTES_PER_STEP,
-                train_split_fraction= TRAIN_SPLIT_FRACTION,
-                val_ratio           = VAL_RATIO,
-                forecast_hour       = FORECAST_HOUR,
-                seed                = SEED,
-                force_calc_baselines= False,
-                cache_fname         = CACHE_FNAME,
-            )
 
 
-    else:  # single run
-        run.run_model(
-                  # configuration bundles
-                  baseline_cfg      = BASELINE_CFG,
-                  NNTQ_parameters   = NNTQ_PARAMETERS,
-                  metamodel_NN_parameters= METAMODEL_NN_PARAMETERS,
+    mode = 'Bayes_NNTQ'
+        # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
-                  dict_fnames       = DICT_FNAMES,
+    if mode == 'once':
+        num_runs =  1
+        force_calc_baselines = VERBOSE >= 3
+    else:
+        num_runs = 40
+        force_calc_baselines = False  # (cache unlikely to be used in any case)
+    if 'Bayes' in mode:
+        assert not RUN_FAST, "fast parameters are outside the Bayesian distributions"
 
-                  # statistics of the dataset
-                  minutes_per_step  = MINUTES_PER_STEP,
-                  train_split_fraction=TRAIN_SPLIT_FRACTION,
-                  val_ratio         = VAL_RATIO,
-                  forecast_hour     = FORECAST_HOUR,
-                  seed              = SEED,
-                  force_calc_baselines=VERBOSE >= 3,
+    run.run_model(
+        mode              = mode,
+        num_runs          = num_runs,
 
-                  # XXX_EVERY (in epochs)
-                  validate_every    = VALIDATE_EVERY,
-                  display_every     = DISPLAY_EVERY,
-                  plot_conv_every   = PLOT_CONV_EVERY,
-                  run_id            = 0,
+        # configuration bundles
+        baseline_parameters= BASELINE_CFG,
+        NNTQ_parameters   = NNTQ_PARAMETERS,
+        metamodel_NN_parameters= METAMODEL_NN_PARAMETERS,
 
-                  cache_fname       = CACHE_FNAME,
-                  verbose           = VERBOSE
-                  )
+        csv_path          = 'parameter_search.csv',
+        dict_fnames       = DICT_FNAMES,
+
+        # statistics of the dataset
+        minutes_per_step  = MINUTES_PER_STEP,
+        train_split_fraction=TRAIN_SPLIT_FRACTION,
+        val_ratio         = VAL_RATIO,
+        forecast_hour     = FORECAST_HOUR,
+        seed              = SEED,
+        force_calc_baselines=force_calc_baselines,
+
+        # XXX_EVERY (in epochs)
+        validate_every    = VALIDATE_EVERY,
+        display_every     = DISPLAY_EVERY,
+        plot_conv_every   = PLOT_CONV_EVERY,
+
+        cache_dir         = 'cache',
+        verbose           = VERBOSE
+    )
 
 

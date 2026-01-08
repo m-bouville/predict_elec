@@ -1,5 +1,7 @@
 # import os
 import copy
+import warnings
+
 from   tqdm     import trange
 
 from   typing   import Dict, Any, Optional  # List, Tuple, Sequence,
@@ -97,7 +99,7 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
         p['weight_decay']= \
             round(0.3e-6* 10 ** random.uniform(np.log10(0.1), np.log10(10.)), 9)
     if 'dropout' in p.keys():
-        p['dropout']     = round(random.uniform(0.02, 0.2), 3)
+        p['dropout']     = round(random.uniform(0.02, 0.15), 3)
 
     # quantile loss weights
     if 'lambda_cross' in p.keys():
@@ -156,7 +158,7 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
     if 'patience' in p.keys():
         p['patience']      = int(      random.uniform(4,    10))
     if 'min_delta' in p.keys():
-        p['min_delta']     =     round(random.uniform(15e-3,35e-3), 5)
+        p['min_delta']     =     round(random.uniform(15e-3,30e-3), 5)
 
     # derived quantities
     if 'input_length' in p and 'features_in_future' in p and \
@@ -215,12 +217,15 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
 
 
 def run_Monte_Carlo_search(
+            stage               : str,    # only 'all' is implemented
             num_runs            : int,
+
             # configuration bundles
             base_baseline_params: Dict[str, Dict[str, Any]],
             base_NNTQ_params    : Dict[str, Any],
             base_meta_NN_params : Dict[str, Any],
             dict_fnames         : Dict[str, str],
+
             # statistics of the dataset
             minutes_per_step    : int,
             train_split_fraction: float,
@@ -228,11 +233,13 @@ def run_Monte_Carlo_search(
             forecast_hour       : int,
             seed                : int,
             force_calc_baselines: bool,
-            cache_fname         : Optional[str] = None,
+            cache_dir           : Optional[str] = None,
             csv_path            : str    = 'parameter_search.csv'
         ):
 
-    import warnings
+    if stage != 'all':
+        warnings.warn(f"stage ({stage}) will not nbe used")
+
     # from   sklearn.exceptions import ConvergenceWarning
     warnings.filterwarnings("ignore", category=UserWarning)  # TODO fix for real
 
@@ -249,35 +256,35 @@ def run_Monte_Carlo_search(
         metamodel_parameters= sample_metamodel_NN_parameters(base_meta_NN_params)
 
         dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-            (num_worst_days, avg_abs_worst_days_train), overall_loss = run.run_model(
+            (num_worst_days, avg_abs_worst_days_train), (loss_NNTQ, loss_meta) = \
+                run.run_model_once(
                   # configuration bundles
-                  baseline_cfg    = baseline_parameters,
-                  NNTQ_parameters = NNTQ_parameters,
+                  baseline_parameters= baseline_parameters,
+                  NNTQ_parameters   = NNTQ_parameters,
                   metamodel_NN_parameters=metamodel_parameters,
-                  dict_fnames     = dict_fnames,
+                  dict_fnames       = dict_fnames,
 
                   # statistics of the dataset
-                  minutes_per_step= minutes_per_step,
+                  minutes_per_step  = minutes_per_step,
                   train_split_fraction=train_split_fraction,
-                  val_ratio       = val_ratio,
-                  forecast_hour   = forecast_hour,
-                  seed            = seed,
-                  force_calc_baselines=False, #VERBOSE >= 2, #SYSTEM_SIZE == 'DEBUG',
+                  val_ratio         = val_ratio,
+                  forecast_hour     = forecast_hour,
+                  seed              = seed,
+
+                  force_calc_baselines=False,
+                  save_cache_baselines= False,  # these parameters
+                  save_cache_NNTQ     = False,  #   will never be seen again
 
                   # XXX_EVERY (in epochs)
-                  validate_every  = 1,
-                  display_every   = 1,  # dummy
-                  plot_conv_every = 1,  # dummy
-                  run_id          = run_id,
+                  validate_every    = 1,
+                  display_every     = 1,  # dummy
+                  plot_conv_every   = 1,  # dummy
+                  run_id            = run_id,
 
-                  cache_fname     = cache_fname,
-                  verbose         = 0
+                  cache_dir         = cache_dir,
+                  verbose           = 0
         )
 
-        # row, overall_loss = run.post_process_run(
-        #     baseline_parameters, NNTQ_parameters, metamodel_parameters,
-        #     df_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        #     avg_abs_worst_days_train, run_id, csv_path)
         list_results.append(dict_row)
 
     return pd.DataFrame(list_results)

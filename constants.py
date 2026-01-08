@@ -136,8 +136,8 @@ METAMODEL_NN_PARAMETERS: dict = {
     'device'           : DEVICE,
     }
 
-META_EPOCHS     = [  1, 12]
-METAMODEL_NN_PARAMETERS['epochs']  = META_EPOCHS  [IDX_RUN_FAST]
+META_EPOCHS = [ 1, 12]
+METAMODEL_NN_PARAMETERS['epochs'] = META_EPOCHS[IDX_RUN_FAST]
 
 
 
@@ -172,11 +172,10 @@ assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the media
 
 
 
-baseline_cfg = [
-    {  # 'FAST'
-    'lasso': {"alpha": 5 / 100., 'max_iter': 1_000},
+baseline_cfg_fast = {
+    'lasso': {"alpha": 0.04, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 1_000},
+    'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
     'RF': {
         "type":            "rf",
         "n_estimators":     50,     # was 300 -> fewer trees
@@ -204,16 +203,16 @@ baseline_cfg = [
         "n_jobs": 4,                  # Number of parallel jobs
         "verbose": -1                 # Suppress output
     }
-},
+}
 
-{  # 'NORMAL'
-    'lasso': {"alpha": 1.75 / 100., 'max_iter': 2_000},
+baseline_cfg_normal = {
+    'lasso': {"alpha": 0.01, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "ridge", "alpha": 0.5, 'max_iter': 2_000},
+    'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
     'RF': {
         "type":            "rf",
-        "n_estimators":    500,
-        "max_depth":        20,
+        "n_estimators":    350,
+        "max_depth":        15,
         "min_samples_leaf": 15,
         "min_samples_split":20,
         "max_features":   "sqrt",
@@ -226,21 +225,17 @@ baseline_cfg = [
         "boosting_type": "gbdt",
         "num_leaves":       32-1,     # Default number of leaves
         "max_depth":         5,       # Moderate tree depth
-        "learning_rate":     0.06,    # Lower learning rate for stability
+        "learning_rate":     0.02,    # Lower learning rate for stability
         "n_estimators":    500,       # More trees for a robust model
-        "min_child_samples":22,       # Minimum samples per leaf
-        "subsample":         0.85,    # Fraction of samples used to train each tree
-        "colsample_bytree":  0.8,    # Fraction of features used for each tree
-        "reg_alpha":         0.1,     # L1 regularization
-        "reg_lambda":        0.12,    # L2 regularization
+        "min_child_samples":25,       # Minimum samples per leaf
+        "subsample":         0.6,    # Fraction of samples used to train each tree
+        "colsample_bytree":  0.75,    # Fraction of features used for each tree
+        "reg_alpha":         0.12,     # L1 regularization
+        "reg_lambda":        0.08,    # L2 regularization
         "random_state":      0,       # Seed for reproducibility
         "n_jobs":            4,       # Number of parallel jobs
         "verbose":          -1        # Suppress output
     }
 }
-]
 
-
-BASELINE_CFG = baseline_cfg[IDX_RUN_FAST]
-
-# BASELINE_CFG = {}
+BASELINE_CFG = baseline_cfg_fast if RUN_FAST else baseline_cfg_normal

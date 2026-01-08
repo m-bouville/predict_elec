@@ -143,6 +143,7 @@ def create_baselines(df            : pd.DataFrame,
                      train_split   : float,
                      n_valid       : int,
                      cache_dir     : str = "cache",
+                     save_cache_baselines: bool=False,
                      force_calculation:bool = False,
                      verbose       : int = 0) \
         -> Tuple[pd.DataFrame, str, List[str]]:
@@ -212,6 +213,7 @@ def create_baselines(df            : pd.DataFrame,
             val_end         = train_split,
             models_cfg      = baseline_cfg,
             cache_dir       = cache_dir,
+            save_cache_baselines=save_cache_baselines,
             cache_id_dict   = cache_id,
             force_calculation=force_calculation,
             verbose         = verbose
@@ -251,6 +253,7 @@ def regression_and_forest(
     val_end:       int,     # end of validation set (exclusive)
     models_cfg:    Dict[str, dict],
     cache_dir:     str,
+    save_cache_baselines: bool,
     cache_id_dict: dict,
     force_calculation:bool = False,
     verbose:       int = 0
@@ -343,7 +346,7 @@ def regression_and_forest(
             pred_test_GW  = models[name].predict(X_test_scaled )
 
             # Save
-            if name != 'LR':
+            if name != 'LR' and save_cache_baselines:
                 with open(cache_path, "wb") as f:
                     pickle.dump((pred_train_GW, pred_valid_GW,
                                  pred_test_GW,  models[name]), f)

@@ -1,5 +1,6 @@
 # import os
 import copy
+import warnings
 
 from   typing   import Dict, Any, Optional  # List, Tuple, Sequence,
 
@@ -19,6 +20,84 @@ import run
 
 
 
+# -------------------------------------------------------
+# Distributions
+# -------------------------------------------------------
+
+distributions_baselines = {
+    'lasso_alpha':    FloatDistribution(low=0.005, high=0.04, log=True),
+    'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
+    'LR_type':        CategoricalDistribution(choices=['lasso', 'ridge']),
+    'LR_alpha':      FloatDistribution(low=0.005, high=2.0, log=True),
+    # 'LR_alpha_lasso': FloatDistribution(low=0.005, high=0.04, log=True),
+    # 'LR_alpha_ridge': FloatDistribution(low=0.5, high=2.0, log=True),
+    'LR_max_iter': IntDistribution(low=2000, high=2000),  # constant
+    # random forest
+    'RF_n_estimators': IntDistribution(low=300, high=600, step=10),
+    'RF_max_depth': IntDistribution(low=15, high=25, step=1),
+    'RF_min_samples_leaf': IntDistribution(low=10, high=20, step=1),
+    'RF_min_samples_split': IntDistribution(low=15, high=25, step=1),
+    'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4', '0.5', '0.6']),
+    # gradient boosting
+    'GB_boosting_type': CategoricalDistribution(choices=['gbdt']),
+    'GB_num_leaves': CategoricalDistribution(choices=[15, 31]),
+    'GB_max_depth':  CategoricalDistribution(choices=[3, 4, 5, 6]),
+    'GB_learning_rate':FloatDistribution(low=0.002, high=0.15, log=True),
+    'GB_n_estimators': IntDistribution(low=300, high=600, step=10),
+    'GB_min_child_samples':IntDistribution(low=15, high=25, step=1),
+    'GB_subsample':   FloatDistribution(low=0.6, high=1.0),
+    'GB_colsample_bytree':FloatDistribution(low=0.6, high=1.0),
+    'GB_reg_alpha':  FloatDistribution(low=0.03, high=0.3, log=True),
+    'GB_reg_lambda': FloatDistribution(low=0.03, high=0.3, log=True)
+}
+
+distributions_NNTQ = {
+    'patch_length': IntDistribution(low=24, high=24),  # constant
+    'stride':     IntDistribution(low=12, high=12),  # constant
+    'epochs':     IntDistribution(low=20, high=40, step=1),
+    'batch_size': CategoricalDistribution(choices=[32, 64, 96, 128]),
+    'learning_rate':FloatDistribution(low=0.002, high=0.3, log=True),
+    'weight_decay': FloatDistribution(low=0., high=1e-5),  # BUG: 0 in csv at start
+    'dropout':    FloatDistribution(low=0.02, high=0.15),
+    # quantile loss
+    'lambda_cross':   FloatDistribution(low=0., high=2.0),
+    'lambda_coverage':FloatDistribution(low=0., high=1.0),
+    'lambda_deriv':   FloatDistribution(low=0., high=0.3),
+    'lambda_median':  FloatDistribution(low=0., high=1.0),
+    'smoothing_cross':FloatDistribution(low=0.005,high=0.05),
+        # temperature-dependence (pinball loss, coverage penalty)
+    'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
+    'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
+    'lambda_cold':    FloatDistribution(low=0., high=1.),
+
+    'model_dim':    IntDistribution(low=90, high=255, step=1),
+    'ffn_size':     IntDistribution(low=2, high=7, step=1),
+    'num_heads':    IntDistribution(low=2, high=8, step=1),
+    'num_layers':   IntDistribution(low=1, high=6, step=1),
+    'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
+    'num_geo_blocks': IntDistribution(low=2, high=8, step=1),
+    'warmup_steps': IntDistribution(low=1500, high=4000, step=50),
+    'patience':     IntDistribution(low=3, high=10, step=1),
+    'min_delta':    FloatDistribution(low=15e-3, high=30e-3),
+}
+
+distributions_metamodel_NN = {
+    'metaNN_epochs':      IntDistribution(low=1, high=15, step=1),  # 1: NNTQ search
+    'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512, 640]),
+    'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
+    'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
+    'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
+    'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40, 48]),
+    'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20, 24]),
+    'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
+    'metaNN_factor':      FloatDistribution(low=0.6, high=0.85),
+}
+
+
+
+# -------------------------------------------------------
+# Sampling
+# -------------------------------------------------------
 
 def sample_baseline_parameters(
         trial: optuna.Trial,
@@ -39,11 +118,11 @@ def sample_baseline_parameters(
     for _baseline in p0.keys():
         p = p0[_baseline]  # Get the parameters for the current baseline model
 
-        if _baseline == 'lasso':
-            if 'alpha' in p:
-                p['alpha'] = trial.suggest_float('lasso_alpha', 0.005, 0.04, log=True)
+        # if _baseline == 'lasso':
+        #     if 'alpha' in p:
+        #         p['alpha'] = trial.suggest_float('lasso_alpha', 0.005, 0.04, log=True)
 
-        elif _baseline == 'LR':
+        if _baseline == 'LR':
             if 'type' in p:
                 p['type'] = trial.suggest_categorical('LR_type', ['lasso', 'ridge'])
             if ('type' in p) and ('alpha' in p):
@@ -137,7 +216,7 @@ def sample_NNTQ_parameters(
     if 'ffn_size' in p:
         p['ffn_size'   ] = trial.suggest_int('ffn_size',  3, 7)
     if 'num_heads' in p:
-        p['num_heads'  ] = trial.suggest_int('num_heads', 3, 7)
+        p['num_heads'  ] = trial.suggest_int('num_heads', 4, 8)
     if 'num_layers' in p:
         p['num_layers' ] = trial.suggest_int('num_layers',2, 6)
 
@@ -201,77 +280,11 @@ def sample_metamodel_NN_parameters(
     return p
 
 
-distributions_baselines = {
-    'lasso_alpha':    FloatDistribution(low=0.005, high=0.04, log=True),
-    'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
-    'LR_type':        CategoricalDistribution(choices=['lasso', 'ridge']),
-    'LR_alpha':      FloatDistribution(low=0.005, high=2.0, log=True),
-    # 'LR_alpha_lasso': FloatDistribution(low=0.005, high=0.04, log=True),
-    # 'LR_alpha_ridge': FloatDistribution(low=0.5, high=2.0, log=True),
-    'LR_max_iter': IntDistribution(low=2000, high=2000),  # constant
-    # random forest
-    'RF_n_estimators': IntDistribution(low=300, high=600, step=10),
-    'RF_max_depth': IntDistribution(low=15, high=25, step=1),
-    'RF_min_samples_leaf': IntDistribution(low=10, high=20, step=1),
-    'RF_min_samples_split': IntDistribution(low=15, high=25, step=1),
-    'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4', '0.5', '0.6']),
-    # gradient boosting
-    'GB_boosting_type': CategoricalDistribution(choices=['gbdt']),
-    'GB_num_leaves': CategoricalDistribution(choices=[15, 31]),
-    'GB_max_depth':  CategoricalDistribution(choices=[3, 4, 5, 6]),
-    'GB_learning_rate':FloatDistribution(low=0.002, high=0.15, log=True),
-    'GB_n_estimators': IntDistribution(low=300, high=600, step=10),
-    'GB_min_child_samples':IntDistribution(low=15, high=25, step=1),
-    'GB_subsample':   FloatDistribution(low=0.6, high=1.0),
-    'GB_colsample_bytree':FloatDistribution(low=0.6, high=1.0),
-    'GB_reg_alpha':  FloatDistribution(low=0.03, high=0.3, log=True),
-    'GB_reg_lambda': FloatDistribution(low=0.03, high=0.3, log=True)
-}
 
-distributions_NNTQ = {
-    'patch_length': IntDistribution(low=24, high=24),  # constant
-    'stride':     IntDistribution(low=12, high=12),  # constant
-    'epochs':     IntDistribution(low=20, high=40, step=1),
-    'batch_size': CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.002, high=0.3, log=True),
-    'weight_decay': FloatDistribution(low=0., high=1e-5),  # BUG: 0 in csv at start
-    'dropout':    FloatDistribution(low=0.02, high=0.15),
-    # quantile loss
-    'lambda_cross':   FloatDistribution(low=0., high=2.0),
-    'lambda_coverage':FloatDistribution(low=0., high=1.0),
-    'lambda_deriv':   FloatDistribution(low=0., high=0.3),
-    'lambda_median':  FloatDistribution(low=0., high=1.0),
-    'smoothing_cross':FloatDistribution(low=0.005,high=0.05),
-        # temperature-dependence (pinball loss, coverage penalty)
-    'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
-    'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
-    'lambda_cold':    FloatDistribution(low=0., high=1.),
-
-    'model_dim':    IntDistribution(low=90, high=255, step=1),
-    'ffn_size':     IntDistribution(low=2, high=7, step=1),
-    'num_heads':    IntDistribution(low=2, high=7, step=1),
-    'num_layers':   IntDistribution(low=1, high=6, step=1),
-    'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
-    'num_geo_blocks': IntDistribution(low=2, high=8, step=1),
-    'warmup_steps': IntDistribution(low=1500, high=4000, step=50),
-    'patience':     IntDistribution(low=3, high=10, step=1),
-    'min_delta':    FloatDistribution(low=15e-3, high=30e-3),
-}
-
-distributions_metamodel_NN = {
-    'metaNN_epochs':      IntDistribution(low=8, high=15, step=1),
-    'metaNN_batch_size':  CategoricalDistribution(choices=[128, 192, 256, 384, 512, 640]),
-    'metaNN_learning_rate':FloatDistribution(low=0.15e-3, high=1.5e-3, log=True),
-    'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
-    'metaNN_dropout':     FloatDistribution(low=0., high=0.4),
-    'metaNN_num_cells_0': CategoricalDistribution(choices=[24, 32, 40, 48]),
-    'metaNN_num_cells_1': CategoricalDistribution(choices=[12, 16, 20, 24]),
-    'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
-    'metaNN_factor':      FloatDistribution(low=0.6, high=0.85),
-}
-
-
+# -------------------------------------------------------
 # run several plotting functions
+# -------------------------------------------------------
+
 def plot_optuna(study,
                 num_best_runs: int = 15,
                 num_important_parameters: int = 12) -> None:
@@ -363,71 +376,98 @@ def plot_optuna(study,
 
 
 
+# -------------------------------------------------------
+# run Bayesian search
+# -------------------------------------------------------
+
 def run_Bayes_search(
+            stage               : str,    # in ['NNTQ', 'meta', 'all']
             num_runs            : int,
+
             # configuration bundles
             base_baseline_params: Dict[str, Dict[str, Any]],
             base_NNTQ_params    : Dict[str, Any],
             base_meta_NN_params : Dict[str, Any],
             dict_fnames         : Dict[str, str],
+
             # statistics of the dataset
             minutes_per_step    : int,
             train_split_fraction: float,
             val_ratio           : float,
             forecast_hour       : int,
             seed                : int,
-            force_calc_baselines: bool,
-            cache_fname         : Optional[str] = None,
+            force_calc_baselines: bool   = False,
+            cache_dir           : Optional[str] = None,
             csv_path            : str    = 'parameter_search.csv'
         ):
 
-    import warnings
     # from   sklearn.exceptions import ConvergenceWarning
     warnings.filterwarnings("ignore", category=UserWarning)  # TODO fix for real
 
 
     def objective(trial: optuna.Trial) -> float:
-
         # print(f"Starting run {run_id} out of {num_runs}")
-        # meta_cfg = sample_meta_params(base_meta_NN_params, rng)
 
+        # lasso controls features and is thus relevant to everyone
+        baseline_parameters = copy.deepcopy(base_baseline_params)
+        if 'alpha' in baseline_parameters['lasso'] :
+            baseline_parameters['lasso']['alpha'] = \
+                trial.suggest_float('lasso_alpha', 0.005, 0.04, log=True)
 
-        baseline_parameters = sample_baseline_parameters    (trial, base_baseline_params)
-        NNTQ_parameters     = sample_NNTQ_parameters        (trial, base_NNTQ_params)
-        metamodel_parameters= sample_metamodel_NN_parameters(trial, base_meta_NN_params)
+        # three possible bahaviors:
+        #   - all:  we sample everything
+        #   - NNTQ: we sample NNTQ parameters only
+        #       (metamodel is not used, baselines are used, but frozen)
+        #   - meta: we sample baselines and metamodel parameters
+        #       (NNTQ parameters are frozen to values found in `NNTQ` search)
+
+        baseline_parameters= sample_baseline_parameters   (trial, baseline_parameters)\
+            if stage in [        'meta', 'all'] else baseline_parameters
+        NNTQ_parameters    = sample_NNTQ_parameters       (trial, base_NNTQ_params)\
+            if stage in ['NNTQ',         'all'] else base_NNTQ_params.copy()
+        metamodel_parameters=sample_metamodel_NN_parameters(trial,base_meta_NN_params)\
+            if stage in [        'meta', 'all'] else base_meta_NN_params.copy()
+
+        if stage == 'NNTQ':
+            metamodel_parameters['epochs'] = 1  # for speed
 
         dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-            (num_worst_days, avg_abs_worst_days_train), overall_loss = run.run_model(
+            (num_worst_days, avg_abs_worst_days_train), (loss_NNTQ, loss_meta) = \
+                run.run_model_once(
                   # configuration bundles
-                  baseline_cfg    = baseline_parameters,
-                  NNTQ_parameters = NNTQ_parameters,
+                  baseline_parameters= baseline_parameters,
+                  NNTQ_parameters   = NNTQ_parameters,
                   metamodel_NN_parameters=metamodel_parameters,
-                  dict_fnames     = dict_fnames,
+                  dict_fnames       = dict_fnames,
 
                   # statistics of the dataset
-                  minutes_per_step= minutes_per_step,
+                  minutes_per_step  = minutes_per_step,
                   train_split_fraction=train_split_fraction,
-                  val_ratio       = val_ratio,
-                  forecast_hour   = forecast_hour,
-                  seed            = seed + trial.number,
-                  force_calc_baselines=False,
+                  val_ratio         = val_ratio,
+                  forecast_hour     = forecast_hour,
+                  seed              = seed + trial.number,
+
+                  force_calc_baselines=force_calc_baselines,
+                  save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
+                  save_cache_NNTQ     = stage == 'meta',  # NNTQ  not sampled
 
                   # XXX_EVERY (in epochs)
-                  validate_every  = 1,
-                  display_every   = 1,  # dummy
-                  plot_conv_every = 1,  # dummy
+                  validate_every    = 999,
+                  display_every     = 999,  # dummy
+                  plot_conv_every   = 999,  # dummy
 
-                  run_id          = trial.number,
-                  cache_fname     = cache_fname,
-                  verbose         = 0
+                  run_id            = trial.number,
+                  cache_dir         = cache_dir,
+                  verbose           = 0
         )
 
-        # _, overall_loss = run.post_process_run(
-        #     baseline_parameters, NNTQ_parameters, metamodel_parameters,
-        #     df_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        #     avg_abs_worst_days_train, trial.number, csv_path)
-
-        return float(overall_loss)
+        # return the relevant loss
+        if stage == 'NNTQ':
+            return loss_NNTQ
+        if stage == 'meta':
+            return loss_meta
+        if stage == 'all':
+            return loss_NNTQ + loss_meta
 
 
     # Load the CSV file containing MC runs
@@ -465,12 +505,13 @@ def run_Bayes_search(
         results_df[['learning_rate', 'weight_decay',
                     'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6
 
-    assert [e for e in distributions_baselines | \
-                       distributions_NNTQ | distributions_metamodel_NN \
-                if e not in results_df.columns] == []
-    assert {e for e in results_df.columns  if e not in distributions_baselines | \
-         distributions_NNTQ | distributions_metamodel_NN} == \
-                {'timestamp', 'overall_loss'}
+    _all_distributions = distributions_baselines | \
+                         distributions_NNTQ | distributions_metamodel_NN
+    assert set(_all_distributions.keys()) - set(results_df.columns) == set(), \
+        set(_all_distributions.keys()) - set(results_df.columns)
+    assert set(results_df.columns) - set(_all_distributions.keys()) == \
+                {'timestamp', 'loss_NNTQ', 'loss_meta'}, \
+                    set(results_df.columns) - set(_all_distributions.keys())
 
     # can be 'sqrt' or a float => type issues
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
@@ -481,30 +522,32 @@ def run_Bayes_search(
     study   = optuna.create_study(direction='minimize',
                                   sampler=optuna.samplers.TPESampler())
 
-    distributions_keys = (distributions_baselines | \
-                    distributions_NNTQ | distributions_metamodel_NN).keys()
+    distributions_keys = _all_distributions.keys()
 
     # Create a list of FrozenTrial objects
     trials = []
     for index, row in results_df.iterrows():
         # print(index, row)
         _params = {k: row[k] for k in row.keys()
-            if k not in ['timestamp', 'overall_loss']}
+            if k not in ['timestamp', 'loss_NNTQ', 'loss_meta']}
         assert set(_params.keys()) - set(distributions_keys) == set(), \
                set(_params.keys()) - set(distributions_keys)
         assert set(distributions_keys) - set(_params.keys()) == set(), \
                set(distributions_keys) - set(_params.keys())
+
+        # relevant loss
+        _value = row['loss_NNTQ'] + row['loss_meta'] if stage == 'all' \
+            else row[f'loss_{stage}']
 
         trial = optuna.trial.FrozenTrial(
             number        = index,  # Trial number
             state         = optuna.trial.TrialState.COMPLETE,  # State of the trial
             datetime_start=   pd.to_datetime(row['timestamp'])-timedelta(minutes=1.5),
             datetime_complete=pd.to_datetime(row['timestamp']),
-            value         = row['overall_loss'],  # Objective value
+            value         = _value,  # Objective value
             params        = _params,  # hyperparameters
             user_attrs    = {},  # Additional attributes (can be empty)
-            distributions = distributions_baselines | \
-                            distributions_NNTQ | distributions_metamodel_NN,
+            distributions = _all_distributions,
             system_attrs  = {},  # system attributes (can be empty)
             intermediate_values={},  # (can be empty)
             trial_id      = index  # ID of the trial
@@ -524,7 +567,7 @@ def run_Bayes_search(
 
 
     # Run optimization
-    print(f"\nStarting {num_runs} trials...")
+    print(f"\nStarting {num_runs} trials ({stage})...")
     study.optimize(objective, n_trials=num_runs)
 
 

@@ -2,6 +2,11 @@ import gc
 # import sys
 import inspect
 import os
+import warnings
+
+import json
+import hashlib
+import pickle
 
 from   typing   import Dict, Any, Optional, List, Tuple, Sequence
 
@@ -14,7 +19,7 @@ import numpy  as np
 import pandas as pd
 
 
-import containers, architecture, utils, LR_RF, IO, plots  # losses, metamodel,
+import MC_search, Bayes_search, containers, architecture, utils, LR_RF, IO, plots
 
 
 # system dimensions
@@ -172,7 +177,7 @@ def normalize_features(df            : pd.DataFrame,
 
 
 # ============================================================
-# TRAINING LOOP
+# RUNNING MODEL ONCE
 # ============================================================
 
 def training_loop(data          : containers.DatasetBundle,
@@ -261,7 +266,7 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
                      avg_abs_worst_days_train:float,
                      run_id                : int,
                      csv_path              : str  = 'parameter_search.csv'
-                     ) -> [Dict[str, Any], float]:
+                     ) -> [Dict[str, Any], [float, float]]:
     flat_metrics = {}
     for model in df_metrics.index:
         for metric in df_metrics.columns:
@@ -287,8 +292,13 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
     del metamodel_parameters["num_cells"]
     metamodel_parameters.update(_dict_num_cells)
 
-    _overall_loss = overall_loss(
-        flat_metrics, quantile_delta_coverage, avg_abs_worst_days_train)
+    _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_train)
+    _loss_meta = loss_meta(flat_metrics)
+
+    # BUG does not do the job
+    if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
+        baseline_parameters['RF']['max_features'] = \
+            round(baseline_parameters['RF']['max_features'], 1)
 
     row = {
         "run"      : run_id,
@@ -301,7 +311,8 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
            for (key, value) in avg_weights_meta_NN.items()},
         **flat_metrics,
         'avg_abs_worst_days_train': avg_abs_worst_days_train,
-        "overall_loss": _overall_loss
+        "loss_NNTQ": _loss_NNTQ,
+        "loss_meta": _loss_meta
     }
     # print(row)
 
@@ -314,12 +325,12 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
         float_format="%.6f"
     )
 
-    return row, _overall_loss
+    return row, (_loss_NNTQ, _loss_meta)
 
 
-def run_model(
+def run_model_once(
         # configuration bundles
-        baseline_cfg      : Dict[str, Dict[str, Any]],
+        baseline_parameters:Dict[str, Dict[str, Any]],
         NNTQ_parameters   : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
         dict_fnames       : Dict[str, str],
@@ -329,14 +340,18 @@ def run_model(
         val_ratio         : float,
         forecast_hour     : int,
         seed              : int,
+
         force_calc_baselines:bool,
+        save_cache_baselines: bool,
+        save_cache_NNTQ     : bool,
+
         # XXX_EVERY (in epochs)
         validate_every    : int,
         display_every     : int,
         plot_conv_every   : int,
         run_id            : int,
 
-        cache_fname       : str  = "cache",
+        cache_dir         : str  = "cache",
         csv_path          : str  = 'parameter_search.csv',
         num_worst_days    : int  = 40,
         verbose           : int  = 0
@@ -368,7 +383,7 @@ def run_model(
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, target_col, feature_cols, dates, Tavg_full, holidays_full) = \
         load_and_create_df(
-            dict_fnames, cache_fname, NNTQ_parameters['pred_length'],
+            dict_fnames, None, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
 
 
@@ -376,7 +391,8 @@ def run_model(
 
     if verbose > 0:
         # keep only arguments expected by `IO.print_model_summary`
-        valid_parameters = inspect.signature(IO.print_model_summary).parameters.keys()
+        valid_parameters = \
+            inspect.signature(IO.print_model_summary).parameters.keys()
         filtered_parameters = {k: v for k, v in NNTQ_parameters.items()
                                        if k in valid_parameters}
         filtered_meta_parameters = {
@@ -403,8 +419,8 @@ def run_model(
     n_valid     = int(train_split * val_ratio)
 
     (df, feature_cols) = LR_RF.create_baselines(df, target_col, feature_cols,
-        baseline_cfg, train_split, n_valid,
-        cache_dir = "cache",
+        baseline_parameters, train_split, n_valid,
+        cache_dir, save_cache_baselines,
         force_calculation = force_calc_baselines,
         verbose           = verbose
     )
@@ -430,25 +446,58 @@ def run_model(
                                       num_features  = data.num_features)
 
 
-    # loop for training and validation
-    if verbose > 0:
-        print("Starting training...")
+    # do not rerun same NNTQ all the time for Bayesian search focused on metamodel
+    if cache_dir is not None:
+        os.makedirs(cache_dir, exist_ok=True)
 
-    list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
+        key_str    = json.dumps(
+            baseline_parameters['lasso'] | baseline_parameters['LR'] |
+            baseline_parameters['RF'   ] | baseline_parameters['GB'] |
+            {key: value for key, value in NNTQ_parameters.items() if key != 'device'},
+                sort_keys=True)
+        cache_key  = hashlib.md5(key_str.encode()).hexdigest()
+        cache_path = os.path.join(cache_dir, f"nntq_preds_{cache_key}.pkl")
+
+    # either load...
+    if cache_dir is not None and os.path.exists(cache_path):
+        if verbose > 0:
+            print(f"Loading NNTQ predictions from: {cache_path}...")
+        with open(cache_path, "rb") as f:
+            ((NNTQ_model, data)) = pickle.load(f)
+
+    else:  # ... or compute
+        if verbose > 0:
+            if cache_dir is None:
+                print("Training NNTQ (calculation forced)...")
+            else:
+                print("Training NNTQ (no cache found)...")
+
+
+        # loop for training and validation
+        if verbose > 0:
+            print("Starting training...")
+
+        list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
             dict_valid_loss_quantile_h = training_loop(data,
                 NNTQ_model, validate_every, display_every, plot_conv_every, verbose)
 
 
+        # plotting convergence for entire training
+        if verbose > 0:
+            plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
+                                       list_of_lists[2], list_of_lists[3],
+                                       partial=False, verbose=verbose)
 
-    # plotting convergence for entire training
-    if verbose > 0:
-        plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
-                                   list_of_lists[2], list_of_lists[3],
-                                   partial=False, verbose=verbose)
+            plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
+                                   **dict_valid_loss_quantile_h), minutes_per_step,
+                                   "validation loss")
 
-        plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
-                               **dict_valid_loss_quantile_h), minutes_per_step,
-                               "validation loss")
+        # Save
+        if cache_dir is None and save_cache_NNTQ:
+            with open(cache_path, "wb") as f:
+                pickle.dump((NNTQ_model, data), f)
+            if verbose > 0:
+                print(f"Saved NNTQ predictions to: {cache_path}")
 
 
     # test loss
@@ -553,7 +602,7 @@ def run_model(
     #     print(pd.DataFrame(rows).set_index("series"))
     #     print()
 
-    # assert len(common_idx)>0, "No common timestamps between truth and predictions!"
+    # assert len(common_idx)>0,"No common timestamps between truth and predictions!"
 
     # print(data.test.true_GW.index, common_idx)
 
@@ -624,18 +673,139 @@ def run_model(
         torch.cuda.empty_cache()
         # torch.cuda.synchronize()
 
-    dict_row, overall_loss = post_process_run(
-        baseline_cfg, NNTQ_parameters, metamodel_NN_parameters,
+    dict_row, (loss_NNTQ, loss_meta) = post_process_run(
+        baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
         avg_abs_diff_train, run_id, csv_path)
 
     return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-        (num_worst_days, avg_abs_diff_train), overall_loss
+        (num_worst_days, avg_abs_diff_train), (loss_NNTQ, loss_meta)
+
+
+
+
+
+# ============================================================
+# RUNNING MODEL ONCE, OR FOR A SEARCH (MC OR BAYES))
+# ============================================================
+
+def run_model(
+        mode                : str,  # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta']
+        num_runs            : Optional[int],
+
+        # configuration bundles
+        baseline_parameters : Dict[str, Dict[str, Any]],
+        NNTQ_parameters     : Dict[str, Any],
+        metamodel_NN_parameters:Dict[str, Any],
+        dict_fnames         : Dict[str, str],
+
+        # statistics of the dataset
+        minutes_per_step    : int,
+        train_split_fraction: float,
+        val_ratio           : float,
+        forecast_hour       : int,
+        seed                : int,
+
+        force_calc_baselines: bool,
+
+        # XXX_EVERY (in epochs)
+        validate_every      : Optional[int] = None,
+        display_every       : Optional[int] = None,
+        plot_conv_every     : Optional[int] = None,
+
+        cache_dir           : str  = "cache",
+        csv_path            : str  = 'parameter_search.csv',
+        num_worst_days      : int  = 40,
+        verbose             : Optional[int]  = 0
+    ) -> Tuple[Dict[str, Any], pd.DataFrame, \
+               Dict[str, float], Dict[str, float], float, float]:
+
+    if mode == 'once':  # single run
+        if num_runs in locals() and num_runs > 1:
+            warnings.warn(f"num_runs ({num_runs}) will not nbe used")
+
+        run_model_once(
+                # configuration bundles
+                baseline_parameters= baseline_parameters,
+                NNTQ_parameters   = NNTQ_parameters,
+                metamodel_NN_parameters= metamodel_NN_parameters,
+
+                dict_fnames       = dict_fnames,
+
+                # statistics of the dataset
+                minutes_per_step  = minutes_per_step,
+                train_split_fraction=train_split_fraction,
+                val_ratio         = val_ratio,
+                forecast_hour     = forecast_hour,
+                seed              = seed,
+
+                force_calc_baselines=force_calc_baselines,
+                save_cache_baselines= True,
+                save_cache_NNTQ     = True,
+
+                # XXX_EVERY (in epochs)
+                validate_every    = validate_every,
+                display_every     = display_every,
+                plot_conv_every   = plot_conv_every,
+                run_id            = 0,
+
+                cache_dir         = cache_dir,
+                verbose           = verbose
+            )
+
+    else:   # search for hyperparameters
+        # no display => some arguments are not used
+        if validate_every in locals() and validate_every > 0:
+            warnings.warn(f"validate_every ({validate_every}) will not nbe used")
+        if display_every in locals() and validate_every > 0:
+            warnings.warn(f"display_every ({display_every}) will not nbe used")
+        if plot_conv_every in locals() and validate_every > 0:
+            warnings.warn(f"plot_conv_every ({plot_conv_every}) will not nbe used")
+
+        if mode in ['random', 'Monte Carlo', 'MC']:
+            parameter_search_function = MC_search.run_Monte_Carlo_search
+            stage = 'all'  # only one implemented
+
+        elif 'Bayes' in mode:  # works for `Bayes` and `Bayesian`
+            parameter_search_function = Bayes_search.run_Bayes_search
+            if 'NNTQ' in mode:
+                stage = 'NNTQ'
+            elif 'meta' in mode: # works for `meta` and `metamodel`
+                stage = 'meta'
+            elif 'all' in mode:
+                stage = 'all'
+            else:
+                raise ValueError(f"`{mode}` is not a valid mode")
+
+        else:
+            raise ValueError(f"`{mode}` is not a valid mode")
+
+        parameter_search_function(
+                stage               = stage,
+                num_runs            = num_runs,
+                csv_path            = 'parameter_search.csv',
+
+                # configuration bundles
+                base_baseline_params= baseline_parameters,
+                base_NNTQ_params    = NNTQ_parameters,
+                base_meta_NN_params = metamodel_NN_parameters,
+                dict_fnames         = dict_fnames,
+
+                # statistics of the dataset
+                minutes_per_step    = minutes_per_step,
+                train_split_fraction= train_split_fraction,
+                val_ratio           = val_ratio,
+                forecast_hour       = forecast_hour,
+                seed                = seed,
+                force_calc_baselines= force_calc_baselines,
+                cache_dir           = cache_dir,
+            )
+
 
 
 
 # -------------------------------------------------------
-# overall_all loss
+# losses (NNTQ and metamodel separately)
 # -------------------------------------------------------
 
 def expand_sequence(name: str, values: Sequence, length: int,
@@ -674,8 +844,7 @@ def flatten_dict(d, parent_key="", sep="_"):
             items[new_key] = v
     return items
 
-def overall_loss(
-         flat_metrics           : Dict[str, float],
+def loss_NNTQ(
          quantile_delta_coverage: Dict[str, float],
          avg_abs_worst_days     : float,
 
@@ -686,28 +855,39 @@ def overall_loss(
          weight_coverage        : float   = 5.,
                  # coverage and bias, MAE have different scales
 
-         weight_worst_days      : float   = 0.2,
-                # was not saved initially: start slow
+         weight_worst_days      : float   = 0.25,
+                # /!\ was not saved initially: starting slow
 
          quantile_weights       : Dict[str, float] = \
              {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
                  # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
-
-         metric_weights         : Dict[str, float] = \
-             {'bias': 2., 'RMSE': 1., 'MAE': 1.},
-                 # RMSE and MAE are variants of each other, bias is different
-
-         model_weights         : Dict[str, float] = \
-             {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
-              'meta_LR'     : 3., 'meta_NN'     : 4.},
-            # LR, RF and LGBM are just underlying models to the metamodels;
-            #      improving them intrinsically is good, but secondary
     ) -> float:
 
     _loss_quantile_coverage = \
         np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
                     for q, gap in quantile_delta_coverage.items()])
                 # was np.mean
+
+    return float(round(_loss_quantile_coverage * weight_coverage + \
+                       # avg_metric + \
+                       avg_abs_worst_days * weight_worst_days, 4))
+
+
+def loss_meta(
+         flat_metrics   : Dict[str, float],
+
+         # constants
+         metric_weights : Dict[str, float] = \
+             {'bias': 2., 'RMSE': 1., 'MAE': 1.},
+                 # RMSE and MAE are variants of each other, bias is different
+
+         model_weights  : Dict[str, float] = \
+             {'NN': 0., 'LR': 1., 'RF': 1., 'GB': 1.,
+              'meta_LR'     : 2., 'meta_NN'     : 4.},
+            # LR, RF and LGBM are just underlying models to the metamodels;
+            #      improving them intrinsically is good, but secondary
+    ) -> float:
+
 
     dict_by_metric = {k: [] for k in list(metric_weights.keys())}
 
@@ -727,15 +907,73 @@ def overall_loss(
     avg_metric = np.sum([value * metric_weights[metric]
                         for (metric, value) in dict_avg_metrics.items()]) / \
                     np.sum((list(metric_weights.values())))
-    # print(avg_metrics)
+    # print(avg_metric)
 
-    return float(round(_loss_quantile_coverage * weight_coverage + \
-                       avg_metric + \
-                       avg_abs_worst_days * weight_worst_days, 4))
+    return float(round(avg_metric, 4))
 
 
-def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
-                     weight_coverage: float = 10.) -> None:
+# def loss_all(
+#          flat_metrics           : Dict[str, float],
+#          quantile_delta_coverage: Dict[str, float],
+#          avg_abs_worst_days     : float,
+
+#          # constants
+#          max_quantile_delta_coverage: float = 0.25,
+#                  # prevents one quantile from dominating completely
+
+#          weight_coverage        : float   = 5.,
+#                  # coverage and bias, MAE have different scales
+
+#          weight_worst_days      : float   = 0.2,
+#                 # was not saved initially: start slow
+
+#          quantile_weights       : Dict[str, float] = \
+#              {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
+#                  # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
+
+#          metric_weights         : Dict[str, float] = \
+#              {'bias': 2., 'RMSE': 1., 'MAE': 1.},
+#                  # RMSE and MAE are variants of each other, bias is different
+
+#          model_weights         : Dict[str, float] = \
+#              {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
+#               'meta_LR'     : 3., 'meta_NN'     : 4.},
+#             # LR, RF and LGBM are just underlying models to the metamodels;
+#             #      improving them intrinsically is good, but secondary
+#     ) -> float:
+
+#     _loss_quantile_coverage = \
+#         np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
+#                     for q, gap in quantile_delta_coverage.items()])
+#                 # was np.mean
+
+#     dict_by_metric = {k: [] for k in list(metric_weights.keys())}
+
+#     for key, value in flat_metrics.items():
+#         parts  = key.replace("test_", "").split('_')
+#         model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
+#         metric = parts[-1]             # Ex: "bias", "RMSE", etc.
+
+#         dict_by_metric[metric].append(model_weights[model] * abs(value))
+
+#     for metric in dict_by_metric.keys():
+#         assert len(dict_by_metric[metric]) == len(model_weights)
+
+#     dict_avg_metrics= {metric: np.sum(_list)/np.sum(list(model_weights.values()))
+#                             for (metric, _list) in dict_by_metric.items()}
+
+#     avg_metric = np.sum([value * metric_weights[metric]
+#                         for (metric, value) in dict_avg_metrics.items()]) / \
+#                     np.sum((list(metric_weights.values())))
+#     # print(avg_metric)
+
+#     return float(round(_loss_quantile_coverage * weight_coverage + \
+#                        avg_metric + \
+#                        avg_abs_worst_days * weight_worst_days, 4))
+
+
+
+def recalculate_loss(csv_path: str   = 'parameter_search.csv') -> None:
     # Load the CSV file containing MC runs
     results_df = pd.read_csv(csv_path, index_col=False)
 
@@ -749,7 +987,9 @@ def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
 
     # print(pd.concat([results_df[['timestamp']], dates], axis=1))
 
-    _list_overall_losses = []
+    _list_losses_NNTQ = []
+    _list_losses_meta = []
+
     for index, row in results_df.iterrows():
         flat_metrics = (row \
         [['test_NN_bias',     'test_NN_RMSE',     'test_NN_MAE',
@@ -762,12 +1002,20 @@ def recalculate_loss(csv_path       : str   = 'parameter_search.csv',
         quantile_delta_coverage = \
             row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
 
-        _overall_loss = overall_loss(flat_metrics, quantile_delta_coverage, weight_coverage)
-        _list_overall_losses.append(_overall_loss)
+        avg_abs_worst_days = row[['avg_abs_worst_days_train']].iloc[0]
 
-    # print(_list_overall_losses)
+        _loss_NNTQ = loss_NNTQ(quantile_delta_coverage= quantile_delta_coverage,
+                               avg_abs_worst_days     = avg_abs_worst_days)
+        _list_losses_NNTQ.append(_loss_NNTQ)
 
-    results_df['overall_loss'] = _list_overall_losses
+        _loss_meta = loss_meta(flat_metrics = flat_metrics)
+        _list_losses_meta.append(_loss_meta)
+
+    # print(_list_losses_NNTQ, _list_losses_meta)
+
+    results_df['loss_NNTQ'] = _list_losses_NNTQ
+    results_df['loss_meta'] = _list_losses_meta
+
     results_df.to_csv(csv_path, index=False)
 
 
