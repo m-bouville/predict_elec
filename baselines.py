@@ -1,8 +1,8 @@
 # ----------------------------------------------------------------------
 #
-# LR_RF.py
+# baselines.py
 #
-# linear regression & random forest
+# linear regression, random forest and gradiant boosting (LGBM)
 #
 # ----------------------------------------------------------------------
 
@@ -317,7 +317,10 @@ def regression_and_forest(
         # normal models
         os.makedirs(cache_dir, exist_ok=True)
 
-        key_str    = json.dumps(cache_id_dict | cfg, sort_keys=True)
+        key_str    = json.dumps(cache_id_dict | cfg | models_cfg['lasso'],
+                                sort_keys=True)
+            # lasso controls the features for LR, RL, GB
+
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f"{name}_preds_{cache_key}.pkl")
 

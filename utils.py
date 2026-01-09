@@ -122,10 +122,10 @@ def df_features_past_consumption(consumption: pd.Series,
     return df.drop(columns=['consumption_GW'])
 
 
-def df_features(dict_fnames: Dict[str, str], cache_fname: str,
+def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
         lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df, dates_df = IO.load_data(dict_fnames, cache_fname,
+    df, dates_df = IO.load_data(dict_input_csv_fnames, cache_fname,
             num_steps_per_day=num_steps_per_day, minutes_per_step=minutes_per_step)
     assert isinstance(df.index, pd.DatetimeIndex)
 

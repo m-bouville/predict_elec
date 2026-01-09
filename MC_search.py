@@ -224,21 +224,23 @@ def run_Monte_Carlo_search(
             base_baseline_params: Dict[str, Dict[str, Any]],
             base_NNTQ_params    : Dict[str, Any],
             base_meta_NN_params : Dict[str, Any],
-            dict_fnames         : Dict[str, str],
+            dict_input_csv_fnames:Dict[str, str],
+            csv_path            : str,
 
             # statistics of the dataset
             minutes_per_step    : int,
             train_split_fraction: float,
-            val_ratio           : float,
+            valid_ratio         : float,
             forecast_hour       : int,
             seed                : int,
             force_calc_baselines: bool,
             cache_dir           : Optional[str] = None,
-            csv_path            : str    = 'parameter_search.csv'
+            # csv_path            : str    = 'parameter_search.csv'
         ):
 
     if stage != 'all':
-        warnings.warn(f"stage ({stage}) will not nbe used")
+        warnings.warn(f"stage ({stage}) will not be used")
+    # csv_path: str = 'parameter_search_all.csv'
 
     # from   sklearn.exceptions import ConvergenceWarning
     warnings.filterwarnings("ignore", category=UserWarning)  # TODO fix for real
@@ -256,18 +258,19 @@ def run_Monte_Carlo_search(
         metamodel_parameters= sample_metamodel_NN_parameters(base_meta_NN_params)
 
         dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-            (num_worst_days, avg_abs_worst_days_train), (loss_NNTQ, loss_meta) = \
+            (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
                 run.run_model_once(
                   # configuration bundles
                   baseline_parameters= baseline_parameters,
                   NNTQ_parameters   = NNTQ_parameters,
                   metamodel_NN_parameters=metamodel_parameters,
-                  dict_fnames       = dict_fnames,
+                  dict_input_csv_fnames= dict_input_csv_fnames,
+                  csv_path          = csv_path,
 
                   # statistics of the dataset
                   minutes_per_step  = minutes_per_step,
                   train_split_fraction=train_split_fraction,
-                  val_ratio         = val_ratio,
+                  valid_ratio       = valid_ratio,
                   forecast_hour     = forecast_hour,
                   seed              = seed,
 

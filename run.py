@@ -19,7 +19,8 @@ import numpy  as np
 import pandas as pd
 
 
-import MC_search, Bayes_search, containers, architecture, utils, LR_RF, IO, plots
+import MC_search, Bayes_search, containers, architecture, \
+    utils, baselines, IO, plots
 
 
 # system dimensions
@@ -36,16 +37,17 @@ import MC_search, Bayes_search, containers, architecture, utils, LR_RF, IO, plot
 # LOAD DATA FROM CSV AND CREATE DATAFRAME
 # ============================================================
 
-def load_and_create_df(dict_fnames     : Dict[str, str],
-                       cache_fname     : str,
-                       pred_length     : int,
-                       num_steps_per_day:int,
-                       minutes_per_step: int,
-                       verbose         : int  = 0) \
+def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
+                       cache_fname        : str,
+                       pred_length        : int,
+                       num_steps_per_day  :int,
+                       minutes_per_step   : int,
+                       verbose            : int  = 0) \
         -> Tuple[pd.DataFrame, str, List[str], pd.Series, pd.Series, pd.Series]:
 
-    df, dates_df = utils.df_features(dict_fnames, cache_fname, pred_length,
-                            num_steps_per_day, minutes_per_step, verbose)
+    df, dates_df = utils.df_features(
+            dict_input_csv_fnames, cache_fname, pred_length,
+            num_steps_per_day, minutes_per_step, verbose)
 
 
 
@@ -136,7 +138,7 @@ def normalize_features(df            : pd.DataFrame,
     if verbose >= 1:
         num_steps_per_day = int(round(24*60/minutes_per_step))
         print(f"{len(array)/num_steps_per_day/365.25:.1f} years of data, "
-              f"train: {train_split/num_steps_per_day/365.25:.2f} yrs"
+              f"train: {train_split/num_steps_per_day/365.25:.2f} yrs "
               # f" ({train_split_fraction*100:.1f}%), "
               f"test: {test_months/num_steps_per_day/365.25:.2f} yrs"
               f" (switching  {dates[train_split].date()})")
@@ -257,16 +259,17 @@ def training_loop(data          : containers.DatasetBundle,
 
 
 
-def post_process_run(baseline_parameters   : Dict[str, Any],
-                     NNTQ_parameters       : Dict[str, Any],
-                     metamodel_parameters  : Dict[str, Any],
-                     df_metrics            : pd.DataFrame(),
-                     quantile_delta_coverage:Dict[str, float],
-                     avg_weights_meta_NN   : Dict[str, float],
-                     avg_abs_worst_days_train:float,
-                     run_id                : int,
-                     csv_path              : str  = 'parameter_search.csv'
-                     ) -> [Dict[str, Any], [float, float]]:
+def postprocess(baseline_parameters   : Dict[str, Any],
+                NNTQ_parameters       : Dict[str, Any],
+                metamodel_parameters  : Dict[str, Any],
+                df_metrics            : pd.DataFrame(),
+                quantile_delta_coverage:Dict[str, float],
+                avg_weights_meta_NN   : Dict[str, float],
+                avg_abs_worst_days_test:float,
+                run_id                : int,
+                csv_path              : str   = 'parameter_search.csv',
+                verbose               : int   = 0
+                ) -> [Dict[str, Any], [float, float]]:
     flat_metrics = {}
     for model in df_metrics.index:
         for metric in df_metrics.columns:
@@ -292,8 +295,9 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
     del metamodel_parameters["num_cells"]
     metamodel_parameters.update(_dict_num_cells)
 
-    _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_train)
-    _loss_meta = loss_meta(flat_metrics)
+    _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
+                           verbose=verbose)
+    _loss_meta = loss_meta(flat_metrics, verbose=verbose)
 
     # BUG does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
@@ -310,7 +314,7 @@ def post_process_run(baseline_parameters   : Dict[str, Any],
         **{"avg_weight_meta_NN_"+key: value
            for (key, value) in avg_weights_meta_NN.items()},
         **flat_metrics,
-        'avg_abs_worst_days_train': avg_abs_worst_days_train,
+        'avg_abs_worst_days_test': avg_abs_worst_days_test,
         "loss_NNTQ": _loss_NNTQ,
         "loss_meta": _loss_meta
     }
@@ -333,11 +337,11 @@ def run_model_once(
         baseline_parameters:Dict[str, Dict[str, Any]],
         NNTQ_parameters   : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
-        dict_fnames       : Dict[str, str],
+        dict_input_csv_fnames: Dict[str, str],
         # statistics of the dataset
         minutes_per_step  : int,
         train_split_fraction:float,
-        val_ratio         : float,
+        valid_ratio       : float,
         forecast_hour     : int,
         seed              : int,
 
@@ -353,7 +357,7 @@ def run_model_once(
 
         cache_dir         : str  = "cache",
         csv_path          : str  = 'parameter_search.csv',
-        num_worst_days    : int  = 40,
+        num_worst_days    : int  = 20,
         verbose           : int  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
@@ -383,7 +387,7 @@ def run_model_once(
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, target_col, feature_cols, dates, Tavg_full, holidays_full) = \
         load_and_create_df(
-            dict_fnames, None, NNTQ_parameters['pred_length'],
+            dict_input_csv_fnames, None, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
 
 
@@ -416,9 +420,9 @@ def run_model_once(
 
     train_split = int(len(df) * train_split_fraction)
     test_months = len(df)-train_split
-    n_valid     = int(train_split * val_ratio)
+    n_valid     = int(train_split * valid_ratio)
 
-    (df, feature_cols) = LR_RF.create_baselines(df, target_col, feature_cols,
+    (df, feature_cols) = baselines.create_baselines(df, target_col, feature_cols,
         baseline_parameters, train_split, n_valid,
         cache_dir, save_cache_baselines,
         force_calculation = force_calc_baselines,
@@ -540,15 +544,16 @@ def run_model_once(
         print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
-    top_bad_days_train_df, avg_abs_diff_train = data.train.worst_days_by_loss(
-        temperature_full = Tavg_full,
-        holidays_full    = holidays_full,
-        num_steps_per_day= num_steps_per_day,
-        top_n            = num_worst_days,
-        verbose          = verbose
-    )
+    worst_days_test_df, avg_abs_worst_days_test_NN_median = \
+        data.test.worst_days_by_loss(
+            temperature_full = Tavg_full,
+            holidays_full    = holidays_full,
+            num_steps_per_day= num_steps_per_day,
+            top_n            = num_worst_days,
+            verbose          = verbose
+        )
     if verbose >= 3:
-        print(top_bad_days_train_df.to_string())
+        print(worst_days_test_df.to_string())
 
 
 
@@ -575,43 +580,6 @@ def run_model_once(
 
     if verbose > 0:
         print()
-
-
-    # rows = []
-    # rows.append(utils.index_summary("test_dates", data.test.dates, None))
-
-    # rows.append({"series": "origin_times",
-    #         "start": data.test.origin_times[0].date(),
-    #         "end":   data.test.origin_times[1].date(),
-    #         "n": None, "n_common": None, "start_diff": None, "end_diff": None})
-
-    # common_idx = data.test.true_GW.index
-    # common_idx = common_idx.intersection(data.test.dict_preds_NN['q50'].index)
-    # rows.append(utils.index_summary(
-    #     "true",  data.test.true_GW             .index, common_idx))
-    # rows.append(utils.index_summary(
-    #     "nn_q50",data.test.dict_preds_NN["q50"].index,common_idx))
-
-    # for _name in data.test.dict_preds_ML:
-    #     _baseline_test_idx = data.test.dict_preds_ML[_name].index
-    #     common_idx = common_idx.intersection(_baseline_test_idx)
-    #     rows.append(utils.index_summary(_name, _baseline_test_idx, common_idx))
-
-    # rows.append(utils.index_summary("common", common_idx, common_idx))
-    # if verbose >= 3:
-    #     print(pd.DataFrame(rows).set_index("series"))
-    #     print()
-
-    # assert len(common_idx)>0,"No common timestamps between truth and predictions!"
-
-    # print(data.test.true_GW.index, common_idx)
-
-    # true_test_GW = data.test.true_GW.loc[common_idx]
-    # for k in data.test.dict_preds_NN:
-    #     data.test.dict_preds_NN[k] = data.test.dict_preds_NN[k].loc[common_idx]
-    # for k in data.test.dict_preds_ML:
-    #     data.test.dict_preds_ML[k] = data.test.dict_preds_ML[k].loc[common_idx]
-
 
 
 
@@ -673,13 +641,13 @@ def run_model_once(
         torch.cuda.empty_cache()
         # torch.cuda.synchronize()
 
-    dict_row, (loss_NNTQ, loss_meta) = post_process_run(
+    dict_row, (_loss_NNTQ, _loss_meta) = postprocess(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        avg_abs_diff_train, run_id, csv_path)
+        avg_abs_worst_days_test_NN_median, run_id, csv_path, verbose)
 
     return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-        (num_worst_days, avg_abs_diff_train), (loss_NNTQ, loss_meta)
+        (num_worst_days, avg_abs_worst_days_test_NN_median), (_loss_NNTQ, _loss_meta)
 
 
 
@@ -697,12 +665,12 @@ def run_model(
         baseline_parameters : Dict[str, Dict[str, Any]],
         NNTQ_parameters     : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
-        dict_fnames         : Dict[str, str],
+        dict_input_csv_fnames: Dict[str, str],
 
         # statistics of the dataset
         minutes_per_step    : int,
         train_split_fraction: float,
-        val_ratio           : float,
+        valid_ratio         : float,
         forecast_hour       : int,
         seed                : int,
 
@@ -714,8 +682,7 @@ def run_model(
         plot_conv_every     : Optional[int] = None,
 
         cache_dir           : str  = "cache",
-        csv_path            : str  = 'parameter_search.csv',
-        num_worst_days      : int  = 40,
+        num_worst_days      : int  = 20,
         verbose             : Optional[int]  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
@@ -724,18 +691,22 @@ def run_model(
         if num_runs in locals() and num_runs > 1:
             warnings.warn(f"num_runs ({num_runs}) will not nbe used")
 
-        run_model_once(
+        dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+            (num_worst_days, avg_abs_worst_days_test_NN_median), \
+            (_loss_NNTQ, _loss_meta) = \
+                run_model_once(
                 # configuration bundles
                 baseline_parameters= baseline_parameters,
                 NNTQ_parameters   = NNTQ_parameters,
                 metamodel_NN_parameters= metamodel_NN_parameters,
 
-                dict_fnames       = dict_fnames,
+                dict_input_csv_fnames= dict_input_csv_fnames,
+                csv_path          = 'parameter_search_one-off.csv',
 
                 # statistics of the dataset
                 minutes_per_step  = minutes_per_step,
                 train_split_fraction=train_split_fraction,
-                val_ratio         = val_ratio,
+                valid_ratio       = valid_ratio,
                 forecast_hour     = forecast_hour,
                 seed              = seed,
 
@@ -752,6 +723,8 @@ def run_model(
                 cache_dir         = cache_dir,
                 verbose           = verbose
             )
+        if verbose > 0:
+            print(f"loss_NNTQ = {_loss_NNTQ:.2f}, loss_meta = {_loss_meta:.2f}")
 
     else:   # search for hyperparameters
         # no display => some arguments are not used
@@ -783,18 +756,18 @@ def run_model(
         parameter_search_function(
                 stage               = stage,
                 num_runs            = num_runs,
-                csv_path            = 'parameter_search.csv',
+                csv_path            = f'parameter_search_{stage}.csv',
 
                 # configuration bundles
                 base_baseline_params= baseline_parameters,
                 base_NNTQ_params    = NNTQ_parameters,
                 base_meta_NN_params = metamodel_NN_parameters,
-                dict_fnames         = dict_fnames,
+                dict_input_csv_fnames= dict_input_csv_fnames,
 
                 # statistics of the dataset
                 minutes_per_step    = minutes_per_step,
                 train_split_fraction= train_split_fraction,
-                val_ratio           = val_ratio,
+                valid_ratio         = valid_ratio,
                 forecast_hour       = forecast_hour,
                 seed                = seed,
                 force_calc_baselines= force_calc_baselines,
@@ -847,34 +820,41 @@ def flatten_dict(d, parent_key="", sep="_"):
 def loss_NNTQ(
          quantile_delta_coverage: Dict[str, float],
          avg_abs_worst_days     : float,
+             # in practice, should be specifically test_NN_median
 
-         # constants
-         max_quantile_delta_coverage: float = 0.25,
-                 # prevents one quantile from dominating completely
-
-         weight_coverage        : float   = 5.,
-                 # coverage and bias, MAE have different scales
-
-         weight_worst_days      : float   = 0.25,
-                # /!\ was not saved initially: starting slow
+         # constants:
+         scale                  : float = 100.,   # multiplies everything
+         weights_coverage       : list  = [3, 2, 1, 0, 0],  # from max to min
+         weight_worst_days      : float = 0.02,
 
          quantile_weights       : Dict[str, float] = \
              {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
-                 # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
+                 # q10 off by 5% (10% -> 5%) is worse than w/ q50 (50% -> 45%)
+         verbose                : int  = 0
     ) -> float:
 
-    _loss_quantile_coverage = \
-        np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
-                    for q, gap in quantile_delta_coverage.items()])
-                # was np.mean
+    _list_weighted_loss_coverage = [abs(gap) * quantile_weights[q]
+                for q, gap in quantile_delta_coverage.items()]
 
-    return float(round(_loss_quantile_coverage * weight_coverage + \
-                       # avg_metric + \
-                       avg_abs_worst_days * weight_worst_days, 4))
+    _sum_weights_coverage   = sum(weights_coverage)
+    _sorted_list = sorted(_list_weighted_loss_coverage, reverse=True)
+    _loss_quantile_coverage = sum(loss * weight / _sum_weights_coverage
+                    for loss, weight in zip(_sorted_list, weights_coverage))
+                # was np.max (_list_weighted_loss_coverage)
+
+    _loss = float(round(scale * (_loss_quantile_coverage + \
+                                 avg_abs_worst_days * weight_worst_days), 3))
+
+    if verbose > 0:
+        print(f"loss_NNTQ = {_loss:.2f} = "
+              f"w_sum({[round(e*scale, 2) for e in _list_weighted_loss_coverage]}) + "
+              f"{avg_abs_worst_days:.2f} * {weight_worst_days * scale}")
+
+    return _loss
 
 
 def loss_meta(
-         flat_metrics   : Dict[str, float],
+         metrics        : Dict[str, float] | pd.DataFrame,
 
          # constants
          metric_weights : Dict[str, float] = \
@@ -886,28 +866,43 @@ def loss_meta(
               'meta_LR'     : 2., 'meta_NN'     : 4.},
             # LR, RF and LGBM are just underlying models to the metamodels;
             #      improving them intrinsically is good, but secondary
-    ) -> float:
 
+         verbose        : int  = 0
+    ) -> float:
 
     dict_by_metric = {k: [] for k in list(metric_weights.keys())}
 
-    for key, value in flat_metrics.items():
-        parts  = key.replace("test_", "").split('_')
-        model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
-        metric = parts[-1]             # Ex: "bias", "RMSE", etc.
+    if isinstance(metrics, dict):
+        for key, value in metrics.items():
+            parts  = key.replace("test_", "").split('_')
+            model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
+            metric = parts[-1]             # Ex: "bias", "RMSE", etc.
 
-        dict_by_metric[metric].append(model_weights[model] * abs(value))
+            dict_by_metric[metric].append(model_weights[model] * abs(value))
 
-    for metric in dict_by_metric.keys():
-        assert len(dict_by_metric[metric]) == len(model_weights)
+        for metric in dict_by_metric.keys():
+            assert len(dict_by_metric[metric]) == len(model_weights)
 
-    dict_avg_metrics = {metric: np.sum(_list) / np.sum(list(model_weights.values()))
+    else:  # pd.df
+        for metric in metrics.columns:
+            dict_by_metric[metric] = [model_weights[model.replace(" ", "_")] * \
+                    abs(metrics[metric].loc[model])
+                        for model in metrics.index]
+
+    _sum_model_weights = np.sum(list(model_weights.values()))
+    dict_avg_metrics = {metric: round(float(np.sum(_list) / _sum_model_weights), 5)
                             for (metric, _list) in dict_by_metric.items()}
 
-    avg_metric = np.sum([value * metric_weights[metric]
-                        for (metric, value) in dict_avg_metrics.items()]) / \
-                    np.sum((list(metric_weights.values())))
-    # print(avg_metric)
+    weighted_list_metrics = [value * metric_weights[metric]
+                        for (metric, value) in dict_avg_metrics.items()]
+
+    _sum_metric_weights = np.sum(list(metric_weights.values()))
+    avg_metric = round(np.sum(weighted_list_metrics) / _sum_metric_weights, 5)
+
+    if verbose > 0:
+        print(f"loss_meta: dict_avg_metrics = {dict_avg_metrics}")
+        print(f"loss_meta: weighted_list_metrics = {weighted_list_metrics}")
+        # print(avg_metric)
 
     return float(round(avg_metric, 4))
 
@@ -973,8 +968,9 @@ def loss_meta(
 
 
 
-def recalculate_loss(csv_path: str   = 'parameter_search.csv') -> None:
-    # Load the CSV file containing MC runs
+def recalculate_loss(csv_path: str   = 'parameter_search.csv',
+                     verbose : int   = 0) -> None:
+    # Load the CSV file containing runs so far
     results_df = pd.read_csv(csv_path, index_col=False)
 
     # clean up dates
@@ -1002,13 +998,13 @@ def recalculate_loss(csv_path: str   = 'parameter_search.csv') -> None:
         quantile_delta_coverage = \
             row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
 
-        avg_abs_worst_days = row[['avg_abs_worst_days_train']].iloc[0]
+        avg_abs_worst_days_test = row[['avg_abs_worst_days_test']].iloc[0]
 
-        _loss_NNTQ = loss_NNTQ(quantile_delta_coverage= quantile_delta_coverage,
-                               avg_abs_worst_days     = avg_abs_worst_days)
+        _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
+                               verbose=verbose)
         _list_losses_NNTQ.append(_loss_NNTQ)
 
-        _loss_meta = loss_meta(flat_metrics = flat_metrics)
+        _loss_meta = loss_meta(metrics = flat_metrics)
         _list_losses_meta.append(_loss_meta)
 
     # print(_list_losses_NNTQ, _list_losses_meta)
@@ -1019,5 +1015,5 @@ def recalculate_loss(csv_path: str   = 'parameter_search.csv') -> None:
     results_df.to_csv(csv_path, index=False)
 
 
-# recalculate_loss()
+# recalculate_loss('parameter_search_NNTQ.csv')
 

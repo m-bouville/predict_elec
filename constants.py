@@ -1,6 +1,6 @@
-__all__ = ['RUN_FAST', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VAL_RATIO',
+__all__ = ['RUN_FAST', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
-           'VERBOSE', 'DICT_FNAMES', 'CACHE_FNAME', 'BASELINE_CFG',
+           'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME', 'BASELINES_PARAMETERS',
            'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
            # NN model parameters,
            'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS']
@@ -25,13 +25,11 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 RUN_FAST     = False         # True: smaller system: runs faster, for debugging
 
-VERBOSE: int = 1  # 2 if RUN_FAST else 1
-
 SEED         =   0              # For reproducibility
 
 
 TRAIN_SPLIT_FRACTION=0.8
-VAL_RATIO    =   0.25           # validation from training set
+VALID_RATIO  =   0.25           # validation from training set
 
 FORECAST_HOUR:int = 12          # 12: noon
 
@@ -48,15 +46,15 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'batch_size'       :  64,                   # Training batch size
+    'batch_size'       :  32,                   # Training batch size
 
     # optimizer
-    'learning_rate'    : 12.e-3,      # Optimizer learning rate
-    'weight_decay'     :  3.e-9,
-    'dropout'          :  0.1,
+    'learning_rate'    :  0.02,      # Optimizer learning rate
+    'weight_decay'     : 50.e-9,
+    'dropout'          :  0.084,
 
     # early stopping
-    'min_delta'        :   25 / 1000,
+    'min_delta'        :  0.015,
 
     # PatchEmbedding
     'patch_length'     : _patch_length,              # [half-hours]
@@ -68,31 +66,31 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.7,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.5,
-    'lambda_deriv'     : 0.1,         # derivative weight in loss function
-    'lambda_median'    : 0.6,
-    'smoothing_cross'  : 0.032,
+    'lambda_cross'     : 0.33,          # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.16,
+    'lambda_deriv'     : 0.17,         # derivative weight in loss function
+    'lambda_median'    : 0.033,
+    'smoothing_cross'  : 0.01,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
         #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
-    'saturation_cold_degC':-5.,
-    'threshold_cold_degC':  3.,
-    'lambda_cold'      :    0.1,
+    'saturation_cold_degC':-8.,
+    'threshold_cold_degC':  2.,
+    'lambda_cold'      :    0.08,
 
 }
 
 
-EPOCHS       = [  2,  30] # Number of training epochs
-MODEL_DIM    = [ 48, 180] # Transformer embedding dimension
-NUM_HEADS    = [  2,   6] # Number of attention heads
-FFN_SIZE     = [  4,   5] # expansion factor
-NUM_LAYERS   = [  1,   4] # Number of transformer encoder layers
-NUM_GEO_BLOCKS=[  2,   3]
-WARMUP_STEPS =[4000,2200]
-PATIENCE     = [  5,   5]  # DEBUG: patience > nb epochas
+EPOCHS       = [  2,  40] # Number of training epochs
+MODEL_DIM    = [ 48, 176] # Transformer embedding dimension
+NUM_HEADS    = [  2,   8] # Number of attention heads
+FFN_SIZE     = [  4,   4] # expansion factor
+NUM_LAYERS   = [  1,   3] # Number of transformer encoder layers
+NUM_GEO_BLOCKS=[  2,   5]
+WARMUP_STEPS =[4000,3500]
+PATIENCE     = [  5,   8]  # DEBUG: patience > nb epochas
 
 # Pick correct value from list of possibilites
 IDX_RUN_FAST = {True: 0, False: 1}[RUN_FAST]
@@ -110,7 +108,6 @@ NNTQ_PARAMETERS['num_patches'] = \
     (NNTQ_PARAMETERS['input_length'] + NNTQ_PARAMETERS['features_in_future'] * \
                 NNTQ_PARAMETERS['pred_length'] - NNTQ_PARAMETERS['patch_length'])\
         // NNTQ_PARAMETERS['stride'] + 1
-
 
 VALIDATE_EVERY=  1
 DISPLAY_EVERY=   2
@@ -140,8 +137,7 @@ META_EPOCHS = [ 1, 12]
 METAMODEL_NN_PARAMETERS['epochs'] = META_EPOCHS[IDX_RUN_FAST]
 
 
-
-DICT_FNAMES = {
+DICT_INPUT_CSV_FNAMES = {
     "consumption": "data/consommation-quotidienne-brute.csv",
     "temperature": 'data/temperature-quotidienne-regionale.csv',
     "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
@@ -150,29 +146,7 @@ CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
 
-
-
-# Checking
-assert NNTQ_PARAMETERS['model_dim']  % NNTQ_PARAMETERS['num_heads'] == 0, \
-    f"MODEL_DIM ({NNTQ_PARAMETERS['model_dim']}) must be divisible by " \
-    f"NUM_HEADS ({NNTQ_PARAMETERS['num_heads']})."
-
-assert 1 <= VALIDATE_EVERY <= min(NNTQ_PARAMETERS['epochs'],
-                                  NNTQ_PARAMETERS['patience']), \
-    (VALIDATE_EVERY, NNTQ_PARAMETERS['epochs'], NNTQ_PARAMETERS['patience'])
-
-_quantiles = NNTQ_PARAMETERS['quantiles']
-num_quantiles = len(_quantiles)
-assert all([_quantiles[i] + _quantiles[num_quantiles - i - 1] == 1
-            for i in range(num_quantiles // 2)]), \
-    "quantiles should be symmetric"    # otherwise: hard to interpret
-assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the median"
-    # the code assumes it is
-
-
-
-
-baseline_cfg_fast = {
+baseline_params_fast = {
     'lasso': {"alpha": 0.04, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
@@ -205,8 +179,8 @@ baseline_cfg_fast = {
     }
 }
 
-baseline_cfg_normal = {
-    'lasso': {"alpha": 0.01, 'max_iter': 2_000},
+baseline_params_normal = {
+    'lasso': {"alpha": 0.018, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
     'RF': {
@@ -238,4 +212,27 @@ baseline_cfg_normal = {
     }
 }
 
-BASELINE_CFG = baseline_cfg_fast if RUN_FAST else baseline_cfg_normal
+BASELINES_PARAMETERS = baseline_params_fast if RUN_FAST else baseline_params_normal
+
+
+
+
+
+# Checking
+assert NNTQ_PARAMETERS['model_dim']  % NNTQ_PARAMETERS['num_heads'] == 0, \
+    f"MODEL_DIM ({NNTQ_PARAMETERS['model_dim']}) must be divisible by " \
+    f"NUM_HEADS ({NNTQ_PARAMETERS['num_heads']})."
+
+assert 1 <= VALIDATE_EVERY <= min(NNTQ_PARAMETERS['epochs'],
+                                  NNTQ_PARAMETERS['patience']), \
+    (VALIDATE_EVERY, NNTQ_PARAMETERS['epochs'], NNTQ_PARAMETERS['patience'])
+
+_quantiles = NNTQ_PARAMETERS['quantiles']
+num_quantiles = len(_quantiles)
+assert all([_quantiles[i] + _quantiles[num_quantiles - i - 1] == 1
+            for i in range(num_quantiles // 2)]), \
+    "quantiles should be symmetric"    # otherwise: hard to interpret
+assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the median"
+    # the code assumes it is
+
+

@@ -327,7 +327,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
             print(f"No missing timestamps at freq = {freq}")
 
 
-def load_data(dict_fnames: dict, cache_fname: str,
+def load_data(dict_input_csv_fnames: dict, cache_fname: str,
               num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     dfs = {}
@@ -335,7 +335,7 @@ def load_data(dict_fnames: dict, cache_fname: str,
     weights = load_weights('data/consommation-annuelle-brute-regionale.csv', verbose)
 
     # Load both CSVs
-    for name, path in dict_fnames.items():
+    for name, path in dict_input_csv_fnames.items():
         if not os.path.exists(path):
             raise FileNotFoundError(f"Input file not found: {path}")
 
@@ -641,14 +641,14 @@ def print_model_summary(
 
     print("\n===== LOSSES =====")
     print(f"{'QUANTILES'   :17s} = {quantiles}")
-    print(f"{'LAMBDA_CROSS':17s} ={lambda_cross:8.2f}")
-    print(f"{'LAMBDA_COVERAGE':17s} ={lambda_coverage:8.2f}")
-    print(f"{'LAMBDA_DERIV':17s} ={lambda_deriv:8.2f}")
-    print(f"{'LAMBDA_MEDIAN':17s} ={lambda_median:8.2f}")
+    print(f"{'LAMBDA_CROSS':17s} ={lambda_cross:9.3f}")
+    print(f"{'LAMBDA_COVERAGE':17s} ={lambda_coverage:9.3f}")
+    print(f"{'LAMBDA_DERIV':17s} ={lambda_deriv:9.3f}")
+    print(f"{'LAMBDA_MEDIAN':17s} ={lambda_median:9.3f}")
     print("\n  TEMPERATURE DEPENDENCE")
-    print(f"{'SATURATION_COLD_DEGC':17s}={saturation_cold_degC:8.2f} °C")
+    print(f"{'SATURATION_COLD_DEGC':17s}={saturation_cold_degC:7.2f} °C")
     print(f"{'THRESHOLD_COLD_DEGC':17s}={threshold_cold_degC:8.2f} °C")
-    print(f"{'LAMBDA_COLD':17s}  ={lambda_cold:8.2f}")
+    print(f"{'LAMBDA_COLD':17s}  ={lambda_cold:9.3f}")
 
 
     print("\n===== TRAINING =====")
@@ -658,10 +658,12 @@ def print_model_summary(
           f"= {num_samples/1000:n} samples =>  {steps_per_epoch:n} steps per epoch")
     print(f"{'LEARNING_RATE':17s} ={learning_rate*1e3:8.2f}e-3")
     print(f"{'WEIGHT_DECAY':17s} ={weight_decay*1e6:8.2f}e-6")
-    print(f"{'DROPOUT'     :17s} ={dropout*100:5.0f}%")
+    print(f"{'DROPOUT'     :17s} ={dropout*100:7.1f}%")
 
-    warmup_epochs = warmup_steps/steps_per_epoch if steps_per_epoch > 0 else float("inf")
-    print(f"{'WARMUP_STEPS':17s} ={warmup_steps:5n} steps =  {warmup_epochs:.2f} epochs")
+    warmup_epochs = warmup_steps/steps_per_epoch \
+            if steps_per_epoch > 0 else float("inf")
+    print(f"{'WARMUP_STEPS':17s} ={warmup_steps:5n} steps "
+          f"=  {warmup_epochs:.2f} epochs")
 
     print(f"{'PATIENCE'    :17s} ={patience:5n} epochs")
     print(f"{'MIN_DELTA'   :17s} ={int(round(min_delta*1000)):5n}e-3 = "
@@ -721,7 +723,7 @@ def print_model_summary(
     out_head_params = d * h + h
 
     param_count = int(
-        (patch_embed_params + pos_embed_params + encoder_params + out_head_params) * 1.1
+        (patch_embed_params + pos_embed_params + encoder_params + out_head_params)* 1.1
     )
 
     params_per_sample = param_count / n
@@ -736,12 +738,13 @@ def print_model_summary(
         print(f"/!\\ steps_per_epoch ({steps_per_epoch:n}) but should be in [100, 2000]")
 
     if not (2 <= warmup_epochs <= 5):
-        print(f"/!\\ WARMUP_STEPS ({warmup_steps}) / steps_per_epoch ({steps_per_epoch:n})"
+        print(f"/!\\ WARMUP_STEPS ({warmup_steps}) / "
+              f"steps_per_epoch ({steps_per_epoch:n})"
               f" = {warmup_epochs:.2f}, but should be in [2, 5]")
 
     if num_samples < 300:
-        print(f"/!\\ Only {num_samples} training windows — transformers typically require "
-              f">= 300 for stable generalization.")
+        print(f"/!\\ Only {num_samples} training windows — "
+              f"transformers typically require >= 300 for stable generalization.")
 
     reuse_factor = steps_per_epoch * batch_size / max(1, num_samples)
     if reuse_factor > 200:

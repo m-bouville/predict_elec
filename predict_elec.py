@@ -4,12 +4,12 @@
 
 
 import run
-    # containers, architecture, LR_RF, IO, plots, losses, metamodel,
+    # containers, architecture, baselines, IO, plots, losses, metamodel,
     # MC_search, Bayes_search,  utils
 
-from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
+from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
            VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
-           VERBOSE, DICT_FNAMES, CACHE_FNAME, BASELINE_CFG,
+           DICT_INPUT_CSV_FNAMES, BASELINES_PARAMETERS,
            FORECAST_HOUR, MINUTES_PER_STEP, #NUM_STEPS_PER_DAY,
            NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
            )
@@ -28,6 +28,8 @@ from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
 
 
 
+VERBOSE: int = 1  # 2 if RUN_FAST else 1
+
 
 
 
@@ -35,45 +37,47 @@ from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VAL_RATIO,
 if __name__ == "__main__":
 
 
-    mode = 'Bayes_NNTQ'
+    mode = 'once'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
-    if mode == 'once':
+
+
+    if mode in ['once']:
         num_runs =  1
         force_calc_baselines = VERBOSE >= 3
     else:
         num_runs = 40
         force_calc_baselines = False  # (cache unlikely to be used in any case)
+
     if 'Bayes' in mode:
         assert not RUN_FAST, "fast parameters are outside the Bayesian distributions"
 
     run.run_model(
-        mode              = mode,
-        num_runs          = num_runs,
+        mode                = mode,
+        num_runs            = num_runs,
 
         # configuration bundles
-        baseline_parameters= BASELINE_CFG,
-        NNTQ_parameters   = NNTQ_PARAMETERS,
+        baseline_parameters = BASELINES_PARAMETERS,
+        NNTQ_parameters     = NNTQ_PARAMETERS,
         metamodel_NN_parameters= METAMODEL_NN_PARAMETERS,
 
-        csv_path          = 'parameter_search.csv',
-        dict_fnames       = DICT_FNAMES,
+        dict_input_csv_fnames= DICT_INPUT_CSV_FNAMES,
 
         # statistics of the dataset
-        minutes_per_step  = MINUTES_PER_STEP,
-        train_split_fraction=TRAIN_SPLIT_FRACTION,
-        val_ratio         = VAL_RATIO,
-        forecast_hour     = FORECAST_HOUR,
-        seed              = SEED,
-        force_calc_baselines=force_calc_baselines,
+        minutes_per_step    = MINUTES_PER_STEP,
+        train_split_fraction= TRAIN_SPLIT_FRACTION,
+        valid_ratio         = VALID_RATIO,
+        forecast_hour       = FORECAST_HOUR,
+        seed                = SEED,
+        force_calc_baselines= force_calc_baselines,
 
         # XXX_EVERY (in epochs)
-        validate_every    = VALIDATE_EVERY,
-        display_every     = DISPLAY_EVERY,
-        plot_conv_every   = PLOT_CONV_EVERY,
+        validate_every      = VALIDATE_EVERY,
+        display_every       = DISPLAY_EVERY,
+        plot_conv_every     = PLOT_CONV_EVERY,
 
-        cache_dir         = 'cache',
-        verbose           = VERBOSE
+        cache_dir           = 'cache',
+        verbose             = VERBOSE
     )
 
 
