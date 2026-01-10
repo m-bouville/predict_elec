@@ -208,16 +208,16 @@ class DatasetBundle:
 
         if split_active == 'train':
             (self.weights_meta_LR,
-            self.train.dict_preds_meta['LR'],
-            self.valid.dict_preds_meta['LR'],
-            self.test .dict_preds_meta['LR'])= metamodel.weights_LR_metamodel(
+             self.train.dict_preds_meta['LR'],
+             self.valid.dict_preds_meta['LR'],
+             self.test .dict_preds_meta['LR'])= metamodel.weights_LR_metamodel(
                     self.train.input_metamodel_LR, self.train.    y_metamodel_LR,
                     self.valid.input_metamodel_LR, self.test .input_metamodel_LR,
                     min_weight=min_weight, verbose=verbose)
         else:  # on valid
             (self.weights_meta_LR,
-            self.valid.dict_preds_meta['LR'],
-            self.test .dict_preds_meta['LR'], _) =\
+             self.valid.dict_preds_meta['LR'],
+             self.test .dict_preds_meta['LR'], _) =\
                 metamodel.weights_LR_metamodel(
                     self.valid.input_metamodel_LR, self.valid.y_metamodel_LR,
                     self.test .input_metamodel_LR, None,

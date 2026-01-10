@@ -235,7 +235,8 @@ def run_Monte_Carlo_search(
             seed                : int,
             force_calc_baselines: bool,
             cache_dir           : Optional[str] = None,
-            # csv_path            : str    = 'parameter_search.csv'
+            # csv_path            : str    = 'parameter_search.csv',
+            verbose             : int  = 0
         ):
 
     if stage != 'all':
@@ -285,7 +286,7 @@ def run_Monte_Carlo_search(
                   run_id            = run_id,
 
                   cache_dir         = cache_dir,
-                  verbose           = 0
+                  verbose           = verbose
         )
 
         list_results.append(dict_row)

@@ -9,9 +9,8 @@ import run
 
 from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
            VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
-           DICT_INPUT_CSV_FNAMES, BASELINES_PARAMETERS,
-           FORECAST_HOUR, MINUTES_PER_STEP, #NUM_STEPS_PER_DAY,
-           NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
+           DICT_INPUT_CSV_FNAMES, FORECAST_HOUR, MINUTES_PER_STEP,
+           BASELINES_PARAMETERS, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
            )
 
 
@@ -22,13 +21,12 @@ from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 # BUG RF and Boosting generalize poorly
 # TODO make the metamodel reduce the bias (how?)
 # TODO have separate public holidays, as with the school holidays
-# BUG GB complains about pd vs. np
-# [in progress] split hyperparameter search: one for NNTQ, one for metamodel
+# [done] GB complains about pd vs. np
+# [done] split hyperparameter search: one for NNTQ, one for metamodel
 # TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
+# BUG parameters found in search do not work when used in a one-off run
 
 
-
-VERBOSE: int = 1  # 2 if RUN_FAST else 1
 
 
 
@@ -44,10 +42,12 @@ if __name__ == "__main__":
 
     if mode in ['once']:
         num_runs =  1
+        VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = VERBOSE >= 3
     else:
-        num_runs = 40
-        force_calc_baselines = False  # (cache unlikely to be used in any case)
+        num_runs = 50
+        force_calc_baselines = False
+        VERBOSE: int = 0
 
     if 'Bayes' in mode:
         assert not RUN_FAST, "fast parameters are outside the Bayesian distributions"

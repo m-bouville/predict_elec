@@ -1,5 +1,6 @@
-from   typing import Dict, Tuple, List, Optional, Any
+import sys
 
+from   typing import Dict, Tuple, List, Optional, Any
 
 import torch
 import torch.nn as nn
@@ -30,6 +31,9 @@ class ConstrainedLinearRegression(LinearRegression):
     def fit(self, X, y):
         n_samples, n_features = X.shape
 
+        if hasattr(X, "columns"):
+            self.feature_names_in_ = np.array(X.columns)
+
         def objective(coef):
             return np.sum((y - X.dot(coef))**2)
 
@@ -45,31 +49,34 @@ class ConstrainedLinearRegression(LinearRegression):
         self.intercept_ = np.mean(y - X.dot(self.coef_))
 
 
-def weights_LR_metamodel(X_input  : pd.DataFrame,
-                         y_input  : pd.Series,
-                         X_pred1  : Optional[pd.DataFrame] = None,
-                         X_pred2  : Optional[pd.DataFrame] = None,
-                         min_weight:float= 0.,
-                         verbose  : int  = 0) \
+def weights_LR_metamodel(X_input   : pd.DataFrame,
+                         y_input   : pd.Series,
+                         X_pred1   : Optional[pd.DataFrame] = None,
+                         X_pred2   : Optional[pd.DataFrame] = None,
+                         min_weight: float= 0.,
+                         verbose   : int  = 0) \
         -> Tuple[Dict[str, float], pd.Series, pd.Series | None, pd.Series | None]:
     # X: (N, 4), y: (N,)
+
+    # print(f"X_input: {type(X_input)}, {X_input.shape}, {X_input.columns}")
+    # print(f"X_pred1: {type(X_pred1)}, {X_pred1.shape}, {X_pred1.columns}")
+    # print(f"y_input: {type(y_input)}, {y_input.shape}")  #, {y_input.index}
 
     model_meta = ConstrainedLinearRegression(
         fit_intercept=False, min_weight=min_weight)
     model_meta.fit(X_input, y_input)
 
+    pred_input= pd.Series(model_meta.predict(X_input),
+                          index=X_input.index, name='meta_LR')
+
     if verbose >= 3:
-        pred_input = model_meta.predict(X_input)
-        _output = pd.concat([
-             y_input, X_input,
-             pd.Series(pred_input, name='meta', index=y_input.index)], axis=1)
-        _output.columns=['true'] + X_input.columns + ['meta']
+        # print(f"pred_input: {type(pred_input)}, {pred_input.shape}")
+        _output = pd.concat([y_input.T, X_input, pred_input.T], axis=1)
         print(_output.astype(np.float32).round(2))
 
     weights_meta = {name: round(float(coeff), 3) for name, coeff in \
            zip(X_input.columns, model_meta.coef_)}
 
-    pred_input= pd.Series(model_meta.predict(X_input), index=X_input.index)
     pred1     = pd.Series(model_meta.predict(X_pred1), index=X_pred1.index) \
                     if X_pred1 is not None else None
     pred2     = pd.Series(model_meta.predict(X_pred2), index=X_pred2.index) \

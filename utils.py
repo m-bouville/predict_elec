@@ -70,17 +70,29 @@ def df_features_calendar(dates: pd.DatetimeIndex,
                           (df.index.dayofweek.isin([5, 6]))).astype(np.int16)
 
     # peak hours. /!\ UTC: [6, 8) means [7, 9) local in winter
-    df['is_morning_peak']= ((df.index.hour >= 6) & (df.index.hour < 8)).astype(np.int16)
-    df['is_evening_peak']= ((df.index.hour >=17) & (df.index.hour <19)).astype(np.int16)
+    df['is_morning_peak']=((df.index.hour >= 6) & (df.index.hour < 8)).astype(np.int16)
+    df['is_evening_peak']=((df.index.hour >=17) & (df.index.hour <19)).astype(np.int16)
 
+    # there is a peak of coverage loss between about 9pm and midninght, UTC
     df['is_evening'    ] = (df.index.hour >= 21).astype(np.int16)
-        # there is a peak of coverage loss between about 9pm and midninght, UTC
 
+    # people go on holiday
     df['is_August'  ] = ((df.index.month    == 8) \
                     & (df.index.day >= 5) & (df.index.day <= 25)).astype(np.int16)
     # df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
     #                  ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
             # redundent with school holiday
+
+    # covid lockdown periods
+    _tz = 'Europe/Paris'
+    lockdown_periods = [
+        (pd.Timestamp('2020-03-17', tz=_tz), pd.Timestamp('2020-05-11', tz=_tz)),
+        (pd.Timestamp('2020-10-30', tz=_tz), pd.Timestamp('2020-12-15', tz=_tz)),
+        (pd.Timestamp('2021-04-03', tz=_tz), pd.Timestamp('2021-05-03', tz=_tz))
+    ]
+    df['lockdown'] = 0
+    for start, end in lockdown_periods:
+        df.loc[start:end, 'lockdown'] = 1
 
 
     # public holidays for France

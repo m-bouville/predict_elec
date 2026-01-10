@@ -262,6 +262,7 @@ def training_loop(data          : containers.DatasetBundle,
 def postprocess(baseline_parameters   : Dict[str, Any],
                 NNTQ_parameters       : Dict[str, Any],
                 metamodel_parameters  : Dict[str, Any],
+                num_features          : int,
                 df_metrics            : pd.DataFrame(),
                 quantile_delta_coverage:Dict[str, float],
                 avg_weights_meta_NN   : Dict[str, float],
@@ -307,13 +308,16 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     row = {
         "run"      : run_id,
         "timestamp": datetime.now(),   # Excel-compatible
+            # input parameters
         **(flatten_dict(baseline_parameters, parent_key="")),
         **NNTQ_parameters,
         **{"metaNN_"+key: value for (key, value) in metamodel_parameters.items()},
+        # output
+        "num_features": num_features,
         **quantile_delta_coverage,
         **{"avg_weight_meta_NN_"+key: value
            for (key, value) in avg_weights_meta_NN.items()},
-        **flat_metrics,
+        **flat_metrics,   # bias, RMSE, MAE
         'avg_abs_worst_days_test': avg_abs_worst_days_test,
         "loss_NNTQ": _loss_NNTQ,
         "loss_meta": _loss_meta
@@ -356,7 +360,7 @@ def run_model_once(
         run_id            : int,
 
         cache_dir         : str  = "cache",
-        csv_path          : str  = 'parameter_search.csv',
+        trials_csv_path   : str  = 'parameter_search.csv',
         num_worst_days    : int  = 20,
         verbose           : int  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
@@ -643,8 +647,9 @@ def run_model_once(
 
     dict_row, (_loss_NNTQ, _loss_meta) = postprocess(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
+        len(feature_cols),
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        avg_abs_worst_days_test_NN_median, run_id, csv_path, verbose)
+        avg_abs_worst_days_test_NN_median, run_id, trials_csv_path, verbose)
 
     return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
         (num_worst_days, avg_abs_worst_days_test_NN_median), (_loss_NNTQ, _loss_meta)
@@ -701,7 +706,7 @@ def run_model(
                 metamodel_NN_parameters= metamodel_NN_parameters,
 
                 dict_input_csv_fnames= dict_input_csv_fnames,
-                csv_path          = 'parameter_search_one-off.csv',
+                trials_csv_path   = 'parameter_search_one-off.csv',
 
                 # statistics of the dataset
                 minutes_per_step  = minutes_per_step,
@@ -737,7 +742,7 @@ def run_model(
 
         if mode in ['random', 'Monte Carlo', 'MC']:
             parameter_search_function = MC_search.run_Monte_Carlo_search
-            stage = 'all'  # only one implemented
+            stage = 'all'  # the only one implemented
 
         elif 'Bayes' in mode:  # works for `Bayes` and `Bayesian`
             parameter_search_function = Bayes_search.run_Bayes_search
@@ -756,7 +761,7 @@ def run_model(
         parameter_search_function(
                 stage               = stage,
                 num_runs            = num_runs,
-                csv_path            = f'parameter_search_{stage}.csv',
+                trials_csv_path     = f'parameter_search_{stage}.csv',
 
                 # configuration bundles
                 base_baseline_params= baseline_parameters,
@@ -771,7 +776,9 @@ def run_model(
                 forecast_hour       = forecast_hour,
                 seed                = seed,
                 force_calc_baselines= force_calc_baselines,
+
                 cache_dir           = cache_dir,
+                verbose             = verbose
             )
 
 
@@ -817,6 +824,7 @@ def flatten_dict(d, parent_key="", sep="_"):
             items[new_key] = v
     return items
 
+
 def loss_NNTQ(
          quantile_delta_coverage: Dict[str, float],
          avg_abs_worst_days     : float,
@@ -824,17 +832,33 @@ def loss_NNTQ(
 
          # constants:
          scale                  : float = 100.,   # multiplies everything
-         weights_coverage       : list  = [3, 2, 1, 0, 0],  # from max to min
+         weights_coverage       : list  = [4, 3, 2, 1, 0, 0, 0],  # from max to min
          weight_worst_days      : float = 0.02,
 
          quantile_weights       : Dict[str, float] = \
-             {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
+             {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5, 'q90': 2.,
+              'bias': 1., 'spread': 2.},
                  # q10 off by 5% (10% -> 5%) is worse than w/ q50 (50% -> 45%)
+                 # TODO quantiles are currently hard-coded
          verbose                : int  = 0
     ) -> float:
+    _quantile_delta_coverage = quantile_delta_coverage.copy()
 
+    # add spread: q90 - q10
+    _quantile_delta_coverage['spread'] = max(0, _quantile_delta_coverage['q90'] - \
+                                                _quantile_delta_coverage['q10'])
+
+    # add bias
+    _bias_mean = np.mean(list(_quantile_delta_coverage.values()))
+    _bias_penalty = (  # asymmetrically penalizing 'everything above the truth'
+        max(0,  _bias_mean) * 1.  +
+        max(0, -_bias_mean) * 0.1
+    )
+    _quantile_delta_coverage['bias']= _bias_penalty
+
+    # two layers of weights
     _list_weighted_loss_coverage = [abs(gap) * quantile_weights[q]
-                for q, gap in quantile_delta_coverage.items()]
+                for q, gap in _quantile_delta_coverage.items()]
 
     _sum_weights_coverage   = sum(weights_coverage)
     _sorted_list = sorted(_list_weighted_loss_coverage, reverse=True)
@@ -851,7 +875,6 @@ def loss_NNTQ(
               f"{avg_abs_worst_days:.2f} * {weight_worst_days * scale}")
 
     return _loss
-
 
 def loss_meta(
          metrics        : Dict[str, float] | pd.DataFrame,
@@ -907,68 +930,12 @@ def loss_meta(
     return float(round(avg_metric, 4))
 
 
-# def loss_all(
-#          flat_metrics           : Dict[str, float],
-#          quantile_delta_coverage: Dict[str, float],
-#          avg_abs_worst_days     : float,
 
-#          # constants
-#          max_quantile_delta_coverage: float = 0.25,
-#                  # prevents one quantile from dominating completely
+# -------------------------------------------------------
+# modify existing csv life
+# -------------------------------------------------------
 
-#          weight_coverage        : float   = 5.,
-#                  # coverage and bias, MAE have different scales
-
-#          weight_worst_days      : float   = 0.2,
-#                 # was not saved initially: start slow
-
-#          quantile_weights       : Dict[str, float] = \
-#              {'q10': 2., 'q25': 1.5, 'q50': 1., 'q75': 1.5,'q90': 2.},
-#                  # q10 off by 5% is worse than w/ q50: 10% -> 5% vs. 50% -> 45%
-
-#          metric_weights         : Dict[str, float] = \
-#              {'bias': 2., 'RMSE': 1., 'MAE': 1.},
-#                  # RMSE and MAE are variants of each other, bias is different
-
-#          model_weights         : Dict[str, float] = \
-#              {'NN': 2., 'LR': 1., 'RF': 1., 'GB': 1.,
-#               'meta_LR'     : 3., 'meta_NN'     : 4.},
-#             # LR, RF and LGBM are just underlying models to the metamodels;
-#             #      improving them intrinsically is good, but secondary
-#     ) -> float:
-
-#     _loss_quantile_coverage = \
-#         np.max([min(abs(gap), max_quantile_delta_coverage) * quantile_weights[q]
-#                     for q, gap in quantile_delta_coverage.items()])
-#                 # was np.mean
-
-#     dict_by_metric = {k: [] for k in list(metric_weights.keys())}
-
-#     for key, value in flat_metrics.items():
-#         parts  = key.replace("test_", "").split('_')
-#         model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
-#         metric = parts[-1]             # Ex: "bias", "RMSE", etc.
-
-#         dict_by_metric[metric].append(model_weights[model] * abs(value))
-
-#     for metric in dict_by_metric.keys():
-#         assert len(dict_by_metric[metric]) == len(model_weights)
-
-#     dict_avg_metrics= {metric: np.sum(_list)/np.sum(list(model_weights.values()))
-#                             for (metric, _list) in dict_by_metric.items()}
-
-#     avg_metric = np.sum([value * metric_weights[metric]
-#                         for (metric, value) in dict_avg_metrics.items()]) / \
-#                     np.sum((list(metric_weights.values())))
-#     # print(avg_metric)
-
-#     return float(round(_loss_quantile_coverage * weight_coverage + \
-#                        avg_metric + \
-#                        avg_abs_worst_days * weight_worst_days, 4))
-
-
-
-def recalculate_loss(csv_path: str   = 'parameter_search.csv',
+def recalculate_loss(csv_path: str,
                      verbose : int   = 0) -> None:
     # Load the CSV file containing runs so far
     results_df = pd.read_csv(csv_path, index_col=False)
@@ -1017,3 +984,41 @@ def recalculate_loss(csv_path: str   = 'parameter_search.csv',
 
 # recalculate_loss('parameter_search_NNTQ.csv')
 
+
+
+def enforce_ranges(csv_path   : str,
+                   dict_ranges: Dict[str, Tuple],
+                   verbose    : int   = 0) -> None:
+
+    # Load the CSV file containing runs so far
+    results_df = pd.read_csv(csv_path, index_col=False)
+
+    # clean up dates
+    results_df['timestamp'] = pd.to_datetime(
+        results_df['timestamp'],
+        errors   = 'coerce',
+        infer_datetime_format=True,
+        dayfirst = True
+    )
+
+    # Filter rows based on the ranges
+    mask = pd.Series(True, index=results_df.index)
+    for col_name, _range in dict_ranges.items():
+        if col_name in results_df.columns:
+            mask &= (results_df[col_name] >= _range[0]) & \
+                    (results_df[col_name] <= _range[1])
+
+    results_df = results_df[mask]
+
+    results_df.to_csv(csv_path, index=False)
+
+# enforce_ranges('parameter_search_NNTQ.csv',
+#                {
+#                    # 'ffn_size'  : [ 0,   4   ],
+#                    # 'num_layers': [ 0,   3   ],
+#                    # 'dropout'   : [ 0.,  0.15],
+#                    # 'batch_size': [64, 128   ],
+#                    # 'patience'  : [ 3,   6   ],
+#                    # 'min_delta' : [ 0.02,0.04],
+#                    'loss_NNTQ' : [25.,199.  ]
+#                })

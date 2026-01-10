@@ -34,106 +34,8 @@ from   lightgbm                import LGBMRegressor
 
 
 
-def temperature_correlation_matrix(df, verbose: int = 1) -> None:
-    temp_cols = ["Tmin_degC", "Tmax_degC", "Tavg_degC", "Tavg_sat15_degC"]
-
-    # Ensure they exist in the DataFrame
-    temp_cols = [c for c in temp_cols if c in df.columns]
-
-    print("Temperature Features Correlation Matrix (%):")
-    corr = df[temp_cols].corr() * 100
-    print(corr.round(1))
-
-    if verbose > 1:
-        # Also show pairs sorted by absolute correlation (most correlated first)
-        print("Highly Correlated Temperature Feature Pairs (%):")
-        pairs = (
-            corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-                .stack()
-                .sort_values(ascending=False)
-        )
-        print(pairs.round(1))
-
-def _build_model_from_cfg(cfg: Dict[str, dict]):
-    """Factory that builds a model strictly from cfg."""
-    cfg = cfg.copy()
-    model_type = cfg.pop("type")
-
-    if model_type == "ridge":
-        return Ridge(**cfg)
-
-    if model_type == "lasso":
-        return Lasso(**cfg)
-
-    if model_type == "rf":
-        return RandomForestRegressor(**cfg)
-
-    if model_type == 'lgbm':
-        return LGBMRegressor(**cfg)
-
-    raise ValueError(f"Unknown model type: {model_type}")
-
-
-
-def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
-
-    lr = pd.Series(
-        model_LR.coef_,
-        index=feature_cols,
-        name="LR_coef"
-    ).astype(np.float32)
-
-    rf = pd.Series(
-        model_RF.feature_importances_,
-        index=feature_cols,
-        name="RF_importance"
-    ).astype(np.float32)
-
-    df_imp = pd.concat([lr, rf], axis=1).astype(np.float32).round(3)
-
-    # Normalize for comparability
-    _source = df_imp["LR_coef"].abs()
-    df_imp["LR_norm_pc"] = (100.*_source/_source.quantile(0.95))
-
-    _source = df_imp["RF_importance"]
-    df_imp["RF_norm_pc"] = (100.*_source/_source.quantile(0.95))
-
-    # Overall relevance score
-    df_imp["score_pc"] = (df_imp[["LR_norm_pc", "RF_norm_pc"]]).mean(axis=1)
-
-
-    # reference for RF: the second-lowest value
-    rf_imp = df_imp["RF_norm_pc"]
-    min_rf = rf_imp.replace(0, np.nan).min() * 1.001 + .0001
-    rf_filtered = rf_imp.mask(rf_imp < min_rf, np.nan)
-    rf_second_lowest = rf_filtered.min()
-    print(f"rf_smallest_non_zero: {min_rf:.5f}, {rf_second_lowest:.5f}")
-
-    lr_survivor = lr.abs() > 0
-    rf_survivor = rf_imp > rf_second_lowest * 1.001
-    both_survivor  = lr_survivor & rf_survivor
-    either_survivor= lr_survivor | rf_survivor
-    score_survivor = (df_imp["score_pc"] > 5)
-    print(f"survivors out of {len(lr)} features: "
-          f"LR {      lr_survivor.sum()}, RF {        rf_survivor.sum()}, "
-          f"both {  both_survivor.sum()}, either {either_survivor.sum()}, "
-          f"score {score_survivor.sum()}")
-
-
-    # Final ordering
-    df_imp = (
-        df_imp
-        .sort_values("score_pc", ascending=False)
-        .drop(columns=["LR_coef", "RF_importance"])  # keep only normalized
-    )
-
-    print("\n[Model diagnostics] Top features (LR + RF):")
-    print(df_imp.round(2).to_string(float_format="%6.2f"))  # .head(20)
-
-
-
 # ============================================================
-# CREATE BASELINES (LINERA REGREASSION, RANDOM FOREST, GRADIENT BOOSTING)
+# CREATE BASELINES (LINEAR REGRESSION, RANDOM FOREST, GRADIENT BOOSTING)
 # ============================================================
 
 def create_baselines(df            : pd.DataFrame,
@@ -177,24 +79,32 @@ def create_baselines(df            : pd.DataFrame,
 
     # lasso pass to select features
     # -------------------------
-    cfg = baseline_cfg['lasso'] # .copy()
 
-    model_lasso = Lasso(**cfg)
-    model_lasso.fit(X_train_scaled, y_train_GW)
+    # baseline_cfg['lasso']['alpha'] > 0 would be a simple LR,
+    #    it would not select columns
+    if 'lasso' in baseline_cfg and baseline_cfg['lasso']['alpha'] > 0:
+        cfg = baseline_cfg['lasso'] # .copy()
 
-    coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
-    # print("coeffs_lasso:", coeffs_lasso)
+        model_lasso = Lasso(**cfg)
+        model_lasso.fit(X_train_scaled, y_train_GW)
 
-    # Features with non-zero coefficients
-    idx_coeffs   = np.where(coeffs_lasso != 0)[0]
-    feature_cols = list(np.array(feature_cols)[idx_coeffs])
-    feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
-    # print("feature_cols:", feature_cols)
-    if verbose >= 1:
-        print(f"lasso: {X_GW.shape[1]} -> {len(feature_cols)} features")
+        coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
+        # print("coeffs_lasso:", coeffs_lasso)
 
-    # print(df.shape, X_GW.shape)
-    X_GW = X_GW[:, idx_coeffs]
+        # Features with non-zero coefficients
+        idx_coeffs   = np.where(coeffs_lasso != 0)[0]
+        feature_cols = list(np.array(feature_cols)[idx_coeffs])
+        feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
+        # print("feature_cols:", feature_cols)
+        if verbose > 0:
+            print(f"lasso: {X_GW.shape[1]} -> {len(feature_cols)} features")
+
+        # print(df.shape, X_GW.shape)
+        X_GW = X_GW[:, idx_coeffs]
+    else:
+        if verbose > 0:
+            print(f"no lasso: keep all {len(feature_cols)} features")
+
     _df  = df[[target_col] + feature_cols].copy()
     # print(df.shape, X_GW.shape)
 
@@ -282,6 +192,26 @@ def regression_and_forest(
         said features (df.columns[1:])
     """
 
+    def _build_model_from_cfg(cfg: Dict[str, dict]):
+        """Factory that builds a model strictly from cfg."""
+        cfg = cfg.copy()
+        model_type = cfg.pop("type")
+
+        if model_type == "ridge":
+            return Ridge(**cfg)
+
+        if model_type == "lasso":
+            return Lasso(**cfg)
+
+        if model_type == "rf":
+            return RandomForestRegressor(**cfg)
+
+        if model_type == 'lgbm':
+            return LGBMRegressor(**cfg)
+
+        raise ValueError(f"Unknown model type: {model_type}")
+
+
     train_idx: np.ndarray = np.arange(0,        train_end)
     valid_idx: np.ndarray = np.arange(train_end,val_end)
     test_idx : np.ndarray = np.arange(val_end,  len(X))
@@ -292,6 +222,11 @@ def regression_and_forest(
     X_train_scaled = X_scaled[train_idx];  y_train_GW = y[train_idx]
     X_valid_scaled = X_scaled[valid_idx]
     X_test_scaled  = X_scaled[ test_idx]
+
+    # convert to df to have headers
+    X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=feature_cols)
+    X_valid_scaled_df = pd.DataFrame(X_valid_scaled, columns=feature_cols)
+    X_test_scaled_df  = pd.DataFrame(X_test_scaled,  columns=feature_cols)
 
     models         = dict()
     preds_GW       = dict()
@@ -317,9 +252,9 @@ def regression_and_forest(
         # normal models
         os.makedirs(cache_dir, exist_ok=True)
 
-        key_str    = json.dumps(cache_id_dict | cfg | models_cfg['lasso'],
-                                sort_keys=True)
-            # lasso controls the features for LR, RL, GB
+        _dict_key = cache_id_dict | cfg | {"feature_cols": feature_cols}
+        key_str    = json.dumps(_dict_key, sort_keys=True)
+            # features for LR, RL, GB (and NNTQ) change with lasso
 
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f"{name}_preds_{cache_key}.pkl")
@@ -340,13 +275,12 @@ def regression_and_forest(
                     print(f"Training {name} (calculation forced)...")
                 else:
                     print(f"Training {name} (no cache found)...")
-
             models[name] = _build_model_from_cfg(cfg)
-            models[name].fit(X_train_scaled, y_train_GW)
+            models[name].fit(X_train_scaled_df, y_train_GW)
 
-            pred_train_GW = models[name].predict(X_train_scaled)
-            pred_valid_GW = models[name].predict(X_valid_scaled)
-            pred_test_GW  = models[name].predict(X_test_scaled )
+            pred_train_GW = models[name].predict(X_train_scaled_df)
+            pred_valid_GW = models[name].predict(X_valid_scaled_df)
+            pred_test_GW  = models[name].predict(X_test_scaled_df )
 
             # Save
             if name != 'LR' and save_cache_baselines:
@@ -368,3 +302,87 @@ def regression_and_forest(
 
 
     return series_pred_GW, models
+
+
+
+# ============================================================
+# TOP FEATURES FOR LINEAR REGRESSION AND RANDOM FOREST
+# ============================================================
+
+def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
+
+    lr = pd.Series(
+        model_LR.coef_,
+        index=feature_cols,
+        name="LR_coef"
+    ).astype(np.float32)
+
+    rf = pd.Series(
+        model_RF.feature_importances_,
+        index=feature_cols,
+        name="RF_importance"
+    ).astype(np.float32)
+
+    df_imp = pd.concat([lr, rf], axis=1).astype(np.float32).round(3)
+
+    # Normalize for comparability
+    _source = df_imp["LR_coef"].abs()
+    df_imp["LR_norm_pc"] = (100.*_source/_source.quantile(0.95))
+
+    _source = df_imp["RF_importance"]
+    df_imp["RF_norm_pc"] = (100.*_source/_source.quantile(0.95))
+
+    # Overall relevance score
+    df_imp["score_pc"] = (df_imp[["LR_norm_pc", "RF_norm_pc"]]).mean(axis=1)
+
+
+    # reference for RF: the second-lowest value
+    rf_imp = df_imp["RF_norm_pc"]
+    min_rf = rf_imp.replace(0, np.nan).min() * 1.001 + .0001
+    rf_filtered = rf_imp.mask(rf_imp < min_rf, np.nan)
+    rf_second_lowest = rf_filtered.min()
+    print(f"rf_smallest_non_zero: {min_rf:.5f}, {rf_second_lowest:.5f}")
+
+    lr_survivor = lr.abs() > 0
+    rf_survivor = rf_imp > rf_second_lowest * 1.001
+    both_survivor  = lr_survivor & rf_survivor
+    either_survivor= lr_survivor | rf_survivor
+    score_survivor = (df_imp["score_pc"] > 5)
+    print(f"survivors out of {len(lr)} features: "
+          f"LR {      lr_survivor.sum()}, RF {        rf_survivor.sum()}, "
+          f"both {  both_survivor.sum()}, either {either_survivor.sum()}, "
+          f"score {score_survivor.sum()}")
+
+
+    # Final ordering
+    df_imp = (
+        df_imp
+        .sort_values("score_pc", ascending=False)
+        .drop(columns=["LR_coef", "RF_importance"])  # keep only normalized
+    )
+
+    print("\n[Model diagnostics] Top features (LR + RF):")
+    print(df_imp.round(2).to_string(float_format="%6.2f"))  # .head(20)
+
+
+
+def temperature_correlation_matrix(df, verbose: int = 1) -> None:
+    temp_cols = ["Tmin_degC", "Tmax_degC", "Tavg_degC", "Tavg_sat15_degC"]
+
+    # Ensure they exist in the DataFrame
+    temp_cols = [c for c in temp_cols if c in df.columns]
+
+    print("Temperature Features Correlation Matrix (%):")
+    corr = df[temp_cols].corr() * 100
+    print(corr.round(1))
+
+    if verbose > 1:
+        # Also show pairs sorted by absolute correlation (most correlated first)
+        print("Highly Correlated Temperature Feature Pairs (%):")
+        pairs = (
+            corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+                .stack()
+                .sort_values(ascending=False)
+        )
+        print(pairs.round(1))
+
