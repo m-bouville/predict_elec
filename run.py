@@ -182,81 +182,6 @@ def normalize_features(df            : pd.DataFrame,
 # RUNNING MODEL ONCE
 # ============================================================
 
-def training_loop(data          : containers.DatasetBundle,
-                  NNTQ_model    : containers.NeuralNet,
-                  validate_every: int,
-                  display_every : int,
-                  plot_conv_every:int,
-                  verbose       : int = 0):
-
-    num_epochs: int = NNTQ_model.epochs
-
-    t_epoch_loop_start = time.perf_counter()
-
-    list_of_min_losses= (9.999, 9.999, 9.999)
-    list_of_lists     = ([], [], [], [])
-
-    # first_step = True
-
-    for epoch in range(num_epochs):
-
-        # Training
-        t_train_start = time.perf_counter()
-
-        train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
-            architecture.subset_evolution_torch(
-                NNTQ_model, data.train.loader)  #, data.train.Tavg_degC)
-
-        train_loss_quantile_h_scaled= \
-            train_loss_quantile_h_scaled.detach().cpu().numpy()
-        dict_train_loss_quantile_h  = {k: v.detach().cpu().numpy()
-                           for k, v in dict_train_loss_quantile_h.items()}
-
-
-        if verbose >= 2:
-            print(f"training took:   {time.perf_counter() - t_train_start:.2f} s")
-
-
-        # validation
-        if ((epoch+1) % validate_every == 0) | (epoch == 0):
-
-            t_valid_start     = time.perf_counter()
-            valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                architecture.subset_evolution_numpy(
-                    NNTQ_model, data.valid.loader)  #, data.valid.Tavg_degC)
-
-            if verbose >= 2:
-                print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
-
-
-        # display evolution of losses
-        (list_of_min_losses, list_of_lists) = \
-            utils.display_evolution(
-                epoch, t_epoch_loop_start,
-                train_loss_quantile_h_scaled.mean(),
-                valid_loss_quantile_h_scaled.mean(),
-                list_of_min_losses, list_of_lists,
-                num_epochs, display_every, plot_conv_every,
-                NNTQ_model.min_delta, verbose)
-
-        # plotting convergence
-        if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
-                & (epoch < num_epochs-2) & verbose > 0:
-            plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
-                              list_of_lists[2], list_of_lists[3],
-                              partial=True, verbose=verbose)
-
-        # Check for early stopping
-        if NNTQ_model.early_stopping(valid_loss_quantile_h_scaled.mean()):
-            if verbose > 0:
-                print(f"Early stopping triggered at epoch {epoch+1}.")
-            break
-
-        torch.cuda.empty_cache()
-
-    return (list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
-            dict_valid_loss_quantile_h)
-
 
 
 def postprocess(baseline_parameters   : Dict[str, Any],
@@ -447,94 +372,63 @@ def run_model_once(
         forecast_hour,
         verbose)
 
+    valid_length = NNTQ_parameters['valid_length']
 
-    # Create model
-    NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
-                                      len_train_data= len(data.train),
-                                      num_features  = data.num_features)
 
+
+
+    # ============================================================
+    # NNTQ: Neural Network predicting Quantiles with Transformers
+    # ============================================================
 
     # do not rerun same NNTQ all the time for Bayesian search focused on metamodel
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
         key_str    = json.dumps(
-            baseline_parameters['lasso'] | baseline_parameters['LR'] |
-            baseline_parameters['RF'   ] | baseline_parameters['GB'] |
+            baseline_parameters['lasso'] |
             {key: value for key, value in NNTQ_parameters.items() if key != 'device'},
                 sort_keys=True)
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f"nntq_preds_{cache_key}.pkl")
+
+
 
     # either load...
     if cache_dir is not None and os.path.exists(cache_path):
         if verbose > 0:
             print(f"Loading NNTQ predictions from: {cache_path}...")
         with open(cache_path, "rb") as f:
-            ((NNTQ_model, data)) = pickle.load(f)
+            (data, quantile_delta_coverage,
+             avg_abs_worst_days_test_NN_median) = pickle.load(f)
 
-    else:  # ... or compute
-        if verbose > 0:
-            if cache_dir is None:
-                print("Training NNTQ (calculation forced)...")
-            else:
-                print("Training NNTQ (no cache found)...")
+    # ... or compute
+    else:
+        # Create model
+        NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
+                                          len_train_data= len(data.train),
+                                          num_features  = data.num_features)
 
+        # run training, validation, test
+        (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median) = \
+            NNTQ_model.run(
+                data, feature_cols, Tavg_full, holidays_full,
+                minutes_per_step, validate_every, display_every, plot_conv_every,
+                cache_dir, num_worst_days, verbose)
 
-        # loop for training and validation
-        if verbose > 0:
-            print("Starting training...")
-
-        list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
-            dict_valid_loss_quantile_h = training_loop(data,
-                NNTQ_model, validate_every, display_every, plot_conv_every, verbose)
-
-
-        # plotting convergence for entire training
-        if verbose > 0:
-            plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
-                                       list_of_lists[2], list_of_lists[3],
-                                       partial=False, verbose=verbose)
-
-            plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
-                                   **dict_valid_loss_quantile_h), minutes_per_step,
-                                   "validation loss")
-
-        # Save
-        if cache_dir is None and save_cache_NNTQ:
+        # Save pickle
+        if cache_dir is not None and save_cache_NNTQ:
             with open(cache_path, "wb") as f:
-                pickle.dump((NNTQ_model, data), f)
+                pickle.dump((data, quantile_delta_coverage,
+                             avg_abs_worst_days_test_NN_median), f)
             if verbose > 0:
                 print(f"Saved NNTQ predictions to: {cache_path}")
 
 
-    # test loss
-    test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
-       architecture.subset_evolution_numpy(
-           NNTQ_model, data.test.loader)  #, data.test.Tavg_degC)
 
-    if verbose >= 3:
-        print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
-                                **dict_test_loss_quantile_h)
-                           ).round(2).to_string())
-    if verbose > 0:
-        plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
-                                     **dict_test_loss_quantile_h), minutes_per_step,
-                               "test loss")
-
-
-    t_metamodel_start = time.perf_counter()
-
-    data.predictions_day_ahead(
-            NNTQ_model.model, data.scaler_y,
-            feature_cols = feature_cols,
-            device       = NNTQ_model.device,
-            input_length = NNTQ_model.input_length,
-            pred_length  = NNTQ_model.pred_length,
-            valid_length = NNTQ_model.valid_length,
-            minutes_per_step=minutes_per_step,
-            quantiles    = NNTQ_model.quantiles
-            )
+    # ============================================================
+    # METAMODEL
+    # ============================================================
 
     # metamodel LR
     data.calculate_metamodel_LR(
@@ -543,64 +437,20 @@ def run_model_once(
     if verbose > 0:
         print(f"weights_meta_LR [%]: "
           f"{ {k: round(v*100, 1) for k, v in data.weights_meta_LR.items()}}")
-    t_metamodel_end = time.perf_counter()
-    if verbose >= 2:
-        print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
-
-
-    worst_days_test_df, avg_abs_worst_days_test_NN_median = \
-        data.test.worst_days_by_loss(
-            temperature_full = Tavg_full,
-            holidays_full    = holidays_full,
-            num_steps_per_day= num_steps_per_day,
-            top_n            = num_worst_days,
-            verbose          = verbose
-        )
-    if verbose >= 3:
-        print(worst_days_test_df.to_string())
-
-
-
-
-    # ============================================================
-    # TEST PREDICTIONS
-    # ============================================================
-
-    if verbose > 0:
-        print("\nStarting test ...")  #"(baseline: {name_baseline})...")
-
-        print("\nTesting quantiles")
-
-    quantile_delta_coverage = {}
-    for tau in NNTQ_model.quantiles:
-        key = f"q{int(100*tau)}"
-        cov = utils.quantile_coverage(data.test.true_GW,
-                                      data.test.dict_preds_NN[key])
-        quantile_delta_coverage[key] = cov-tau
-
-        if verbose > 0:
-            print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
-                  f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
-
-    if verbose > 0:
-        print()
-
-
-
-    # ============================================================
-    # METAMODEL
-    # ============================================================
+    # t_metamodel_end = time.perf_counter()
+    # if verbose >= 2:
+    #     print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
 
 
     # NN metamodel
     # ============================================================
 
-    data.calculate_metamodel_NN(feature_cols, NNTQ_model.valid_length, 'valid',
+    data.calculate_metamodel_NN(feature_cols, valid_length, 'valid',
                                 metamodel_NN_parameters, verbose)
     avg_weights_meta_NN = data.avg_weights_meta_NN
 
 
-    names_baseline= {'GB', 'LR', 'RF'}
+    names_baseline= {}  # if you like crowded: {'GB', 'LR', 'RF'}
     names_meta    = {'LR', 'NN'}
 
     if verbose > 0:
@@ -650,6 +500,7 @@ def run_model_once(
         len(feature_cols),
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
         avg_abs_worst_days_test_NN_median, run_id, trials_csv_path, verbose)
+
 
     return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
         (num_worst_days, avg_abs_worst_days_test_NN_median), (_loss_NNTQ, _loss_meta)
@@ -934,6 +785,9 @@ def loss_meta(
 # -------------------------------------------------------
 # modify existing csv life
 # -------------------------------------------------------
+
+# /!\ create a copy of the csv file before modifying it (just in case)
+
 
 def recalculate_loss(csv_path: str,
                      verbose : int   = 0) -> None:

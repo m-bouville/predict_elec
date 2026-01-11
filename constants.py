@@ -48,12 +48,12 @@ NNTQ_PARAMETERS: dict = {
     'batch_size'       :  32,                   # Training batch size
 
     # optimizer
-    'learning_rate'    :  0.0098,      # Optimizer learning rate
-    'weight_decay'     : 62.3e-9,
-    'dropout'          :  0.05,
+    'learning_rate'    :  0.011,      # Optimizer learning rate
+    'weight_decay'     : 11.25e-9,
+    'dropout'          :  0.24,
 
     # early stopping
-    'min_delta'        :  0.014,
+    'min_delta'        :  0.022,
 
     # PatchEmbedding
     'patch_length'     : _patch_length,              # [half-hours]
@@ -65,27 +65,27 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.036,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.24,
-    'lambda_deriv'     : 0.08,         # derivative weight in loss function
-    'lambda_median'    : 0.084,
-    'smoothing_cross'  : 0.015,
+    'lambda_cross'     : 0.028,          # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.34,
+    'lambda_deriv'     : 0.064,         # derivative weight in loss function
+    'lambda_median'    : 0.08,
+    'smoothing_cross'  : 0.025,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
         #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
-    'saturation_cold_degC':-6.4,
-    'threshold_cold_degC':  4.8,
+    'saturation_cold_degC':-6.5,
+    'threshold_cold_degC':  5.,
     'lambda_cold'      :    0.13,
 }
 
-EPOCHS       = [  2,  42] # Number of training epochs
-MODEL_DIM    = [ 48, 300] # Transformer embedding dimension
-NUM_HEADS    = [  2,   4] # Number of attention heads
-FFN_SIZE     = [  4,   2] # expansion factor
+EPOCHS       = [  2,  40] # Number of training epochs
+MODEL_DIM    = [ 48, 301] # Transformer embedding dimension
+NUM_HEADS    = [  2,   7] # Number of attention heads
+FFN_SIZE     = [  4,   3] # expansion factor
 NUM_LAYERS   = [  1,   2] # Number of transformer encoder layers
-NUM_GEO_BLOCKS=[  2,   7]
+NUM_GEO_BLOCKS=[  2,   5]
 WARMUP_STEPS =[4000,2500]
 PATIENCE     = [  5,   7]  # DEBUG: patience > nb epochs
 
@@ -107,41 +107,33 @@ NNTQ_PARAMETERS['num_patches'] = \
         // NNTQ_PARAMETERS['stride'] + 1
 
 
-# Optional: plug in Bayesian best parameters
-NNTQ_PARAMETERS.update({ #'lasso_alpha': 0.0,
+# # Optional: plug in Bayesian best parameters
+# NNTQ_PARAMETERS.update({ #'lasso_alpha': 0.0,
 
-    # 'epochs': 41, 'batch_size': 32, 'learning_rate': 0.0098, 'weight_decay': 1.125e-08,
-    # 'dropout': 0.24, 'lambda_cross': 0.028, 'lambda_coverage': 0.34,
-    # 'lambda_deriv': 0.064, 'lambda_median': 0.08, 'smoothing_cross': 0.025,
-    # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -6.6, 'lambda_cold': 0.13,
-    # 'model_dim': 301, 'ffn_size': 3, 'num_heads': 7, 'num_layers': 2,
-    # 'num_geo_blocks': 5, 'warmup_steps': 2500, 'patience': 7, 'min_delta': 0.022
-    # }  # loss 13 -> 20
+#     # 'epochs': 41, 'batch_size': 32, 'learning_rate': 0.0098, 'weight_decay': 1.125e-08,
+#     # 'dropout': 0.24, 'lambda_cross': 0.028, 'lambda_coverage': 0.34,
+#     # 'lambda_deriv': 0.064, 'lambda_median': 0.08, 'smoothing_cross': 0.025,
+#     # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -6.6, 'lambda_cold': 0.13,
+#     # 'model_dim': 301, 'ffn_size': 3, 'num_heads': 7, 'num_layers': 2,
+#     # 'num_geo_blocks': 5, 'warmup_steps': 2500, 'patience': 7, 'min_delta': 0.022
+#     # }  # loss 13 -> 20  => these are the values used above
 
-    'epochs': 41, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.26e-08,
-    'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
-    'lambda_deriv': 0.044, 'lambda_median': 0.056, 'smoothing_cross': 0.041,
-    'threshold_cold_degC': 2.1, 'saturation_cold_degC': -2.9, 'lambda_cold': 0.07,
-    'model_dim': 348, 'ffn_size': 4, 'num_heads': 6, 'num_layers': 2,
-    'num_geo_blocks': 9, 'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.03}
-      # trial 165, loss 21.5 -> 22
+#     # 'epochs': 41, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.26e-08,
+#     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
+#     # 'lambda_deriv': 0.044, 'lambda_median': 0.056, 'smoothing_cross': 0.041,
+#     # 'threshold_cold_degC': 2.1, 'saturation_cold_degC': -2.9, 'lambda_cold': 0.07,
+#     # 'model_dim': 348, 'ffn_size': 4, 'num_heads': 6, 'num_layers': 2,
+#     # 'num_geo_blocks': 9, 'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.03
+#     # }  # trial 165, loss 21.5 -> 22
 
-    # 'epochs': 40, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.68e-09,
-    # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
-    # 'lambda_deriv': 0.012, 'lambda_median': 0.04, 'smoothing_cross': 0.027,
-    # 'threshold_cold_degC': 3.0, 'saturation_cold_degC': -3.0, 'lambda_cold': 0.07,
-    # 'model_dim': 348, 'ffn_size': 2, 'num_heads': 6, 'num_layers': 2,
-    # 'num_geo_blocks': 9, 'warmup_steps': 1500, 'patience': 5, 'min_delta': 0.03
-    # }  # loss 25 -> 30
-
-    # 'epochs': 21, 'batch_size': 64, 'learning_rate': 0.0094, 'weight_decay': 7.54e-09,
-    # 'dropout': 0.21, 'lambda_cross': 0.072, 'lambda_coverage': 0.16,
-    # 'lambda_deriv': 0.008, 'lambda_median': 0.072, 'smoothing_cross': 0.017,
-    # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -2.3, 'lambda_cold': 0.05,
-    # 'model_dim': 348, 'ffn_size': 2, 'num_heads': 6, 'num_layers': 3,
-    # 'num_geo_blocks': 9, 'warmup_steps': 1500, 'patience': 4, 'min_delta': 0.034
-    # } # loss ?? -> 36
-)
+#     # 'epochs': 40, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.68e-09,
+#     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
+#     # 'lambda_deriv': 0.012, 'lambda_median': 0.04, 'smoothing_cross': 0.027,
+#     # 'threshold_cold_degC': 3.0, 'saturation_cold_degC': -3.0, 'lambda_cold': 0.07,
+#     # 'model_dim': 348, 'ffn_size': 2, 'num_heads': 6, 'num_layers': 2,
+#     # 'num_geo_blocks': 9, 'warmup_steps': 1500, 'patience': 5, 'min_delta': 0.03
+#     # }  # loss 25 -> 30
+# )
 
 
 
@@ -171,6 +163,7 @@ METAMODEL_NN_PARAMETERS: dict = {
 
 META_EPOCHS = [ 1, 12]
 METAMODEL_NN_PARAMETERS['epochs'] = META_EPOCHS[IDX_RUN_FAST]
+
 
 
 DICT_INPUT_CSV_FNAMES = {
@@ -250,6 +243,25 @@ baseline_params_normal = {
 
 BASELINES_PARAMETERS = baseline_params_fast if RUN_FAST else baseline_params_normal
 
+
+
+
+# Optional: plug in Bayesian best parameters
+_new_parameters = { #'lasso_alpha': 0.0,
+    'LR_type': 'ridge', 'LR_alpha': 1.45, 'RF_n_estimators': 490, 'RF_max_depth': 23,
+    'RF_min_samples_leaf': 11, 'RF_min_samples_split': 12, 'RF_max_features': 'sqrt',
+    'GB_boosting_type': 'gbdt', 'GB_num_leaves': 15, 'GB_max_depth': 2,
+    'GB_learning_rate': 0.07, 'GB_n_estimators': 630, 'GB_min_child_samples': 13,
+    'GB_subsample': 0.72, 'GB_colsample_bytree': 0.98, 'GB_reg_alpha': 0.06,
+    'GB_reg_lambda': 0.08, 'metaNN_epochs': 20, 'metaNN_batch_size': 96,
+    'metaNN_learning_rate': 0.0025, 'metaNN_weight_decay': 3.054e-08,
+    'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
+} # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
+
+for _model in ['LR', 'RF', 'GB']:
+    BASELINES_PARAMETERS[_model].update(
+        {k.strip(_model+'_'): v for (k, v) in _new_parameters.items() if _model in k})
+METAMODEL_NN_PARAMETERS.update({k.strip('metaNN_'): v for (k, v) in _new_parameters.items() if 'metaNN' in k})
 
 
 

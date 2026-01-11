@@ -1,3 +1,5 @@
+import time
+
 from   dataclasses import dataclass, field, InitVar
 
 from   typing      import Dict, List, Tuple, Optional, Any
@@ -375,3 +377,191 @@ class NeuralNet:
             patience=self.patience, min_delta=self.min_delta)
 
         self.amp_scaler     = torch.amp.GradScaler(device=self.device)
+
+
+    def training_loop(self,
+                      train_loader,
+                      valid_loader,
+                      validate_every: int,
+                      display_every : int,
+                      plot_conv_every:int,
+                      verbose       : int = 0):
+
+        num_epochs: int = self.epochs
+
+        t_epoch_loop_start = time.perf_counter()
+
+        list_of_min_losses= (9.999, 9.999, 9.999)
+        list_of_lists     = ([], [], [], [])
+
+        # first_step = True
+
+        for epoch in range(num_epochs):
+
+            # Training
+            t_train_start = time.perf_counter()
+
+            train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
+                architecture.subset_evolution_torch(
+                    self, train_loader)  #, data.train.Tavg_degC)
+
+            train_loss_quantile_h_scaled= \
+                train_loss_quantile_h_scaled.detach().cpu().numpy()
+            dict_train_loss_quantile_h  = {k: v.detach().cpu().numpy()
+                               for k, v in dict_train_loss_quantile_h.items()}
+
+
+            if verbose >= 2:
+                print(f"training took:   {time.perf_counter() - t_train_start:.2f} s")
+
+
+            # validation
+            if ((epoch+1) % validate_every == 0) | (epoch == 0):
+
+                t_valid_start     = time.perf_counter()
+                valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
+                    architecture.subset_evolution_numpy(
+                        self, valid_loader)  #, data.valid.Tavg_degC)
+
+                if verbose >= 2:
+                    print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
+
+
+            # display evolution of losses
+            (list_of_min_losses, list_of_lists) = \
+                utils.display_evolution(
+                    epoch, t_epoch_loop_start,
+                    train_loss_quantile_h_scaled.mean(),
+                    valid_loss_quantile_h_scaled.mean(),
+                    list_of_min_losses, list_of_lists,
+                    num_epochs, display_every, plot_conv_every,
+                    self.min_delta, verbose)
+
+            # plotting convergence
+            if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
+                    & (epoch < num_epochs-2) & verbose > 0:
+                plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
+                                  list_of_lists[2], list_of_lists[3],
+                                  partial=True, verbose=verbose)
+
+            # Check for early stopping
+            if self.early_stopping(valid_loss_quantile_h_scaled.mean()):
+                if verbose > 0:
+                    print(f"Early stopping triggered at epoch {epoch+1}.")
+                break
+
+            torch.cuda.empty_cache()
+
+        return (list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
+                dict_valid_loss_quantile_h)
+
+
+    def run(
+            self,
+            data             : DatasetBundle,
+            feature_cols     : List[str],
+            temperature_full : pd.Series,  # TODO np?
+            holidays_full    : pd.Series,
+            minutes_per_step : int,
+            validate_every   : int,
+            display_every    : int,
+            plot_conv_every  : int,
+            cache_dir        : str,
+            num_worst_days   : int,
+            verbose          : int = 0
+        ):
+
+        if verbose > 0:
+            if cache_dir is None:
+                print("Training NNTQ (calculation forced)...")
+            else:
+                print("Training NNTQ (no cache found)...")
+
+
+        # loop for training and validation
+        if verbose > 0:
+            print("Starting training...")
+
+        list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
+            dict_valid_loss_quantile_h = self.training_loop(
+                data.train.loader, data.valid.loader,
+                validate_every, display_every, plot_conv_every, verbose)
+
+
+        # plotting convergence for entire training
+        if verbose > 0:
+            plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
+                                       list_of_lists[2], list_of_lists[3],
+                                       partial=False, verbose=verbose)
+
+            plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
+                                   **dict_valid_loss_quantile_h), minutes_per_step,
+                                   "validation loss")
+
+
+        # test loss
+        test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
+           architecture.subset_evolution_numpy(self, data.test.loader)
+
+        if verbose >= 3:
+            print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \
+                                    **dict_test_loss_quantile_h)
+                               ).round(2).to_string())
+        if verbose > 0:
+            plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
+                                         **dict_test_loss_quantile_h), minutes_per_step,
+                                   "test loss")
+
+
+        t_metamodel_start = time.perf_counter()
+
+        data.predictions_day_ahead(
+                self.model, data.scaler_y,
+                feature_cols = feature_cols,
+                device       = self.device,
+                input_length = self.input_length,
+                pred_length  = self.pred_length,
+                valid_length = self.valid_length,
+                minutes_per_step=minutes_per_step,
+                quantiles    = self.quantiles
+                )
+
+        num_steps_per_day = int(round(24*60/minutes_per_step))
+        worst_days_test_df, avg_abs_worst_days_test_NN_median = \
+            data.test.worst_days_by_loss(
+                temperature_full = temperature_full,
+                holidays_full    = holidays_full,
+                num_steps_per_day= num_steps_per_day,
+                top_n            = num_worst_days,
+                verbose          = verbose
+            )
+        if verbose >= 3:
+            print(worst_days_test_df.to_string())
+
+
+
+        # ============================================================
+        # TEST PREDICTIONS
+        # ============================================================
+
+        if verbose > 0:
+            print("\nStarting test ...")  #"(baseline: {name_baseline})...")
+
+            print("\nTesting quantiles")
+
+        quantile_delta_coverage = {}
+        for tau in self.quantiles:
+            key = f"q{int(100*tau)}"
+            cov = utils.quantile_coverage(data.test.true_GW,
+                                          data.test.dict_preds_NN[key])
+            quantile_delta_coverage[key] = cov-tau
+
+            if verbose > 0:
+                print(f"Coverage {key}:{cov*100:5.1f}%, i.e."
+                      f"{(cov-tau)*100:5.1f}%pt off{tau*100:3n}% target")
+
+        if verbose > 0:
+            print()
+
+
+        return (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median)

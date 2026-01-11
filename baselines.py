@@ -264,8 +264,8 @@ def regression_and_forest(
             if verbose > 0:
                 print(f"Loading {name} predictions from: {cache_path}...")
             with open(cache_path, "rb") as f:
-                ((pred_train_GW, pred_valid_GW,
-                  pred_test_GW, models[name])) = pickle.load(f)
+                ((pred_train_GW, pred_valid_GW, pred_test_GW)) = pickle.load(f)
+                    # formerly included: models[name]
 
         else:  # ... or compute
             if verbose > 0:
@@ -285,8 +285,8 @@ def regression_and_forest(
             # Save
             if name != 'LR' and save_cache_baselines:
                 with open(cache_path, "wb") as f:
-                    pickle.dump((pred_train_GW, pred_valid_GW,
-                                 pred_test_GW,  models[name]), f)
+                    pickle.dump((pred_train_GW, pred_valid_GW, pred_test_GW), f)
+                        # formerly included: models[name]
                 if verbose > 0:
                     print(f"Saved {name} predictions to: {cache_path}")
 

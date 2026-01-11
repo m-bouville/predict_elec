@@ -316,7 +316,7 @@ def diagnostics(name:                str,
     # SMA_residual    = [2*2,  num_steps_per_day]
     # days_zoom:           int | Tuple[int] = [8, 61]
 
-    ylim: Tuple[Tuple[float, float], Tuple[float, float]] = [[40, 60], [-1.5, 2.5]]
+    ylim: Tuple[Tuple[float, float], Tuple[float, float]] = [[42, 57], [-1.5, 2.5]]
 
     # for _idx, _zoom in enumerate(days_zoom):
     #     # zoom
@@ -353,7 +353,7 @@ def diagnostics(name:                str,
     # plot seasonal consumption by date, SMA 1 week
     curves(true_series, dict_pred_series, dict_baseline_series, dict_meta_series,
          xlabel="date of year", ylabel=_ylabel_consumption, title=_title,
-         ylim=[ylim[0][0], ylim[0][1]+15], date_range=None,
+         ylim=[ylim[0][0]-3, ylim[0][1]+18], date_range=None,
          moving_average=num_steps_per_day*7, groupby='dateofyear')
     curves(residual_true_series, dict_residual_pred_series,
          dict_residual_baseline_series, dict_residual_meta_series,

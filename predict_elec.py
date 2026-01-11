@@ -21,10 +21,8 @@ from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 # BUG RF and Boosting generalize poorly
 # TODO make the metamodel reduce the bias (how?)
 # TODO have separate public holidays, as with the school holidays
-# [done] GB complains about pd vs. np
-# [done] split hyperparameter search: one for NNTQ, one for metamodel
 # TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
-# BUG parameters found in search do not work when used in a one-off run
+# use several samples in NNTQ Bayesian searches for promising cases
 
 
 
@@ -45,7 +43,7 @@ if __name__ == "__main__":
         VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = VERBOSE >= 3
     else:
-        num_runs = 50
+        num_runs = 10
         force_calc_baselines = False
         VERBOSE: int = 0
 
