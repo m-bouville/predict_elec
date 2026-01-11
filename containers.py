@@ -122,7 +122,7 @@ class DataSplit:
                             pd.DataFrame(self.dict_preds_ML),
                             self.dict_preds_NN['q50']
                            ],  axis=1, join="inner").astype('float32')
-        _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['NN']
+        _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['NNTQ']
         self.input_metamodel_LR = _input.drop(columns=['y'])
 
         if self.name == split_active:
@@ -142,12 +142,13 @@ class DataSplit:
                           names_baseline:    str,
                           names_meta:        str,
                           temperature_full:  pd.Series,
-                          num_steps_per_day: int):
+                          num_steps_per_day: int,
+                          quantiles:         List[str]):
         plots.diagnostics(self.name,
-                self.true_GW, {'q50': self.dict_preds_NN['q50']},
-                self.dict_preds_ML, self.dict_preds_meta,
-                names_baseline, names_meta, temperature_full.iloc[self.idx],
-                num_steps_per_day)
+            self.true_GW, {q: self.dict_preds_NN[q] for q in quantiles},
+            self.dict_preds_ML, self.dict_preds_meta,
+            names_baseline, names_meta, temperature_full.iloc[self.idx],
+            num_steps_per_day)
 
 
 

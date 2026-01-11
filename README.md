@@ -47,7 +47,7 @@ The strategy is based on a **two-stage architecture** with a strict separation o
 
 There is no feedback loop between the two stages.
 
-The main file is `predict_elec.py`. Random and Bayesian hyperparameter searches are available.
+The main file is `predict_elec.py`. Two Bayesian hyperparameter searches are available: for NNTQ and for metamodels.
 
 
 ### Stage 1 — Quantile Neural Network
@@ -96,12 +96,22 @@ This stage is self-contained and remains unchanged by the downstream metamodel.
   
 ---
 
-## Issues and plans
-- **Systematic bias in predictions**
-  - Bias is visible in LR, RF, LGBM and NN in validation and testing (but not training).
+## To do
 
-- **Empirical coverage of predicted quantiles**
-  - While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
+### Issues
+**Systematic bias in predictions**
+- Bias is visible in LR, RF, LGBM and NN in validation and testing (but not training).
+- The situation improved with parameters obtained from the Bayesian search.
+
+**Empirical coverage of predicted quantiles**
+- While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
+- This also improved (but to a lower extend) with Bayesian parameters.
+ 
+
+### Plans
+**Bayesian robustness**
+- Bayesian searches for NNTQ are sensitive to the random seed (a problemù similar to good training results not generalizing to testing).
+- Todo: use several samples in search (just for promising cases?)
   
-- **Plans**
-  - `q75` minus `q25` (uncertainty proxy) could be used as a feature in the NN metamodel.
+**Miscellaneous**
+- `q75` minus `q25` (uncertainty proxy) could be used as a feature in the NN metamodel.

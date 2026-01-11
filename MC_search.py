@@ -48,7 +48,7 @@ def sample_baseline_parameters(base_params: Dict[str, Dict[str, Any]])\
             if 'max_features' in p.keys():
                 p['max_features'   ] = random.choice(['sqrt', 0.5])
 
-        elif _baseline == 'GB':
+        elif _baseline == 'LGBM':
             if 'boosting_type' in p.keys():
                 p['boosting_type'  ] = random.choice(['gbdt'])  # TODO add more?
             if 'num_leaves' in p.keys():     # Default number of leaves

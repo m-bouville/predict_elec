@@ -450,7 +450,7 @@ def run_model_once(
     avg_weights_meta_NN = data.avg_weights_meta_NN
 
 
-    names_baseline= {}  # if you like crowded: {'GB', 'LR', 'RF'}
+    names_baseline= {}  # if you like it crowded: {'LGBM', 'LR', 'RF'}
     names_meta    = {'LR', 'NN'}
 
     if verbose > 0:
@@ -459,28 +459,30 @@ def run_model_once(
     test_metrics = data.test .compare_models(unit="GW", verbose=verbose)
 
 
+    _plot_quantiles = ['q25', 'q50', 'q75']
     if verbose > 0:
         print("Plotting test results...")
     if verbose >= 3:
         data.train.plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day)
-
+            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day,
+            quantiles=_plot_quantiles)
     if verbose > 0:
         data.test.plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day)
+            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day,
+            quantiles=_plot_quantiles)
 
-        plots.quantiles(
-            data.test.true_GW,
-            data.test.dict_preds_NN,
-            q_low = "q10",
-            q_med = "q50",
-            q_high= "q90",
-            baseline_series=data.test.dict_preds_ML,
-            title = "Electricity consumption forecast (NN quantiles), test",
-            dates = data.test.dates[-(8*num_steps_per_day):]
-        )
+        # plots.quantiles(
+        #     data.test.true_GW,
+        #     data.test.dict_preds_NN,
+        #     q_low = "q10",
+        #     q_med = "q50",
+        #     q_high= "q90",
+        #     baseline_series=data.test.dict_preds_ML,
+        #     title = "Electricity consumption forecast (NN quantiles), test",
+        #     dates = data.test.dates[-(8*num_steps_per_day):]
+        # )
 
 
     # final cleanup to free pinned memory and intermediate arrays
@@ -736,8 +738,8 @@ def loss_meta(
                  # RMSE and MAE are variants of each other, bias is different
 
          model_weights  : Dict[str, float] = \
-             {'NN': 0., 'LR': 1., 'RF': 1., 'GB': 1.,
-              'meta_LR'     : 2., 'meta_NN'     : 4.},
+             {'NNTQ': 0., 'LR': 1., 'RF': 1., 'LGBM': 1.,
+              'meta_LR': 2., 'meta_NN': 4.},
             # LR, RF and LGBM are just underlying models to the metamodels;
             #      improving them intrinsically is good, but secondary
 
@@ -749,7 +751,7 @@ def loss_meta(
     if isinstance(metrics, dict):
         for key, value in metrics.items():
             parts  = key.replace("test_", "").split('_')
-            model  = '_'.join(parts[:-1])  # Ex: "NN", "meta_NN", etc.
+            model  = '_'.join(parts[:-1])  # Ex: "NNTQ", "meta_NN", etc.
             metric = parts[-1]             # Ex: "bias", "RMSE", etc.
 
             dict_by_metric[metric].append(model_weights[model] * abs(value))

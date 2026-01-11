@@ -23,7 +23,7 @@ import seaborn as sns
 import holidays
 
 
-import IO  # losses, architecture,  plots
+import IO,  plots  # losses, architecture
 
 
 
@@ -211,7 +211,7 @@ def subset_predictions_day_ahead(
 
     # Baselines available
     baseline_names = [
-        nm for nm in ('LR', 'RF', 'GB', 'oracle')
+        nm for nm in ('LR', 'RF', 'LGBM', 'oracle')
         if f"consumption_{nm}" in feature_cols
     ]
     offset_steps = pred_length - valid_length + 1
@@ -367,7 +367,7 @@ def compare_models(true_series:     pd.Series,
     df_eval = pd.DataFrame({"true": true_series})
 
     if dict_pred_series is not None:
-        df_eval['NN'] = dict_pred_series.get("q50")
+        df_eval['NNTQ'] = dict_pred_series.get("q50")
 
     # baselines (LR, RF)
     if dict_preds_ML is not None:
@@ -411,16 +411,7 @@ def compare_models(true_series:     pd.Series,
 
     if verbose >= 1:
         print(df_metrics.round(2))
-
-        # plotting RMSE as a function of bias for the different models
-        plt.figure(figsize=(10,6))
-        for model in df_metrics.index:
-            plt.scatter(abs(df_metrics.loc[model, 'bias']),
-                            df_metrics.loc[model, 'RMSE'], label=model, s=100)
-        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.6)
-        plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
-        plt.legend()
-        plt.show()
+        plots.metrics(df_metrics, subset, max_RMSE)
 
 
     if verbose >= 3:

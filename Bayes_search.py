@@ -41,7 +41,7 @@ DISTRIBUTIONS_BASELINES = {
     'RF_min_samples_split':IntDistribution(low=12, high=25, step=1),
     'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4','0.5','0.6']),
 
-    # gradient boosting
+    # gradient boosting (LGBM)
     'GB_boosting_type':CategoricalDistribution(choices=['gbdt']),
     'GB_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1]),
     'GB_max_depth':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
@@ -152,7 +152,7 @@ def sample_baseline_parameters(
                 if p['max_features'] != 'sqrt':  # this is a float stored as str
                     p['max_features'] = float(p['max_features'])
 
-        elif _baseline == 'GB':
+        elif _baseline == 'LGBM':
             if 'boosting_type' in p:   # TODO add more?
                 p['boosting_type'] = trial.suggest_categorical('GB_boosting_type', ['gbdt'])
             if 'num_leaves' in p:
@@ -408,9 +408,9 @@ def cols_not_paras() -> List[str]:
 
     # output
     cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
-    for _model in ['NN', 'LR', 'RF', 'GB']:
+    for _model in ['NNTQ', 'LR', 'RF', 'LGBM']:
         cols_not_paras.append(f'avg_weight_meta_NN_{_model}')
-    for _model in ['NN', 'LR', 'RF', 'GB', 'meta_LR', 'meta_NN']:
+    for _model in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']:
         for _metric in ['bias', 'RMSE', 'MAE']:
             cols_not_paras.append(f'test_{_model}_{_metric}')
     cols_not_paras.extend(['num_features', 'avg_abs_worst_days_test'])

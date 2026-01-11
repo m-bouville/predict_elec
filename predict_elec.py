@@ -41,14 +41,17 @@ if __name__ == "__main__":
     if mode in ['once']:
         num_runs =  1
         VERBOSE: int = 1  # 2 if RUN_FAST else 1
-        force_calc_baselines = VERBOSE >= 3
+        force_calc_baselines = False  # VERBOSE >= 3
     else:
         num_runs = 10
         force_calc_baselines = False
         VERBOSE: int = 0
 
+
     if 'Bayes' in mode:
         assert not RUN_FAST, "fast parameters are outside the Bayesian distributions"
+
+
 
     run.run_model(
         mode                = mode,

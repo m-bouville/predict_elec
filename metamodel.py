@@ -157,10 +157,10 @@ def prepare_meta_data(
     # Combine all predictions and features
     df = pd.DataFrame({
         'y_true':y_true_GW,
-        'NN':    dict_pred_GW['q50'],
-        'LR':    dict_baseline_GW.get('LR', np.nan),
-        'RF':    dict_baseline_GW.get('RF', np.nan),
-        'GB':    dict_baseline_GW.get('GB', np.nan),
+        'NNTQ':  dict_pred_GW['q50'],
+        'LR':    dict_baseline_GW.get('LR',  np.nan),
+        'RF':    dict_baseline_GW.get('RF',  np.nan),
+        'LGBM':  dict_baseline_GW.get('LGBM',np.nan),
     }, index=dates)
 
     # Add context features
@@ -186,7 +186,7 @@ def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
 
     # Predictions
     preds = torch.tensor(
-        df[['NN', 'LR', 'RF', 'GB']].values,
+        df[['NNTQ', 'LR', 'RF', 'LGBM']].values,
         dtype=torch.float32
     )
 
@@ -500,7 +500,7 @@ def metamodel_NN(data_train,
 
         # Analyze learned weights
         df_weights_test  = pd.DataFrame(
-                weights_test_h, columns=["NN", "LR", "RF", "GB"])
+                weights_test_h, columns=["NNTQ", "LR", "RF", "LGBM"])
 
         if verbose > 0:
             plots.data(df_weights_test * 100, xlabel="horizon",
@@ -509,10 +509,11 @@ def metamodel_NN(data_train,
 
         if verbose > 0:
             print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
-            print(f"Average test weights: NN={avg_weights_test['NN']*100:.1f}%,"
-                  f"LR={avg_weights_test['LR']*100:5.1f}%, "
-                  f"RF={avg_weights_test['RF']*100:5.1f}%, "
-                  f"GB={avg_weights_test['GB']*100:5.1f}%")
+            print(f"Average test weights:"
+                  f"NNTQ={avg_weights_test['NNTQ']*100:5.1f}%,"
+                    f"LR={avg_weights_test['LR'  ]*100:5.1f}%,"
+                    f"RF={avg_weights_test['RF'  ]*100:5.1f}%,"
+                  f"LGBM={avg_weights_test['LGBM']*100:5.1f}%")
     else:
         avg_weights_test = None
 

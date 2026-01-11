@@ -189,7 +189,7 @@ baseline_params_fast = {
         "random_state":      0,
         "n_jobs":            4
     },
-    'GB': {
+    'LGBM': {
         "type":     "lgbm",
         "objective": "regression",
         "boosting_type": "gbdt",
@@ -222,7 +222,7 @@ baseline_params_normal = {
         "random_state":      0,
         "n_jobs":            4
     },
-    'GB': {
+    'LGBM': {
         "type":          "lgbm",
         "objective":     "regression",
         "boosting_type": "gbdt",
@@ -258,7 +258,7 @@ _new_parameters = { #'lasso_alpha': 0.0,
     'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
 } # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
 
-for _model in ['LR', 'RF', 'GB']:
+for _model in ['LR', 'RF', 'LGBM']:
     BASELINES_PARAMETERS[_model].update(
         {k.strip(_model+'_'): v for (k, v) in _new_parameters.items() if _model in k})
 METAMODEL_NN_PARAMETERS.update({k.strip('metaNN_'): v for (k, v) in _new_parameters.items() if 'metaNN' in k})
