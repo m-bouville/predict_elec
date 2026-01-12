@@ -388,7 +388,7 @@ def metamodel_NN(data_train,
     # Prepare data
     df_meta_train = prepare_meta_data(
         "train",
-        data_train.dict_preds_NN,
+        data_train.dict_preds_NNTQ,
         data_train.dict_preds_ML,
         data_train.X_dev,
         data_train.y_dev,
@@ -398,7 +398,7 @@ def metamodel_NN(data_train,
 
     df_meta_valid = prepare_meta_data(
         "valid",
-        data_valid.dict_preds_NN,
+        data_valid.dict_preds_NNTQ,
         data_valid.dict_preds_ML,
         data_valid.X_dev,
         data_valid.y_dev,
@@ -431,7 +431,7 @@ def metamodel_NN(data_train,
     # Test
     df_meta_test = prepare_meta_data(
         "test",
-        data_test.dict_preds_NN,
+        data_test.dict_preds_NNTQ,
         data_test.dict_preds_ML,
         data_test.X_dev,
         data_test.y_dev,

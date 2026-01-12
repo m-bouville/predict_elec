@@ -25,7 +25,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
     """
     PyTorch Dataset for day-ahead market forecasting.
 
-    Each sample represents one forecast made at noon, predicting the next
+    Each sample represents one forecast made at noon, predicting the next-day
     48 half-hourly values.
     """
 
@@ -61,7 +61,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         self.temperatures_subset=temperatures_subset
         self.input_length = input_length
         self.pred_length  = pred_length
-        self.features_in_future=int(features_in_future)
+        self.features_in_future=int(features_in_future)  # 0 or 1
         self.future_length= self.features_in_future * self.pred_length
         self.forecast_hour= forecast_hour
         self.target_index = target_index
@@ -99,17 +99,18 @@ class DayAheadDataset(torch.utils.data.Dataset):
         """
         idx_subset = self.start_indices_subset[idx_days_subset]
 
+        _range_future = range(idx_subset, idx_subset + self.pred_length)
+
         # Input: all features (=> excluding consumption) from past
         X = self.data_subset[idx_subset - self.input_length :
                              idx_subset + self.future_length]  # (L+H, F)
-        X = np.delete(X, self.target_index, axis=1)
+        X = np.delete(X, self.target_index, axis=1)  # now a true X (w/o y)
 
         # Target: only consumption, future values (excluding present datetime)
-        y = self.data_subset[idx_subset+1 : idx_subset+1 + self.pred_length,
-                             self.target_index]
+        y = self.data_subset[_range_future, self.target_index]
 
         # Temperatures
-        T = self.temperatures_subset[idx_subset+1 : idx_subset+1+self.pred_length]
+        T = self.temperatures_subset[_range_future]
 
         # origin = self.forecast_origins[idx_days]
         # print(f"Type: {type(origin)}, Value: {origin}")
@@ -237,6 +238,7 @@ def make_X_and_y(array, dates, temperatures,
     train_dataset_scaled= build_day_ahead(train_scaled,train_dates,train_Tavg_degC)
     valid_dataset_scaled= build_day_ahead(valid_scaled,valid_dates,valid_Tavg_degC)
     test_dataset_scaled = build_day_ahead(test_scaled, test_dates, test_Tavg_degC)
+    # complete_dataset_scaled=build_day_ahead(df_scaled, dates, temperatures)
 
     # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
     #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
@@ -284,9 +286,13 @@ def make_X_and_y(array, dates, temperatures,
                         idx_test,  X_test_GW,  y_test_GW,
                         test_dates,  test_Tavg_degC, feature_cols,
                         loader=test_loader,  dataset_scaled=test_dataset_scaled)
+    complete=containers.DataSplit("complete",  "all data",
+                        idx_all,  X_GW,  y_GW,
+                        dates,  temperatures, feature_cols,
+                        loader=None,  dataset_scaled=None)
 
     data = containers.DatasetBundle(
-            train, valid, test,
+            train, valid, test, complete=complete,
             scaler_y=scaler_y, X=X_GW, y=y_GW,
             minutes_per_step=minutes_per_step,
             num_steps_per_day = int(round(24*60/minutes_per_step)),

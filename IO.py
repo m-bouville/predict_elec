@@ -123,12 +123,15 @@ def load_temperature(path, weights,
         return (
             df.pivot(index="date", columns="Région", values=col)
               .sort_index()
+              .drop(columns=['corse'])
+                  # Corsica is not in the consumption data:
+                  #     electrically, it is Italian
         )
 
     df = df.reset_index()
-    Tavg = _pivot("Tavg_degC").drop(columns=['corse'])  # Corsica is an outlier
-    Tmin = _pivot("Tmin_degC").drop(columns=['corse'])  #   warm and small
-    Tmax = _pivot("Tmax_degC").drop(columns=['corse'])
+    Tavg = _pivot("Tavg_degC")
+    Tmin = _pivot("Tmin_degC")
+    Tmax = _pivot("Tmax_degC")
 
     # Tavg['num_NAs'] = Tavg.isna().sum(axis=1)
     # print("Tavg\n", Tavg[Tavg['num_NAs'] > 0].head(10))

@@ -20,7 +20,7 @@ import pandas as pd
 
 
 import MC_search, Bayes_search, containers, architecture, \
-    utils, baselines, IO, plots
+    utils, baselines, IO, plots, plot_statistics
 
 
 # system dimensions
@@ -361,17 +361,6 @@ def run_model_once(
         #    but fewer columns overall (some features were removed by lasso)
 
 
-    # Create splits
-    data, X_test_scaled = normalize_features(
-        df, target_col, feature_cols, minutes_per_step, dates, Tavg_full,
-        train_split, n_valid, test_months,
-        NNTQ_parameters['input_length'],
-        NNTQ_parameters['pred_length'],
-        NNTQ_parameters['features_in_future'],
-        NNTQ_parameters['batch_size'],
-        forecast_hour,
-        verbose)
-
     valid_length = NNTQ_parameters['valid_length']
 
 
@@ -404,6 +393,17 @@ def run_model_once(
 
     # ... or compute
     else:
+        # Create splits
+        data, X_test_scaled = normalize_features(
+            df, target_col, feature_cols, minutes_per_step, dates, Tavg_full,
+            train_split, n_valid, test_months,
+            NNTQ_parameters['input_length'],
+            NNTQ_parameters['pred_length'],
+            NNTQ_parameters['features_in_future'],
+            NNTQ_parameters['batch_size'],
+            forecast_hour,
+            verbose)
+
         # Create model
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
                                           len_train_data= len(data.train),
@@ -475,7 +475,7 @@ def run_model_once(
 
         # plots.quantiles(
         #     data.test.true_GW,
-        #     data.test.dict_preds_NN,
+        #     data.test.dict_preds_NNTQ,
         #     q_low = "q10",
         #     q_med = "q50",
         #     q_high= "q90",
@@ -483,6 +483,33 @@ def run_model_once(
         #     title = "Electricity consumption forecast (NN quantiles), test",
         #     dates = data.test.dates[-(8*num_steps_per_day):]
         # )
+
+
+
+    plot_statistics.thermosensitivity_per_time_of_day(
+         data_split = data.complete,
+         thresholds_degC = [('<=', 10), ('<=', 2), ('>=', 23)],
+         ylim = [0, 2.5],
+         num_steps_per_day=num_steps_per_day
+    )
+
+    plot_statistics.thermosensitivity_per_temperature(
+         data_split = data.complete,
+         thresholds_degC= np.arange(-1., 26.5, step=0.1),
+         # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
+         direction = '==',  # ['<=', '>='],
+         num_steps_per_day=num_steps_per_day
+    )
+
+    plot_statistics.thermosensitivity_per_temperature(
+         data_split = data.train,
+         thresholds_degC= np.arange(-1., 26.5, step=0.1),
+         # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
+         direction = '==',  # ['<=', '>='],
+         num_steps_per_day=num_steps_per_day
+    )
+
+
 
 
     # final cleanup to free pinned memory and intermediate arrays
@@ -707,7 +734,7 @@ def loss_NNTQ(
         max(0,  _bias_mean) * 1.  +
         max(0, -_bias_mean) * 0.1
     )
-    _quantile_delta_coverage['bias']= _bias_penalty
+    _quantile_delta_coverage['bias']= float(_bias_penalty)
 
     # two layers of weights
     _list_weighted_loss_coverage = [abs(gap) * quantile_weights[q]
