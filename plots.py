@@ -144,10 +144,10 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
 # Individual plots
 # --------------------------------------------------------
 
-def curves( true_series        : pd.Series,
-            dict_pred_series   : Dict[str, pd.Series],
-            dict_baseline_series:Dict[str, pd.Series],
-            dict_meta_series   : Dict[str, pd.Series],
+def curves( true_series        : Optional[pd.Series],
+            dict_pred_series   : Optional[Dict[str, pd.Series]],
+            dict_baseline_series:Optional[Dict[str, pd.Series]],
+            dict_meta_series   : Optional[Dict[str, pd.Series]],
             xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
             ylim: [float, float] or None = None,
             date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
@@ -155,70 +155,68 @@ def curves( true_series        : pd.Series,
             groupby:        Optional[str] = None) -> None:
 
 
-    # preparation: range and/or SME
-    _true_series    = _apply_range(_apply_groupby(_apply_moving_average(
-        true_series,    moving_average), groupby), date_range)
-
-    _dict_baseline_series = {}
-    for name, series in dict_baseline_series.items():
-        s = _apply_moving_average(series, moving_average)
-        s = _apply_range  (s, date_range)
-        s = _apply_groupby(s, groupby)
-        _dict_baseline_series[name] = s
-
-    _dict_meta_series = {}
-    for name, series in dict_meta_series.items():
-        s = _apply_moving_average(series, moving_average)
-        s = _apply_range  (s, date_range)
-        s = _apply_groupby(s, groupby)
-        _dict_meta_series[name] = s
-
-    _dict_pred_series = {}
-    for quantile, series in dict_pred_series.items():
-        s = _apply_moving_average(series, moving_average)
-        s = _apply_range  (s, date_range)
-        s = _apply_groupby(s, groupby)
-        _dict_pred_series[quantile] = s
-
-
     plt.figure(figsize=(10,6))
 
     # true value
-    if _true_series is not None:
+    if true_series is not None:
+        _true_series  = _apply_range(_apply_groupby(_apply_moving_average(
+            true_series,  moving_average), groupby), date_range)
         plt.plot(_true_series.index, _true_series.values,
                  label="actual", color=_color_others['true'])
 
 
-    # get median and/or ribbon
-    if len(_dict_pred_series) == 1 or 'q50' in _dict_pred_series.keys():
-        _median_series = _dict_pred_series.pop('q50')
-        plt.plot(_median_series.index, _median_series.values,
-                 color=_color_others['NNTQ'],  alpha=0.7,  label="NNTQ (median)")
+    # NNTQ
+    if dict_pred_series is not None:
+        _dict_pred_series = {}
+        for quantile, series in dict_pred_series.items():
+            s = _apply_moving_average(series, moving_average)
+            s = _apply_range  (s, date_range)
+            s = _apply_groupby(s, groupby)
+            _dict_pred_series[quantile] = s
 
-    _list_pred_series= list(_dict_pred_series.values())
-    _quantiles       = list(_dict_pred_series.keys())
-    if len(_list_pred_series) == 2:  # assume symmetric quantiles (e.g. q10 and q90)
-        plt.fill_between(
-            _list_pred_series[0].index,
-            _list_pred_series[0],
-            _list_pred_series[1],
-            color = _color_others['NNTQ'],
-            alpha = 0.2,
-            label = f"NNTQ {_quantiles[0]}–{_quantiles[1]}"
-        )
-    # for quantile, series in _dict_pred_series.items():
-    #     plt.plot(series.index, series.values,
-    #              color="red",  alpha=0.7,  label=f"NNTQ ({quantile})")
+        # get median and/or ribbon
+        if len(_dict_pred_series) == 1 or 'q50' in _dict_pred_series.keys():
+            _median_series = _dict_pred_series.pop('q50')
+            plt.plot(_median_series.index, _median_series.values,
+                     color=_color_others['NNTQ'],  alpha=0.7,  label="NNTQ (median)")
+
+        _list_pred_series= list(_dict_pred_series.values())
+        _quantiles       = list(_dict_pred_series.keys())
+        if len(_list_pred_series) == 2:  # assume symmetric quantiles (e.g. q10 and q90)
+            plt.fill_between(
+                _list_pred_series[0].index,
+                _list_pred_series[0],
+                _list_pred_series[1],
+                color = _color_others['NNTQ'],
+                alpha = 0.2,
+                label = f"NNTQ {_quantiles[0]}–{_quantiles[1]}"
+            )
+        # for quantile, series in _dict_pred_series.items():
+        #     plt.plot(series.index, series.values,
+        #              color="red",  alpha=0.7,  label=f"NNTQ ({quantile})")
+
 
     # baselines
-    for name, series in _dict_baseline_series.items():
-        plt.plot(series.index, series.values,
-                 color=_color_baseline[name], alpha=0.7, label=name)
+    if dict_baseline_series is not None:
+        for name, series in dict_baseline_series.items():
+            s = _apply_moving_average(series, moving_average)
+            s = _apply_range  (s, date_range)
+            s = _apply_groupby(s, groupby)
+
+            plt.plot(s.index, s.values,
+                     color=_color_baseline[name], alpha=0.7, label=name)
+
 
     # metamodels
-    for name, series in _dict_meta_series.items():
-        plt.plot(series.index, series.values,
-                 color=_color_meta    [name], alpha=0.7, label=f"meta {name}")
+    if dict_meta_series is not None:
+        for name, series in dict_meta_series.items():
+            s = _apply_moving_average(series, moving_average)
+            s = _apply_range  (s, date_range)
+            s = _apply_groupby(s, groupby)
+
+            plt.plot(s.index, s.values,
+                     color=_color_meta    [name], alpha=0.7, label=f"meta {name}")
+
 
     if ylim   is not None:  plt.ylim  (ylim)
     if xlabel is not None:  plt.xlabel(xlabel)
@@ -234,16 +232,20 @@ def curves( true_series        : pd.Series,
 
 
 
-def scatter(
-         true_series        : pd.Series,
-         dict_pred_series   : Dict[str, pd.Series],
-         dict_baseline_series:Dict[str, pd.Series],
-         dict_meta_series   : Dict[str, pd.Series],
-         x_axis_series      : pd.Series,
-         resample:       Optional[str] = None,
-         xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
-         xlim: [float, float] or None = None, ylim: [float, float] or None = None,
-         alpha: Optional[float] = 1.) -> None:
+def scatter(true_series        : Optional[pd.Series],
+            dict_pred_series   : Optional[Dict[str, pd.Series]],
+            dict_baseline_series:Optional[Dict[str, pd.Series]],
+            dict_meta_series   : Optional[Dict[str, pd.Series]],
+            x_axis_series      : pd.Series,
+            resample:       Optional[str] = None,
+            xlabel: str = "date", ylabel: str = "consumption [GW]", title=None,
+            xlim: [float, float] or None = None, ylim: [float, float] or None = None,
+            alpha: Optional[float] = 1.) -> None:
+
+    # convert None to empty dict (compatible with normal syntax)
+    if dict_pred_series     is None:  dict_pred_series    = dict()
+    if dict_baseline_series is None:  dict_baseline_series= dict()
+    if dict_meta_series     is None:  dict_meta_series    = dict()
 
     # resample
     if resample is not None:
@@ -442,107 +444,6 @@ def diagnostics(name:                str,
                 xlim=[15, 30], ylim=[-4, 6], resample='D', alpha=0.3,
                 xlabel="(summer) average temperature [°C]",
                 ylabel=_ylabel_residual,  title=_title)
-
-
-
-
-def quantiles(
-    true_series: pd.Series,
-    pred_quantiles: Dict[str, pd.Series],
-    *,
-    q_low:  str = "q10",
-    q_med:  str = "q50",
-    q_high: str = "q90",
-    baseline_series: Optional[Dict[str, pd.Series]] = None,
-    title:  str = "Forecast with uncertainty",
-    ylabel: str = "consumption [GW]",
-    dates: Optional[pd.DatetimeIndex] = None,
-    figsize=(10, 6),
-) -> None:
-    """
-    Plot actual series, median forecast, and quantile uncertainty band.
-
-    Parameters
-    ----------
-    true_series:
-        Ground truth time series.
-    pred_quantiles:
-        Dict like {"q10": Series, "q50": Series, "q90": Series, ...}
-        All series must share the same datetime index.
-    q_low, q_med, q_high:
-        Keys in pred_quantiles used for the fan and median.
-    baseline_series:
-        Optional dict of baseline Series (e.g. {'RF': Series}).
-    """
-
-    # ------------------------
-    # Align indices safely
-    # ------------------------
-    idx = true_series.index
-    idx = idx.intersection(pred_quantiles[q_med].index)
-
-    if dates is not None:
-        idx = idx.intersection(dates)
-    if q_low in pred_quantiles:
-        idx = idx.intersection(pred_quantiles[q_low].index)
-    if q_high in pred_quantiles:
-        idx = idx.intersection(pred_quantiles[q_high].index)
-
-    true = true_series.loc[idx]
-    qmed = pred_quantiles[q_med] .loc[idx]
-
-    qlo  = pred_quantiles[q_low] .loc[idx] if q_low  in pred_quantiles else None
-    qhi  = pred_quantiles[q_high].loc[idx] if q_high in pred_quantiles else None
-
-    # ------------------------
-    # Plot
-    # ------------------------
-    fig, ax = plt.subplots(figsize=figsize)
-
-    ax.plot(
-        true,
-        color="black",
-        linewidth=1.5,
-        label="actual"
-    )
-
-    ax.plot(
-        qmed,
-        color="red",
-        linewidth=1.5,
-        label=f"NN median ({q_med})"
-    )
-
-    if qlo is not None and qhi is not None:
-        ax.fill_between(
-            idx,
-            qlo,
-            qhi,
-            color="red",
-            alpha=0.20,
-            label=f"NN {q_low}–{q_high}"
-        )
-
-    # ------------------------
-    # Optional baselines
-    # ------------------------
-    if baseline_series is not None:
-        for name, series in baseline_series.items():
-            common = idx.intersection(series.index)
-            ax.plot(
-                series.loc[common],
-                linewidth=1.2,
-                label=name
-            )
-
-    ax.set_title(title)
-    ax.set_ylabel(ylabel)
-    ax.legend()
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-
-    plt.show()
 
 
 def metrics(df_metrics: pd.DataFrame,
