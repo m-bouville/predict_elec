@@ -99,9 +99,42 @@ def load_weights(path, verbose: int = 0) -> pd.Series:
 #   December 12, 2025 3:00 AM (metadata)
 #   December  2, 2025 3:01 AM (data)
 
-def load_temperature(path, weights,
-                     # noise_std: float or Tuple[float] = 0.,# realistic forecast error
-                     verbose: int = 0):
+def load_temperature(
+        path, weights,
+        clusters = {
+            "NE": ['Hauts-de-France', 'Grand Est', 'Bourgogne-Franche-Comté',
+                   'Auvergne-Rhône-Alpes'],
+            "NW": ['Normandie', 'Bretagne', 'Pays de la Loire'],
+            "IdF":['Île-de-France', 'Centre-Val de Loire'],
+            "S":  ['Nouvelle-Aquitaine', 'Occitanie', 'Provence-Alpes-Côte d\'Azur']
+           },
+        # noise_std: float or Tuple[float] = 0.,# realistic forecast error
+        verbose: int = 0):
+
+    _clusters = {k: [_normalize_name(v) for v in l] for (k, l) in clusters.items()}
+
+
+    # 4. Weighted aggregation helpers
+    def weighted_quantile(values, weights, q):
+        sorter = np.argsort(values)
+        values = values [sorter]
+        weights= weights[sorter]
+        cw     = np.cumsum(weights)
+        return np.interp(q * cw[-1], cw, values)
+
+    def weighted_mean(df, weights=weights):
+        is_good = df.notna().all(axis=1)
+        out     = (df * weights).sum(axis=1)
+        out[~is_good] = np.nan
+        return out.round(2)
+
+    def weighted_q(df, q):
+        return df.apply(
+            lambda row: weighted_quantile(row.values, weights_aligned.values, q),
+            axis=1
+        ).round(2)
+
+
     # temperature data
     df      = pd.read_csv(path, sep=';')
     if 'Date' not in df.columns:
@@ -132,7 +165,30 @@ def load_temperature(path, weights,
     Tavg = _pivot("Tavg_degC")
     Tmin = _pivot("Tmin_degC")
     Tmax = _pivot("Tmax_degC")
+    # print(Tavg)
 
+
+    out = pd.DataFrame(index=Tavg.index)
+    out["Tavg_degC"] = weighted_mean(Tavg, weights)
+
+
+    # weighted averages by geographic cluster
+    _df = pd.DataFrame()
+    for (_cluster, _list) in _clusters.items():
+        _df[_cluster] = weighted_mean(Tavg[_list], weights[_list])
+    Tavg = _df
+
+    _df = pd.DataFrame()
+    for (_cluster, _list) in _clusters.items():
+        _df[_cluster] = weighted_mean(Tmin[_list], weights[_list])
+    Tmin = _df
+
+    _df = pd.DataFrame()
+    for (_cluster, _list) in _clusters.items():
+        _df[_cluster] = weighted_mean(Tmax[_list], weights[_list])
+    Tmax = _df
+
+    # print(Tavg)
     # Tavg['num_NAs'] = Tavg.isna().sum(axis=1)
     # print("Tavg\n", Tavg[Tavg['num_NAs'] > 0].head(10))
     # Tmax['num_NAs'] = Tmax.isna().sum(axis=1)
@@ -147,77 +203,60 @@ def load_temperature(path, weights,
         raise ValueError(f"Missing weights for regions: {missing}")
 
 
-    # 4. Weighted aggregation helpers
-    def weighted_quantile(values, weights, q):
-        sorter = np.argsort(values)
-        values = values [sorter]
-        weights= weights[sorter]
-        cw     = np.cumsum(weights)
-        return np.interp(q * cw[-1], cw, values)
-
-    def weighted_mean(df, weights=weights):
-        is_good = df.notna().all(axis=1)
-        out     = (df * weights).sum(axis=1)
-        out[~is_good] = np.nan
-        return out.round(2)
-
-    def weighted_q(df, q):
-        return df.apply(
-            lambda row: weighted_quantile(row.values, weights_aligned.values, q),
-            axis=1
-        ).round(2)
-
-
     # 5. Build output features
-    out = pd.DataFrame(index=Tavg.index)
 
-    # Averages
-    out["Tavg_degC"] = weighted_mean(Tavg)
-    out["Tmin_degC"] = weighted_mean(Tmin)
-    out["Tmax_degC"] = weighted_mean(Tmax)
+    for _cluster in _clusters.keys():
+        # Averages
+        out[f"Tavg_{_cluster}_degC"] = Tavg[_cluster]
+        out[f"Tmin_{_cluster}_degC"] = Tmin[_cluster]
+        out[f"Tmax_{_cluster}_degC"] = Tmax[_cluster]
 
-    # Cold / hot tails
-    quantile_pc: int = 25
-    out['Tavg_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tavg,  quantile_pc/100.)
-    out['Tmin_q'+str(quantile_pc)   + '_degC'] = weighted_q(Tmin,  quantile_pc/100.)
-    out['Tmax_q'+str(100-quantile_pc)+'_degC'] = weighted_q(Tmax,1-quantile_pc/100.)
+        # # Cold / hot tails
+        # quantile_pc: int = 25
+        # out[f'Tavg_{_cluster}_q{quantile_pc}_degC'] = \
+        #         weighted_q(Tavg,  quantile_pc/100.)
+        # out[f'Tmin_{_cluster}_q{quantile_pc}_degC'] = \
+        #         weighted_q(Tmin,  quantile_pc/100.)
+        # out[f'Tmax_{_cluster}_q{quantile_pc}_degC'] = \
+        #         weighted_q(Tmax,1-quantile_pc/100.)
 
-    # Regional spread (heterogeneity)
-    out["T_spread_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
+        # Regional spread (heterogeneity)
+        out[f"T_spread_{_cluster}_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
 
 
-    # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 2 °C
-    # air-conditioning days: T_avg >= 22 °C
-    for (T, name_T) in zip([Tavg, Tmin, Tmax],  ['avg', 'min', 'max']):
-        for (Tref_degC, direction) in zip([15, 3, 22], ['low', 'low', 'high']):
-            if direction == 'low':  # heating
-                Tsat = T.clip(upper=Tref_degC)
-                _direction_str = "inf"
-            else:  # air-conditioning
-                Tsat = T.clip(lower=Tref_degC)
-                _direction_str = "sup"
+        # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 3 °C
+        # air-conditioning days: T_avg >= 22 °C
+        for (T, name_T) in zip([Tavg, Tmin, Tmax],  ['avg', 'min', 'max']):
+            for (Tref_degC, direction) in zip([15, 3, 22], ['low', 'low', 'high']):
+                if direction == 'low':  # heating
+                    Tsat = T[_cluster].clip(upper=Tref_degC)
+                    _direction_str = "inf"
+                else:  # air-conditioning
+                    Tsat = T[_cluster].clip(lower=Tref_degC)
+                    _direction_str = "sup"
 
-            name_Tsat = 'T'+name_T+'_'+_direction_str+'_' + str(Tref_degC) + 'degC'
-            out[name_Tsat] = weighted_mean(Tsat)
+                name_Tsat = f'T{name_T}_{_cluster}_{_direction_str}_{Tref_degC}degC'
+                out[name_Tsat] = Tsat
 
-            # fraction of the population heating/cooling
-            _frac_avg = (Tsat < Tref_degC)\
-                .astype(int).mul(weights, axis=1).sum(axis=1)
-            out['frac_'+name_Tsat]      = _frac_avg
+                # # fraction of the population heating/cooling
+                # _frac_avg = (Tsat < Tref_degC)\
+                #     .astype(int).mul(weights, axis=1).sum(axis=1)
+                # out['frac_'+name_Tsat]      = _frac_avg
 
-            for duration_days in ([3, 10] if Tref_degC <= 15 else [10]):
-                Tsat_SMA = Tsat.rolling(duration_days,
+                if name_T == 'avg':
+                    for duration_days in ([3, 10] if Tref_degC <= 15 else [10]):
+                        Tsat_SMA = Tsat.rolling(duration_days,
                                         min_periods=int(duration_days*.8)).mean()
-                name_Tsat_SMA = name_Tsat + '_SMA_' + str(duration_days)+'days'
+                        name_Tsat_SMA = f'{name_Tsat}_SMA_{duration_days}days'
 
-                out[name_Tsat_SMA]= weighted_mean(Tsat_SMA)
-                out['frac_'+name_Tsat_SMA]= weighted_mean(Tsat_SMA).\
-                    rolling(duration_days, min_periods=int(duration_days*.8)).mean()
+                        out[name_Tsat_SMA] = Tsat_SMA
+                        # out['frac_'+name_Tsat_SMA]= weighted_mean(Tsat_SMA).\
+                        #  rolling(duration_days, min_periods=int(duration_days*.8)).mean()
 
 
 
-    # drop temperatures that turn out to be useless in LR and RF
-    # out.drop(columns=['Tavg_sat2_degC', 'Tavg_sat22_degC'], inplace=True)
+        # drop temperatures that turn out to be useless in LR and RF
+        # out.drop(columns=['Tavg_sat2_degC', 'Tavg_sat22_degC'], inplace=True)
 
 
     # para-dates
@@ -239,6 +278,8 @@ def load_temperature(path, weights,
                     .drop(columns=['year','month']),
                   xlabel="date of year", ylabel="temperature (°C)",
                   title ="seasonal temperature")
+
+    # print(list(out.columns))
 
     return out
 
@@ -482,11 +523,12 @@ def _normalize_name(s: str) -> str:
     return (
         s.lower()
          .replace("’", "'")
+         .replace("à", "a")
          .replace("é", "e")
          .replace("è", "e")
          .replace("ê", "e")
          .replace("ë", "e")
-         .replace("à", "a")
+         .replace("î", "i")
          .replace("ô", "o")
          .strip()
     )
