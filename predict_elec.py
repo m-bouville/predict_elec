@@ -3,11 +3,11 @@
 # import numpy  as np
 
 
-import run
+import constants, run
     # containers, architecture, baselines, IO, plots, losses, metamodel,
     # MC_search, Bayes_search,  utils
 
-from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
+from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
            VALIDATE_EVERY, DISPLAY_EVERY, PLOT_CONV_EVERY,
            DICT_INPUT_CSV_FNAMES, FORECAST_HOUR, MINUTES_PER_STEP,
            BASELINES_PARAMETERS, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS
@@ -33,14 +33,19 @@ from   constants import (RUN_FAST, SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    mode = 'once'
+    RUN_FAST     = True         # True: smaller system: runs faster, for debugging
+
+    MODE = 'once'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
+    if RUN_FAST:
+        (BASELINE_PARAMS_FAST, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
+            constants.fast_parameters(NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS)
 
 
-    if mode in ['once']:
+    if MODE in ['once']:
         num_runs =  1
-        VERBOSE: int = 0  # 2 if RUN_FAST else 1
+        VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = False  # VERBOSE >= 3
     else:
         num_runs = 10
@@ -48,13 +53,13 @@ if __name__ == "__main__":
         VERBOSE: int = 0
 
 
-    if 'Bayes' in mode:
+    if 'Bayes' in MODE:
         assert not RUN_FAST, "fast parameters are outside the Bayesian distributions"
 
 
 
     run.run_model(
-        mode                = mode,
+        mode                = MODE,
         num_runs            = num_runs,
 
         # configuration bundles

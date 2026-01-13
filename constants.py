@@ -1,9 +1,11 @@
-__all__ = ['RUN_FAST', 'SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
+__all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME',
            'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
            'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS']
 
+
+from   typing import Dict, Any  # Tuple, List, Sequence  #, Optional
 
 import  torch
 
@@ -21,8 +23,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ============================================================
 # 1. CONFIGURATION CONSTANTS
 # ============================================================
-
-RUN_FAST     = False         # True: smaller system: runs faster, for debugging
 
 SEED         =   0              # For reproducibility
 
@@ -45,14 +45,24 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
+    'epochs'           :  40,                  # Number of training epochs
     'batch_size'       :  32,                   # Training batch size
 
+    # architecture size
+    'model_dim'        :301,                # Transformer embedding dimension
+    'num_layers'        : 2,               # Number of transformer encoder layers
+    'num_heads'         : 7,                # Number of attention heads
+    'ffn_size'          : 3,                # expansion factor
+    'num_geo_blocks'   :  5,
+
     # optimizer
-    'learning_rate'    :  0.011,      # Optimizer learning rate
+    'learning_rate'    :  0.011,            # Optimizer learning rate
     'weight_decay'     : 11.25e-9,
     'dropout'          :  0.24,
+    'warmup_steps'     :2500,
 
     # early stopping
+    'patience'         :  7,
     'min_delta'        :  0.022,
 
     # PatchEmbedding
@@ -79,27 +89,6 @@ NNTQ_PARAMETERS: dict = {
     'threshold_cold_degC':  5.,
     'lambda_cold'      :    0.13,
 }
-
-EPOCHS       = [  2,  40] # Number of training epochs
-MODEL_DIM    = [ 48, 301] # Transformer embedding dimension
-NUM_HEADS    = [  2,   7] # Number of attention heads
-FFN_SIZE     = [  4,   3] # expansion factor
-NUM_LAYERS   = [  1,   2] # Number of transformer encoder layers
-NUM_GEO_BLOCKS=[  2,   5]
-WARMUP_STEPS =[4000,2500]
-PATIENCE     = [  5,   7]  # DEBUG: patience > nb epochs
-
-# Pick correct value from list of possibilites
-IDX_RUN_FAST = {True: 0, False: 1}[RUN_FAST]
-
-NNTQ_PARAMETERS['epochs']       = EPOCHS        [IDX_RUN_FAST]
-NNTQ_PARAMETERS['model_dim']    = MODEL_DIM     [IDX_RUN_FAST]
-NNTQ_PARAMETERS['warmup_steps'] = WARMUP_STEPS  [IDX_RUN_FAST]
-NNTQ_PARAMETERS['patience']     = PATIENCE      [IDX_RUN_FAST]
-NNTQ_PARAMETERS['num_layers']   = NUM_LAYERS    [IDX_RUN_FAST]
-NNTQ_PARAMETERS['num_heads']    = NUM_HEADS     [IDX_RUN_FAST]
-NNTQ_PARAMETERS['ffn_size']     = FFN_SIZE      [IDX_RUN_FAST]
-NNTQ_PARAMETERS['num_geo_blocks']=NUM_GEO_BLOCKS[IDX_RUN_FAST]
 
 NNTQ_PARAMETERS['num_patches'] = \
     (NNTQ_PARAMETERS['input_length'] + NNTQ_PARAMETERS['features_in_future'] * \
@@ -149,6 +138,8 @@ METAMODEL_NN_PARAMETERS: dict = {
     'batch_size'       :  256,
     'num_cells'        : [40, 20],
 
+    'epochs'           :   12,
+
     # optimizer
     'learning_rate'    :  4e-4,
     'weight_decay'     :  6e-6,
@@ -161,54 +152,18 @@ METAMODEL_NN_PARAMETERS: dict = {
     'device'           : DEVICE,
     }
 
-META_EPOCHS = [ 1, 12]
-METAMODEL_NN_PARAMETERS['epochs'] = META_EPOCHS[IDX_RUN_FAST]
-
 
 
 DICT_INPUT_CSV_FNAMES = {
-    "consumption": "data/consommation-quotidienne-brute.csv",
-    "temperature": 'data/temperature-quotidienne-regionale.csv',
-    "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
+    "consumption":          "data/consommation-quotidienne-brute.csv",
+    "consumption_by_region":'data/consommation-quotidienne-brute-regionale.csv',
+    "temperature":          'data/temperature-quotidienne-regionale.csv',
+    "solar":                'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
 }
 CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
-
-baseline_params_fast = {
-    'lasso': {"alpha": 0.04, 'max_iter': 2_000},
-    # "oracle": {1},  # (content is just a place-holder)
-    'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
-    'RF': {
-        "type":            "rf",
-        "n_estimators":     50,     # was 300 -> fewer trees
-        "max_depth":         6,     # shallower trees
-        "min_samples_leaf": 10,     # more regularization
-        "min_samples_split": 2,
-        "max_features":   "sqrt",
-        "random_state":      0,
-        "n_jobs":            4
-    },
-    'LGBM': {
-        "type":     "lgbm",
-        "objective": "regression",
-        "boosting_type": "gbdt",
-        "num_leaves": 16-1,           # Fewer leaves for simplicity
-        "max_depth": 4,               # Shallower trees
-        "learning_rate": 0.1,         # Learning rate
-        "n_estimators": 50,           # Fewer trees for faster training
-        "min_child_samples": 20,      # Minimum samples per leaf
-        "subsample": 0.8,             # Fraction of samples used for training each tree
-        "colsample_bytree": 0.8,      # Fraction of features used for training each tree
-        "reg_alpha": 0.1,             # L1 regularization
-        "reg_lambda": 0.1,            # L2 regularization
-        "random_state": 0,            # Seed for reproducibility
-        "n_jobs": 4,                  # Number of parallel jobs
-        "verbose": -1                 # Suppress output
-    }
-}
-
-baseline_params_normal = {
+BASELINES_PARAMETERS = {
     'lasso': {"alpha": 0.00, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
@@ -240,8 +195,6 @@ baseline_params_normal = {
         "verbose":          -1        # Suppress output
     }
 }
-
-BASELINES_PARAMETERS = baseline_params_fast if RUN_FAST else baseline_params_normal
 
 
 
@@ -284,3 +237,55 @@ assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the media
     # the code assumes it is
 
 
+# ============================================================
+# Parameters to run faster
+# ============================================================
+
+def fast_parameters(nntq_parameters        : Dict[str, Any],
+                    metamodel_nn_parameters: Dict[str, Any]
+                ) -> [Dict[str, Dict[str, Any]], Dict[str, Any],  Dict[str, Any]]:
+    nntq_parameters     ['epochs'        ] =  2
+    nntq_parameters     ['model_dim'     ] = 48
+    nntq_parameters     ['num_layers'    ] =  1
+    nntq_parameters     ['num_heads'     ] =  2
+    nntq_parameters     ['ffn_size'      ] =  2
+    nntq_parameters     ['num_geo_blocks'] =  2
+
+    metamodel_nn_parameters['epochs'     ] =  1
+    metamodel_nn_parameters['num_cells'  ] =  [20, 10]
+
+    return (baseline_params_fast, nntq_parameters, metamodel_nn_parameters)
+
+
+baseline_params_fast = {
+    'lasso': {"alpha": 0.04, 'max_iter': 2_000},
+    # "oracle": {1},  # (content is just a place-holder)
+    'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
+    'RF': {
+        "type":            "rf",
+        "n_estimators":     50,     # was 300 -> fewer trees
+        "max_depth":         6,     # shallower trees
+        "min_samples_leaf": 10,     # more regularization
+        "min_samples_split": 2,
+        "max_features":   "sqrt",
+        "random_state":      0,
+        "n_jobs":            4
+    },
+    'LGBM': {
+        "type":     "lgbm",
+        "objective": "regression",
+        "boosting_type": "gbdt",
+        "num_leaves": 16-1,           # Fewer leaves for simplicity
+        "max_depth": 4,               # Shallower trees
+        "learning_rate": 0.1,         # Learning rate
+        "n_estimators": 50,           # Fewer trees for faster training
+        "min_child_samples": 20,      # Minimum samples per leaf
+        "subsample": 0.8,             # Fraction of samples used for training each tree
+        "colsample_bytree": 0.8,      # Fraction of features used for training each tree
+        "reg_alpha": 0.1,             # L1 regularization
+        "reg_lambda": 0.1,            # L2 regularization
+        "random_state": 0,            # Seed for reproducibility
+        "n_jobs": 4,                  # Number of parallel jobs
+        "verbose": -1                 # Suppress output
+    }
+}
