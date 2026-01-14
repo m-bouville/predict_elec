@@ -38,7 +38,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
         pred_length  : int,
         features_in_future:int,
         forecast_hour: int,
-        target_index : int
+
+        index_y_nation : int,
+        indices_Y_regions: List[int]
     ):
         """
         Parameters
@@ -53,18 +55,22 @@ class DayAheadDataset(torch.utils.data.Dataset):
             Number of future half-hours to predict
         forecast_hour : int
             Hour when forecast is made
-        target_index : int
+        index_y_nation : int
             Column index of target variable
         """
-        self.data_subset  = data_subset.astype(np.float32)
-        self.dates_subset = dates_subset
+        self.data_subset    = data_subset.astype(np.float32)
+        self.dates_subset   = dates_subset
         self.temperatures_subset=temperatures_subset
-        self.input_length = input_length
-        self.pred_length  = pred_length
+        self.input_length   = input_length
+        self.pred_length    = pred_length
         self.features_in_future=int(features_in_future)  # 0 or 1
-        self.future_length= self.features_in_future * self.pred_length
-        self.forecast_hour= forecast_hour
-        self.target_index = target_index
+        self.future_length  = self.features_in_future * self.pred_length
+        self.forecast_hour  = forecast_hour
+
+        self.index_y_nation = index_y_nation
+        self.indices_Y_regions= indices_Y_regions
+
+        print("self.index_y_nation:", self.index_y_nation)
 
         # Pre-compute valid forecast indices
         self.start_indices_subset= []
@@ -86,6 +92,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx_days_subset):
         """
+        subset_loader
+
         Returns
         -------
         X : torch.Tensor
@@ -104,10 +112,14 @@ class DayAheadDataset(torch.utils.data.Dataset):
         # Input: all features (=> excluding consumption) from past
         X = self.data_subset[idx_subset - self.input_length :
                              idx_subset + self.future_length]  # (L+H, F)
-        X = np.delete(X, self.target_index, axis=1)  # now a true X (w/o y)
+        X = np.delete(X, [self.index_y_nation] + self.indices_Y_regions, axis=1)
+            # now a true X (w/o y)
 
         # Target: only consumption, future values (excluding present datetime)
-        y = self.data_subset[_range_future, self.target_index]
+        # print(self.data_subset.shape)
+        # print("indices:", self.index_y_nation, self.indices_Y_regions)
+        y_nation = self.data_subset[_range_future, self.index_y_nation]
+        Y_regions= self.data_subset[_range_future][:, self.indices_Y_regions]  # (L+H, R)
 
         # Temperatures
         T = self.temperatures_subset[_range_future]
@@ -119,8 +131,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
         return (
             torch.tensor(X),
-            torch.tensor(y).unsqueeze(-1),  # (pred_length, 1)
-            torch.tensor(T).unsqueeze(-1),  # (pred_length, 1),
+            torch.tensor(Y_regions),
+            torch.tensor(y_nation).unsqueeze(-1),  # (pred_length, 1)
+            torch.tensor(T)       .unsqueeze(-1),  # (pred_length, 1),
             idx_subset,
             int(self.forecast_origins[idx_days_subset].timestamp())
                 # pd.Timestamp != batchable
@@ -131,12 +144,22 @@ class DayAheadDataset(torch.utils.data.Dataset):
 # 3. make_X_and_y
 # ============================================================
 
-def make_X_and_y(array, dates, temperatures,
-                 train_split, n_valid,
-                 feature_cols: List[str], target_col: str, minutes_per_step: int,
-                 input_length:int, pred_length:int, features_in_future:bool,
-                 batch_size:int, forecast_hour:int=12,
-                 verbose: int = 0):
+def make_X_and_y(array,
+                 dates,
+                 temperatures,
+                 train_split,
+                 n_valid,
+                 cols_features   : List[str],
+                 cols_Y_regions  : List[str],
+                 col_y_nation    : str,
+                 weights_regions : Dict[str, float],
+                 minutes_per_step: int,
+                 input_length    : int,
+                 pred_length     : int,
+                 features_in_future:bool,
+                 batch_size      : int,
+                 forecast_hour   : int=12,
+                 verbose         : int = 0):
 
     assert array.shape[0] == len(dates), \
         f"array.shape ({array.shape}) != len(dates) ({len(dates)})"
@@ -168,44 +191,58 @@ def make_X_and_y(array, dates, temperatures,
 
 
     # Map column names -> column indices in train_data
-    all_cols    = [target_col] + feature_cols
+    all_cols    = [col_y_nation] + cols_Y_regions + cols_features
     col_to_idx  = {col: i for i, col in enumerate(all_cols)}
 
-    feature_idx = [col_to_idx[c] for c in feature_cols]
-    target_idx  =  col_to_idx[target_col]
+    indices_features    = [col_to_idx[c] for c in cols_features]
+    indices_Y_regions= [col_to_idx[c] for c in cols_Y_regions]
+    index_y_nation   =  col_to_idx[col_y_nation]
+    print("index_y_nation:", index_y_nation)
 
     test_data   = array[idx_test]
-    X_test_GW   = test_data[:, feature_idx];  y_test_GW = test_data [:, target_idx]
+    X_test_GW   = test_data[:, indices_features]
+    y_nation_test_GW = test_data[:, [index_y_nation]]
+    Y_regions_test_GW= test_data[:, indices_Y_regions]
 
 
     # 1. Extract X and y using names
-    X_GW = array[:, feature_idx];  y_GW = array[:, target_idx]
+    X_GW         = array[:, indices_features]
+    y_nation_GW  = array[:, index_y_nation].squeeze()
+    Y_regions_GW = array[:, indices_Y_regions]
+
+    print("y_nation_GW.shape:", y_nation_GW.shape)
 
     # 2. Fit two different scalers (on training set)
-    scaler_x = StandardScaler()
-    scaler_y = StandardScaler()
+    scaler_X        = StandardScaler()
+    scaler_y_nation = StandardScaler()
+    scaler_Y_regions= StandardScaler()
 
     X_train_GW = X_GW[idx_train]
-    y_train_GW = y_GW[idx_train]
-    scaler_x.fit(X_train_GW)
-    scaler_y.fit(y_train_GW.reshape(-1, 1))
+    y_nation_train_GW = y_nation_GW [idx_train]
+    Y_regions_train_GW= Y_regions_GW[idx_train]
+
+    scaler_X        .fit(X_train_GW)
+    scaler_y_nation .fit(y_nation_train_GW.reshape(-1, 1))
+    scaler_Y_regions.fit(Y_regions_train_GW)
 
     X_valid_GW = X_GW[idx_valid]  # for return only
-    y_valid_GW = y_GW[idx_valid]  # for return only
+    y_nation_valid_GW  = y_nation_GW [idx_valid]  # for return only
+    Y_regions_valid_GW = Y_regions_GW[idx_valid]  # for return only
 
     # 3. Transform X and y separately
-    X_scaled = scaler_x.transform(X_GW)
-    y_scaled = scaler_y.transform(y_GW.reshape(-1, 1)).ravel()
+    X_scaled         = scaler_X        .transform(X_GW)
+    y_nation_scaled  = scaler_y_nation .transform(y_nation_GW.reshape(-1, 1)).ravel()
+    Y_regions_scaled = scaler_Y_regions.transform(Y_regions_GW)
 
-    df_scaled = np.column_stack([y_scaled, X_scaled])
+    df_scaled = np.column_stack([y_nation_scaled, Y_regions_scaled, X_scaled])
 
 
     # 5. SAFETY CHECKS
     # print("scaler_y.mean_.shape: ", scaler_y.mean_.shape)
     # print("scaler_y.scale_.shape:", scaler_y.scale_.shape)
 
-    assert scaler_y.mean_.shape[0] == 1, "scaler_y must be fitted on ONE target only"
-    assert df_scaled     .shape[1] == 1 + len(feature_cols), \
+    # assert scaler_y.mean_.shape[0]= 1,"scaler_y must be fitted on ONE target only"
+    assert df_scaled.shape[1] == 1 + len(cols_Y_regions) + len(cols_features), \
         "scaled feature count mismatch"
 
 
@@ -232,7 +269,8 @@ def make_X_and_y(array, dates, temperatures,
             pred_length  = pred_length,
             features_in_future=features_in_future,
             forecast_hour= forecast_hour,
-            target_index = target_idx
+            index_y_nation = index_y_nation,
+            indices_Y_regions= indices_Y_regions
         ) # X_list, y_list, origin_list, target_dates_list
 
     train_dataset_scaled= build_day_ahead(train_scaled,train_dates,train_Tavg_degC)
@@ -275,31 +313,33 @@ def make_X_and_y(array, dates, temperatures,
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
     train = containers.DataSplit("train", "training",
-                        idx_train, X_train_GW, y_train_GW,
-                        train_dates, train_Tavg_degC, feature_cols,
-                        loader=train_loader, dataset_scaled=train_dataset_scaled)
+                    idx_train, X_train_GW, y_nation_train_GW, Y_regions_train_GW,
+                    train_dates, train_Tavg_degC, cols_features,
+                    loader=train_loader, dataset_scaled=train_dataset_scaled)
     valid = containers.DataSplit("valid", "validation",
-                        idx_valid, X_valid_GW, y_valid_GW,
-                        valid_dates, valid_Tavg_degC, feature_cols,
-                        loader=valid_loader, dataset_scaled=valid_dataset_scaled)
+                    idx_valid, X_valid_GW, y_nation_valid_GW, Y_regions_valid_GW,
+                    valid_dates, valid_Tavg_degC, cols_features,
+                    loader=valid_loader, dataset_scaled=valid_dataset_scaled)
     test  = containers.DataSplit("test",  "testing",
-                        idx_test,  X_test_GW,  y_test_GW,
-                        test_dates,  test_Tavg_degC, feature_cols,
-                        loader=test_loader,  dataset_scaled=test_dataset_scaled)
+                    idx_test,  X_test_GW,  y_nation_test_GW,  Y_regions_valid_GW,
+                    test_dates,  test_Tavg_degC, cols_features,
+                    loader=test_loader,  dataset_scaled=test_dataset_scaled)
     complete=containers.DataSplit("complete",  "all data",
-                        idx_all,  X_GW,  y_GW,
-                        dates,  temperatures, feature_cols,
-                        loader=None,  dataset_scaled=None)
+                    idx_all,  X_GW,   y_nation_GW,  Y_regions_GW,
+                    dates,  temperatures, cols_features,
+                    loader=None,  dataset_scaled=None)
 
     data = containers.DatasetBundle(
             train, valid, test, complete=complete,
-            scaler_y=scaler_y, X=X_GW, y=y_GW,
+            scaler_y_nation=scaler_y_nation,
+            X=X_GW, y_nation=y_nation_GW, Y_regions=Y_regions_GW,
             minutes_per_step=minutes_per_step,
             num_steps_per_day = int(round(24*60/minutes_per_step)),
-            num_features = len(feature_cols), num_time_steps=array.shape[0]
+            num_features = len(cols_features), weights_regions = weights_regions,
+            num_time_steps=array.shape[0]
         )
 
-    return data, test_scaled[:, feature_idx]
+    return data, test_scaled[:, indices_features]
 
 
 
@@ -400,7 +440,7 @@ class TimeSeriesTransformer(nn.Module):
     def __init__(self, num_features:int, dim_model:int, num_heads:int, num_layers:int,
                  input_length:int, patch_length:int, stride:int, pred_length:int,
                  features_in_future: bool,
-                 dropout:float, ffn_mult:int, num_quantiles:int,
+                 dropout:float, ffn_mult:int, num_quantiles:int, num_regions:int,
                  num_geo_blocks, geo_block_ratio):
         super().__init__()
 
@@ -408,6 +448,7 @@ class TimeSeriesTransformer(nn.Module):
         self.dim_model      = dim_model
         self.pred_length    = pred_length
         self.num_quantiles  = num_quantiles
+        self.num_regions    = num_regions
 
         self.input_length   = input_length
         self.patch_length   = patch_length
@@ -418,10 +459,10 @@ class TimeSeriesTransformer(nn.Module):
             self.num_patches  = ((input_length+self.features_in_future*pred_length) \
                                  - patch_length) // stride + 1
 
-            total_covered = ((input_length-patch_length)//stride) * stride + patch_length
+            total_covered= ((input_length-patch_length)//stride) * stride + patch_length
             self.pad_length  = input_length - total_covered
 
-            self.patch_embed= PatchEmbedding(patch_length, stride, num_features, dim_model)
+            self.patch_embed= PatchEmbedding(patch_length,stride,num_features,dim_model)
             self.layers = nn.ModuleList([
                 TransformerEncoderLayerWithAttn(dim_model, num_heads, dropout, ffn_mult)
                 for _ in range(num_layers)
@@ -456,7 +497,7 @@ class TimeSeriesTransformer(nn.Module):
             self.fc_out = nn.Sequential(
                 nn.Linear(2 * dim_model, dim_model),
                 nn.GELU(),
-                nn.Linear(dim_model, pred_length * num_quantiles)
+                nn.Linear(dim_model, pred_length * (num_quantiles + num_regions))
             )
             # self.fc_out = nn.Linear(dim_model, pred_len)
 
@@ -513,8 +554,9 @@ class TimeSeriesTransformer(nn.Module):
         )
 
         z = self.fc_out(h_final)                 # (B, H*Q  )
-        z = z.view(z.shape[0], self.pred_length, self.num_quantiles) # (B, H, Q)
-        return z   # .unsqueeze(-1)
+        z = z.view(z.shape[0], self.pred_length,
+                   self.num_quantiles + self.num_regions) # (B, H, Q+R)
+        return (z[:, :, :self.num_quantiles], z[:, :, self.num_quantiles:])
 
 
 
@@ -680,10 +722,11 @@ def subset_evolution_torch(
                      'median':    torch.zeros(valid_length, device=device)}
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for (X_scaled, y_scaled, T_degC, _, origin_unix) in subset_loader:
-        X_scaled_dev = X_scaled.to(device)   # (B, L, F)
-        y_scaled_dev = y_scaled.to(device)   # (B, H, 1)
-        T_degC_dev   = T_degC  .to(device)   # (B, H, 1)
+    for (X_scaled, Y_regions_scaled, y_nation_scaled, T_degC, _, origin_unix) in subset_loader:
+        X_scaled_dev        = X_scaled.to(device)   # (B, L, F)
+        Y_regions_scaled_dev= Y_regions_scaled.to(device)   # (B, H, R)
+        y_nation_scaled_dev = y_nation_scaled .to(device)   # (B, H, 1)
+        T_degC_dev          = T_degC  .to(device)   # (B, H, R+1)
 
         # origins_dev = [pd.Timestamp(t, unit='s')
         #                for t in origin_unix.tolist()].to(device)
@@ -692,25 +735,32 @@ def subset_evolution_torch(
         # model_NN.optimizer).zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
-            pred_scaled_dev = model(X_scaled_dev)
+            (pred_nation_scaled_dev, pred_regions_scaled_dev) = model(X_scaled_dev)
 
             # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
 
             # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
             loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
-                pred_scaled_dev[:, -valid_length:, :],
-                y_scaled_dev   [:, -valid_length:, :], model_NN.quantiles,
+                pred_nation_scaled_dev[:, -valid_length:, :],
+                y_nation_scaled_dev   [:, -valid_length:, 0], model_NN.quantiles,
                 **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
                      'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
                      'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
                 Tavg_current=T_degC_dev[:, -valid_length:, :])
 
-        amp_scaler.scale(loss_quantile_scaled_h_batch.mean()).backward()# full precision
+            loss_region_scaled_h_batch = losses.regions_torch(
+                    pred_regions_scaled_dev[:, -valid_length:, :],     # (B, V, R)
+                    Y_regions_scaled_dev   [:, -valid_length:, :],     # (B, V, R)
+                    model_NN.lambda_regions
+                )
+            loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+
+        amp_scaler.scale(loss_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(model_NN.optimizer)
         amp_scaler.update()
 
-        loss_quantile_scaled_h += loss_quantile_scaled_h_batch
+        loss_quantile_scaled_h += loss_scaled_h_batch
         dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
                          for key in dict_losses_h}
 
@@ -757,35 +807,46 @@ def subset_evolution_numpy(
     # print("initial:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
     # main loop
-    for (X_scaled, y_scaled, T_degC, _, origin_unix) in subset_loader:
-        X_scaled_dev = X_scaled.to(device)
-        y_scaled_cpu = y_scaled[:, :, 0].cpu().numpy()      # (B, H)
-        T_degC_cpu   = T_degC  [:, :, 0].cpu().numpy()      # (B, H)
+    for (X_scaled, Y_regions_scaled, y_nation_scaled, T_degC, _, origin_unix) in subset_loader:
+        X_scaled_dev             = X_scaled.to(device)
+        Y_regions_scaled_cpu     = Y_regions_scaled[:, :, :].cpu().numpy() # (B, H, R)
+        y_median_nation_scaled_cpu=y_nation_scaled [:, :, 0].cpu().numpy() # (B, H)
+        T_degC_cpu               = T_degC          [:, :, 0].cpu().numpy() # (B, H)
 
         # origins_cpu = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()].cpu()
 
         # NN forward
-        pred_scaled_cpu = model(X_scaled_dev).cpu().numpy() # (B, H, Q)
+        (pred_nation_scaled_dev, pred_regions_scaled_dev) = model(X_scaled_dev)
+        pred_nation_scaled_cpu = pred_nation_scaled_dev .cpu().numpy() # (B, H, Q)
+        pred_regions_scaled_cpu= pred_regions_scaled_dev.cpu().numpy() # (B, H, R)
 
         # assert y_scaled_cpu.shape[1] == pred_scaled_cpu.shape[1] == pred_length
 
         # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
         # loss
         loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_numpy(
-            pred_scaled_cpu[:, -valid_length:],
-            y_scaled_cpu   [:, -valid_length:],
+            pred_nation_scaled_cpu    [:, -valid_length:],
+            y_median_nation_scaled_cpu[:, -valid_length:],
             **{_name: getattr(model_NN, _name) for _name in ['quantiles', \
                  'lambda_cross', 'lambda_coverage', 'lambda_deriv', \
                  'lambda_median', 'smoothing_cross',
                  'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
                 Tavg_current=T_degC_cpu[:, -valid_length:])
 
-        # print("batch:\n", loss_quantile_scaled_h_batch.round(2))
+        loss_region_scaled_h_batch = losses.regions_numpy(
+                pred_regions_scaled_cpu[:, -valid_length:, :],     # (B, V, R)
+                Y_regions_scaled_cpu   [:, -valid_length:, :],     # (B, V, R)
+                model_NN.lambda_regions
+            )
+        loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+
+
+        # print("batch:\n", loss_scaled_h_batch.round(2))
 
         # print("previous total:\n", pd.DataFrame(dict_losses_h).round(2).head())
         # print("batch:\n", pd.DataFrame(dict_losses_h_batch).round(2).head())
 
-        loss_quantile_scaled_h += loss_quantile_scaled_h_batch
+        loss_quantile_scaled_h += loss_scaled_h_batch
         dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
                          for key in dict_losses_h}
 

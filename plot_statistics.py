@@ -129,7 +129,7 @@ def thermosensitivity_per_time_of_day(
     for _threshold_degC in thresholds_degC:
         sensitivity_df, sensitivity_GW_per_K, num_days = \
             time_of_day_temp_sensitivity(
-                data_split.true_GW, data_split.dict_preds_NNTQ,
+                data_split.true_nation_GW, data_split.dict_preds_NNTQ,
                 data_split.dict_preds_ML, data_split.dict_preds_meta,
                 data_split.Tavg_degC.round(1), data_split.dates,
                 threshold_degC=_threshold_degC,
@@ -216,7 +216,7 @@ def thermosensitivity_per_temperature(
      ylim             : [float, float] = [-3, 3]
      )   -> None:
     sensitivity_df = threshold_temp_sensitivity(
-            data_split.true_GW, data_split.dict_preds_NNTQ,
+            data_split.true_nation_GW, data_split.dict_preds_NNTQ,
             data_split.dict_preds_ML, data_split.dict_preds_meta,
             data_split.Tavg_degC.round(1), data_split.dates,
             thresholds_degC=thresholds_degC, direction='==',   # _direction

@@ -7,7 +7,10 @@ __all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
 
 from   typing import Dict, Any  # Tuple, List, Sequence  #, Optional
 
-import  torch
+import torch
+
+
+# from   IO import normalize_name
 
 
 
@@ -88,6 +91,8 @@ NNTQ_PARAMETERS: dict = {
     'saturation_cold_degC':-6.5,
     'threshold_cold_degC':  5.,
     'lambda_cold'      :    0.13,
+
+    'lambda_regions'   :    0.1,  # TODO random
 }
 
 NNTQ_PARAMETERS['num_patches'] = \
@@ -235,6 +240,9 @@ assert all([_quantiles[i] + _quantiles[num_quantiles - i - 1] == 1
     "quantiles should be symmetric"    # otherwise: hard to interpret
 assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the median"
     # the code assumes it is
+
+
+
 
 
 # ============================================================

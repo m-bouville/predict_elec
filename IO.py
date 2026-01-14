@@ -6,13 +6,13 @@
 
 
 import os, sys
-from   typing import List, Tuple  # Dict  #, Optional
+from   typing import List, Tuple, Dict  #, Optional
 
 import numpy  as np
 import pandas as pd
 
 
-import architecture, plots
+import constants, architecture, plots
 
 
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
@@ -28,10 +28,9 @@ def load_consumption(path, verbose: int = 0):
     if 'Date - Heure' not in df.columns:
         raise RuntimeError(f"No datetime-like column found in {path}")
 
-    col = 'Date - Heure'
-    # col = df.columns[cols.index(key)]
-    df[col] = pd.to_datetime(df[col])
-    df = df.set_index(col).sort_index()
+    col_datetime = 'Date - Heure'  # given as UTC
+    df[col_datetime] = pd.to_datetime(df[col_datetime])
+    df = df.set_index(col_datetime).sort_index()
     df.index = df.index.tz_convert("UTC")
     df.index.name = "datetime"
 
@@ -71,9 +70,71 @@ def load_consumption(path, verbose: int = 0):
     return df
 
 
+# https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute-regionale/
+# depth of historical data: 2013 to date (M-1)
+# Last processing
+#    December  2, 2025 4:28 PM (metadata)
+#    December  2, 2025 4:28 PM (data)
+
+def load_consumption_by_region(path,
+                               verbose: int = 0) -> [pd.DataFrame, List[float]]:
+
+    df = pd.read_csv(path, sep=';')
+
+    if 'Date - Heure' not in df.columns:
+        raise RuntimeError(f"No datetime-like column found in {path}")
+
+    col_datetime = 'Date - Heure'  # given as local time
+    df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)
+    df = df.set_index(col_datetime).sort_index()
+    # df.index.name = "datetime"
+
+    df = df[['Région', 'Consommation brute électricité (MW) - RTE']]
+    df = df.rename(columns={
+        "Consommation brute électricité (MW) - RTE": 'consumption_GW'
+        })
+    df['consumption_GW'] = df['consumption_GW']/1000
+
+    # plots.data(df.resample('D').mean(),
+    #           xlabel="date", ylabel="consumption (MW)")
+
+    df['datetime'] = df.index
+    df = df.pivot_table(index="datetime", columns="Région", values='consumption_GW',
+                  aggfunc='mean').sort_index()
+    _names_regions = list(df.columns)
+    df.columns = ["consumption_" + SHORT_NAMES_REGIONS[normalize_name(r)] + \
+                  "_GW" for r in _names_regions]
+
+    df['year']     = df.index.year
+    df['month']    = df.index.month
+    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+        year=2000, month=d.month, day=d.day))
+    df['timeofday']= df.index.hour + df.index.minute/60
+
+
+    if verbose >= 3:
+        print(df.head())
+
+        plots.data(df.drop(columns=['year', 'month', 'timeofday'])\
+                    .resample('D').mean()\
+                    .groupby('dateofyear').mean().sort_index(),
+                  xlabel="date", ylabel="consumption (GW)")
+
+        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').mean()\
+                  .rename(columns={"consumption_GW": "winter"})
+        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').mean()\
+                  .rename(columns={"consumption_GW": "summer"})
+        plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
+                  .drop(columns=['year','month', 'dateofyear']),
+                  xlabel="time of day (UTC)", ylabel="consumption (GW)",
+                  title ="seasonal consumption")
+
+    return df, _names_regions
+
+
 # weights: https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
 #    latest update: November 10 2025
-def load_weights(path, verbose: int = 0) -> pd.Series:
+def load_weights(path, verbose: int = 0) -> Dict[str, float]:
     # weights (electricity consumption per region)
     df_weigths = pd.read_csv(path, sep=';')
     # print(df_weigths.columns)
@@ -81,17 +142,18 @@ def load_weights(path, verbose: int = 0) -> pd.Series:
             df_weigths
             .groupby("Région")["Consommation brute électricité (GWh) - RTE"]
             .mean()
+            .drop(index=['Corse'])
         )
     weights = df_weigths / df_weigths.sum()
 
-    weights.index = [_normalize_name(r) for r in weights.index]
+    weights.index = [SHORT_NAMES_REGIONS[normalize_name(r)] for r in weights.index]
 
     if not np.isclose(weights.sum(), 1.):
         raise ValueError(f"Temperature weights do not sum to 100% ({weights.sum()}%)")
 
     if verbose >= 2:  print(weights)
 
-    return weights
+    return weights.to_dict()
 
 
 # https://odre.opendatasoft.com/explore/dataset/temperature-quotidienne-regionale/
@@ -101,26 +163,17 @@ def load_weights(path, verbose: int = 0) -> pd.Series:
 
 def load_temperature(
         path, weights,
-        clusters = {
-            "NE": ['Hauts-de-France', 'Grand Est', 'Bourgogne-Franche-Comté',
-                   'Auvergne-Rhône-Alpes'],
-            "NW": ['Normandie', 'Bretagne', 'Pays de la Loire'],
-            "IdF":['Île-de-France', 'Centre-Val de Loire'],
-            "S":  ['Nouvelle-Aquitaine', 'Occitanie', 'Provence-Alpes-Côte d\'Azur']
-           },
         # noise_std: float or Tuple[float] = 0.,# realistic forecast error
         verbose: int = 0):
 
-    _clusters = {k: [_normalize_name(v) for v in l] for (k, l) in clusters.items()}
-
 
     # 4. Weighted aggregation helpers
-    def weighted_quantile(values, weights, q):
-        sorter = np.argsort(values)
-        values = values [sorter]
-        weights= weights[sorter]
-        cw     = np.cumsum(weights)
-        return np.interp(q * cw[-1], cw, values)
+    # def weighted_quantile(values, weights, q):
+    #     sorter = np.argsort(values)
+    #     values = values [sorter]
+    #     weights= weights[sorter]
+    #     cw     = np.cumsum(weights)
+    #     return np.interp(q * cw[-1], cw, values)
 
     def weighted_mean(df, weights=weights):
         is_good = df.notna().all(axis=1)
@@ -128,11 +181,11 @@ def load_temperature(
         out[~is_good] = np.nan
         return out.round(2)
 
-    def weighted_q(df, q):
-        return df.apply(
-            lambda row: weighted_quantile(row.values, weights_aligned.values, q),
-            axis=1
-        ).round(2)
+    # def weighted_q(df, q):
+    #     return df.apply(
+    #         lambda row: weighted_quantile(row.values, weights_aligned.values, q),
+    #         axis=1
+    #     ).round(2)
 
 
     # temperature data
@@ -144,7 +197,8 @@ def load_temperature(
     df = df.set_index('Date').sort_index()
     df.index.name = "date"
 
-    df['Région'] = [_normalize_name(r) for r in df['Région']]
+    df['Région'] = [SHORT_NAMES_REGIONS[normalize_name(r)]
+                        for r in df['Région']]
     df.drop(columns=['Code INSEE région', 'ID'], errors="ignore", inplace=True)
 
     df = df.rename(columns={
@@ -174,18 +228,20 @@ def load_temperature(
 
     # weighted averages by geographic cluster
     _df = pd.DataFrame()
-    for (_cluster, _list) in _clusters.items():
-        _df[_cluster] = weighted_mean(Tavg[_list], weights[_list])
+    # print("weights:", weights)
+    for (_cluster, _list) in CLUSTERS.items():
+        # print(_cluster, _list)
+        _df[_cluster] = weighted_mean(Tavg[_list], [weights[e] for e in _list])
     Tavg = _df
 
     _df = pd.DataFrame()
-    for (_cluster, _list) in _clusters.items():
-        _df[_cluster] = weighted_mean(Tmin[_list], weights[_list])
+    for (_cluster, _list) in CLUSTERS.items():
+        _df[_cluster] = weighted_mean(Tmin[_list], [weights[e] for e in _list])
     Tmin = _df
 
     _df = pd.DataFrame()
-    for (_cluster, _list) in _clusters.items():
-        _df[_cluster] = weighted_mean(Tmax[_list], weights[_list])
+    for (_cluster, _list) in CLUSTERS.items():
+        _df[_cluster] = weighted_mean(Tmax[_list], [weights[e] for e in _list])
     Tmax = _df
 
     # print(Tavg)
@@ -195,17 +251,17 @@ def load_temperature(
     # print("Tmax\n", Tmax[Tmax['num_NAs'] > 0].head(10))
 
 
-    # 3. Align weights
-    weights_aligned = weights.reindex(df['Région'])
+    # # 3. Align weights
+    # weights_aligned = weights.reindex(df['Région'])
 
-    if weights_aligned.isna().any():
-        missing = weights_aligned[weights_aligned.isna()].index.tolist()
-        raise ValueError(f"Missing weights for regions: {missing}")
+    # if weights_aligned.isna().any():
+    #     missing = weights_aligned[weights_aligned.isna()].index.tolist()
+    #     raise ValueError(f"Missing weights for regions: {missing}")
 
 
     # 5. Build output features
 
-    for _cluster in _clusters.keys():
+    for _cluster in CLUSTERS.keys():
         # Averages
         out[f"Tavg_{_cluster}_degC"] = Tavg[_cluster]
         out[f"Tmin_{_cluster}_degC"] = Tmin[_cluster]
@@ -346,7 +402,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
         # print("\nDuplicate counts:")
         # print(counts)
     else:
-        print("✓ No duplicate timestamps.")
+        print("No duplicate timestamps.")
 
     # -------------------------------
     # 2. Check for missing timestamps
@@ -376,7 +432,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     dfs = {}
 
-    weights = load_weights('data/consommation-annuelle-brute-regionale.csv', verbose)
+    weights_regions = load_weights('data/consommation-annuelle-brute-regionale.csv', verbose)
+    # print("weights_regions:", weights_regions)
 
     # Load both CSVs
     for name, path in dict_input_csv_fnames.items():
@@ -391,8 +448,15 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             if verbose >= 3:
                 analyze_datetime(dfs["consumption"],
                                  freq=f"{minutes_per_step}T", name="consumption")
+
+        if name == 'consumption_by_region':
+            dfs[name], names_regions = load_consumption_by_region(path, verbose=verbose)
+            if verbose >= 3:
+                analyze_datetime(dfs["consumption_by_region"],
+                                 freq=f"{minutes_per_step}T", name="consumption")
+
         elif name == 'temperature':
-            dfs[name] = load_temperature(path, weights, verbose=verbose)
+            dfs[name] = load_temperature(path, weights_regions, verbose=verbose)
             if verbose >= 3:
                 analyze_datetime(dfs["temperature"], freq="D",  name="temperature")
         # elif name == 'solar':
@@ -485,9 +549,46 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
         print(quantiles_df)
 
+    return (df_merged, dates_df, weights_regions)
 
-    return df_merged, dates_df
 
+
+# ============================================================
+# Régions
+# ============================================================
+
+
+def normalize_name(s: str) -> str:
+    return (
+        s.lower()
+         .replace("’", "'")
+         .replace("à", "a")
+         .replace("é", "e")
+         .replace("è", "e")
+         .replace("ê", "e")
+         .replace("ë", "e")
+         .replace("î", "i")
+         .replace("ô", "o")
+         .strip()
+    )
+
+
+SHORT_NAMES_REGIONS: Dict[str, str] = \
+{'auvergne-rhone-alpes': "AuRA", 'bourgogne-franche-comte': "Bourg",
+ 'bretagne': "Bret", 'centre-val de loire': "Centre", 'corse': 'corse',
+ 'grand est': "Est", 'hauts-de-france': "Nord", 'normandie': 'Norm',
+ 'nouvelle-aquitaine': "Aqui", 'occitanie': "Occi", 'pays de la loire': "Loire",
+ "provence-alpes-cote d'azur": "PACA", 'ile-de-france': "IdF"}
+
+CLUSTERS = {
+    "NE": ['Hauts-de-France', 'Grand Est', 'Bourgogne-Franche-Comté',
+           'Auvergne-Rhône-Alpes'],
+    "NW": ['Normandie', 'Bretagne', 'Pays de la Loire'],
+    "IdF":['Île-de-France', 'Centre-Val de Loire'],
+    "S":  ['Nouvelle-Aquitaine', 'Occitanie', 'Provence-Alpes-Côte d\'Azur']
+   }
+CLUSTERS = {_cluster: [SHORT_NAMES_REGIONS[normalize_name(v)] for v in _list]
+                    for (_cluster, _list) in CLUSTERS.items()}
 
 
 # ----------------------------------------------------------------------
@@ -518,21 +619,6 @@ CANONICAL_HOLIDAYS = {
         "noel",
     ],
 }
-
-def _normalize_name(s: str) -> str:
-    return (
-        s.lower()
-         .replace("’", "'")
-         .replace("à", "a")
-         .replace("é", "e")
-         .replace("è", "e")
-         .replace("ê", "e")
-         .replace("ë", "e")
-         .replace("î", "i")
-         .replace("ô", "o")
-         .strip()
-    )
-
 
 def school_holidays(fname1: str='data/fr-en-calendrier-scolaire.csv',
                     fname2: str='data/vacances_scolaires_2015_2017.csv')->pd.DataFrame:
@@ -566,7 +652,7 @@ def school_holidays(fname1: str='data/fr-en-calendrier-scolaire.csv',
 
     list_names = []
     for _, row in holidays.iterrows():
-        name_norm = _normalize_name(row['description'])
+        name_norm = normalize_name(row['description'])
 
         # Find matching holiday type based on aliases
         matched = [
@@ -640,7 +726,7 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
 def print_model_summary(
     minutes_per_step,  num_steps_per_day: int,
     num_time_steps: int,
-    feature_cols: List[str],
+    cols_features: List[str],
     input_length: int, pred_length: int, valid_length: int, features_in_future:bool,
     batch_size: int,
     epochs: int,
@@ -747,7 +833,7 @@ def print_model_summary(
     m = ffn_size
     p = num_patches
     pl= patch_length
-    f = len(feature_cols)
+    f = len(cols_features)
     h = pred_length
     n = max(1, num_samples)
 

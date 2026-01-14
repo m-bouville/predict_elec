@@ -147,7 +147,7 @@ def prepare_meta_data(
     X_features_GW,
     y_true_GW,
     dates,
-    feature_cols
+    cols_features
 ):
     """
     Prepare data for meta-model training.
@@ -156,7 +156,7 @@ def prepare_meta_data(
     """
     # Combine all predictions and features
     df = pd.DataFrame({
-        'y_true':y_true_GW,
+        'y_true':y_true_GW.squeeze(),
         'NNTQ':  dict_pred_GW['q50'],
         'LR':    dict_baseline_GW.get('LR',  np.nan),
         'RF':    dict_baseline_GW.get('RF',  np.nan),
@@ -164,7 +164,7 @@ def prepare_meta_data(
     }, index=dates)
 
     # Add context features
-    df_features = pd.DataFrame(X_features_GW, index=dates, columns=feature_cols)
+    df_features = pd.DataFrame(X_features_GW, index=dates, columns=cols_features)
     if 'horizon' not in df_features.columns:
         df_features['horizon']=(df_features.index.hour*2 + \
                                 df_features.index.minute/30).round().astype(np.int16)
@@ -182,7 +182,7 @@ def prepare_meta_data(
 # ============================================================
 
 # Prepare tensors
-def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
+def to_tensors(df: pd.DataFrame, cols_features: List[str]):
 
     # Predictions
     preds = torch.tensor(
@@ -197,7 +197,7 @@ def to_tensors(df: pd.DataFrame, feature_cols: List[str]):
             (df.index.hour*2 + df.index.minute/30).round().astype(np.int16)
             # (df.index.hour + df.index.minute/60) / 24
 
-    context_cols = [c for c in feature_cols
+    context_cols = [c for c in cols_features
         if c not in ['consumption_nn', 'consumption_lr',
                      'consumption_rf', 'consumption_gb']]
     context = torch.tensor(
@@ -215,7 +215,7 @@ def train_meta_model(
     # meta_net,
     df_train    : pd.DataFrame,
     df_valid    : Optional[pd.DataFrame],
-    feature_cols,
+    cols_features,
     valid_length: int,
     dropout     : float,
     num_cells   : int,
@@ -233,7 +233,7 @@ def train_meta_model(
     """
 
     # Initialize meta-model
-    context_cols = [c for c in feature_cols
+    context_cols = [c for c in cols_features
                     if c not in ['consumption_nn', 'consumption_lr',
                                  'consumption_rf', 'consumption_gb']]
 
@@ -259,7 +259,7 @@ def train_meta_model(
     criterion = nn.MSELoss()
 
     best_train_loss = float('inf');   best_valid_loss = float('inf')
-    _feature_cols = feature_cols + ['horizon']
+    _cols_features = cols_features + ['horizon']
 
 
     for epoch in range(epochs):
@@ -272,7 +272,7 @@ def train_meta_model(
             train_loss_h = 0.;   valid_loss_h = 0.
 
             preds_train, context_train, y_train = \
-                    to_tensors(df_train_h, _feature_cols)
+                    to_tensors(df_train_h, _cols_features)
             train_dataset = TensorDataset(preds_train, context_train, y_train)
 
             train_loader = DataLoader(
@@ -314,7 +314,7 @@ def train_meta_model(
             if df_valid is not None:
                 df_valid_h = df_valid[df_valid['horizon'] == h]
                 preds_valid, context_valid, y_valid = \
-                        to_tensors(df_valid_h, _feature_cols)
+                        to_tensors(df_valid_h, _cols_features)
                 valid_dataset= TensorDataset(preds_valid, context_valid, y_valid)
                 valid_loader = DataLoader(valid_dataset,
                                           batch_size=batch_size*2, shuffle=False)
@@ -374,7 +374,7 @@ def train_meta_model(
 def metamodel_NN(data_train,
                  data_valid : Optional,
                  data_test  : Optional,
-                 feature_cols: List[str],
+                 cols_features: List[str],
                  valid_length: int,
                  metamodel_nn_parameters: Dict[str, Any],
                  verbose     : int = 0) \
@@ -383,27 +383,27 @@ def metamodel_NN(data_train,
 
     device = metamodel_nn_parameters['device']
 
-    _feature_cols = feature_cols + ['horizon']
+    _cols_features = cols_features + ['horizon']
 
     # Prepare data
     df_meta_train = prepare_meta_data(
         "train",
         data_train.dict_preds_NNTQ,
         data_train.dict_preds_ML,
-        data_train.X_dev,
-        data_train.y_dev,
+        data_train.X,
+        data_train.y_nation,
         data_train.dates,
-        feature_cols  # /!\ 'horizon' will be added inside
+        cols_features  # /!\ 'horizon' will be added inside
     )
 
     df_meta_valid = prepare_meta_data(
         "valid",
         data_valid.dict_preds_NNTQ,
         data_valid.dict_preds_ML,
-        data_valid.X_dev,
-        data_valid.y_dev,
+        data_valid.X,
+        data_valid.y_nation,
         data_valid.dates,
-        feature_cols  # /!\ 'horizon' will be added inside
+        cols_features  # /!\ 'horizon' will be added inside
     ) if data_valid is not None else None
 
 
@@ -415,7 +415,7 @@ def metamodel_NN(data_train,
     meta_nets, weights = train_meta_model(
         # meta_net,
         df_meta_train, df_meta_valid,
-        feature_cols,
+        cols_features,
         valid_length,
         dropout     = metamodel_nn_parameters['dropout'],
         num_cells   = metamodel_nn_parameters['num_cells'],
@@ -433,21 +433,21 @@ def metamodel_NN(data_train,
         "test",
         data_test.dict_preds_NNTQ,
         data_test.dict_preds_ML,
-        data_test.X_dev,
-        data_test.y_dev,
+        data_test.X,
+        data_test.y_nation,
         data_test.dates,
-        feature_cols  # /!\ 'horizon' will be added inside
+        cols_features  # /!\ 'horizon' will be added inside
     ) if data_test is not None else None
 
-    preds_train, context_train, y_train = to_tensors(df_meta_train, _feature_cols)
+    preds_train, context_train, y_train = to_tensors(df_meta_train, _cols_features)
     pred_meta_train = torch.zeros(len(df_meta_train), device=device)
 
     if data_valid is not None:
-        preds_valid, context_valid, y_valid= to_tensors(df_meta_valid, _feature_cols)
+        preds_valid, context_valid, y_valid= to_tensors(df_meta_valid, _cols_features)
         pred_meta_valid = torch.zeros(len(df_meta_valid), device=device)
 
     if data_test is not None:
-        preds_test,  context_test,  y_test = to_tensors(df_meta_test,  _feature_cols)
+        preds_test,  context_test,  y_test = to_tensors(df_meta_test,  _cols_features)
         pred_meta_test  = torch.zeros(len(df_meta_test ), device=device)
 
 

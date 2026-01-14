@@ -39,8 +39,9 @@ from   lightgbm                import LGBMRegressor
 # ============================================================
 
 def create_baselines(df            : pd.DataFrame,
-                     target_col    : str,
-                     feature_cols  : List[str],
+                     cols_y_nation    : str,
+                     cols_Y_regions: List[str],
+                     cols_features  : List[str],
                      baseline_cfg  : Dict[str, Dict[str, Any]],
                      train_split   : float,
                      n_valid       : int,
@@ -54,8 +55,9 @@ def create_baselines(df            : pd.DataFrame,
 
     # Dict describing data + RF config (used to build cache key)
     cache_id = {
-        "target":       target_col,
-        "feature_cols": feature_cols,  # TODO add AFTER lasso
+        "target":       cols_y_nation,
+        "cols_Y_regions":cols_Y_regions,
+        "cols_features": cols_features,
         'train_end':    train_split-n_valid,
         'val_end':      train_split,
         # "split": "v1",   # optional: data split identifier
@@ -64,8 +66,8 @@ def create_baselines(df            : pd.DataFrame,
 
     # Extract matrices
     # -------------------------
-    X_GW: np.ndarray = df[feature_cols].values.astype(np.float32)
-    y_GW: np.ndarray = df[target_col  ].values.astype(np.float32)
+    X_GW: np.ndarray = df[cols_features ].values.astype(np.float32)
+    y_GW: np.ndarray = df[cols_y_nation].values.astype(np.float32)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_GW)
@@ -80,32 +82,32 @@ def create_baselines(df            : pd.DataFrame,
     # lasso pass to select features
     # -------------------------
 
-    # baseline_cfg['lasso']['alpha'] > 0 would be a simple LR,
-    #    it would not select columns
-    if 'lasso' in baseline_cfg and baseline_cfg['lasso']['alpha'] > 0:
-        cfg = baseline_cfg['lasso'] # .copy()
+    # # baseline_cfg['lasso']['alpha'] > 0 would be a simple LR,
+    # #    it would not select columns
+    # if 'lasso' in baseline_cfg and baseline_cfg['lasso']['alpha'] > 0:
+    #     cfg = baseline_cfg['lasso'] # .copy()
 
-        model_lasso = Lasso(**cfg)
-        model_lasso.fit(X_train_scaled, y_train_GW)
+    #     model_lasso = Lasso(**cfg)
+    #     model_lasso.fit(X_train_scaled, y_train_GW)
 
-        coeffs_lasso= pd.Series(model_lasso.coef_, index=feature_cols).astype(np.float32)
-        # print("coeffs_lasso:", coeffs_lasso)
+    #     coeffs_lasso= pd.Series(model_lasso.coef_, index=cols_features).astype(np.float32)
+    #     # print("coeffs_lasso:", coeffs_lasso)
 
-        # Features with non-zero coefficients
-        idx_coeffs   = np.where(coeffs_lasso != 0)[0]
-        feature_cols = list(np.array(feature_cols)[idx_coeffs])
-        feature_cols = [str(feature) for feature in feature_cols] # get rid of np.str_
-        # print("feature_cols:", feature_cols)
-        if verbose > 0:
-            print(f"lasso: {X_GW.shape[1]} -> {len(feature_cols)} features")
+    #     # Features with non-zero coefficients
+    #     idx_coeffs   = np.where(coeffs_lasso != 0)[0]
+    #     cols_features = list(np.array(cols_features)[idx_coeffs])
+    #     cols_features = [str(feature) for feature in cols_features] # get rid of np.str_
+    #     # print("cols_features:", cols_features)
+    #     if verbose > 0:
+    #         print(f"lasso: {X_GW.shape[1]} -> {len(cols_features)} features")
 
-        # print(df.shape, X_GW.shape)
-        X_GW = X_GW[:, idx_coeffs]
-    else:
-        if verbose > 0:
-            print(f"no lasso: keep all {len(feature_cols)} features")
+    #     # print(df.shape, X_GW.shape)
+    #     X_GW = X_GW[:, idx_coeffs]
+    # else:
+    #     if verbose > 0:
+    #         print(f"no lasso: keep all {len(cols_features)} features")
 
-    _df  = df[[target_col] + feature_cols].copy()
+    # _df  = df[[cols_y_nation] + cols_features].copy()
     # print(df.shape, X_GW.shape)
 
 
@@ -116,9 +118,9 @@ def create_baselines(df            : pd.DataFrame,
         regression_and_forest(
             X               = X_GW,
             y               = y_GW,
-            target_col      = target_col,
-            feature_cols    = feature_cols,
-            dates           = _df.index,
+            cols_y_nation      = cols_y_nation,
+            cols_features    = cols_features,
+            dates           = df.index,
             train_end       = train_split-n_valid,
             val_end         = train_split,
             models_cfg      = baseline_cfg,
@@ -135,38 +137,39 @@ def create_baselines(df            : pd.DataFrame,
 
     # Add features
     baseline_idx = dict()
+    _dict = dict()
     for name, series in baseline_features_GW.items():
-        assert len(series) == _df.shape[0], (len(series), _df.shape)
+        # assert len(series) == _df.shape[0], (len(series), _df.shape)
         col_name     = f"consumption_{name}"
-        _df[col_name] = series
-        feature_cols.append(col_name)
-        baseline_idx[name] = feature_cols.index(col_name)
+        _dict[col_name] = series
+        cols_features.append(col_name)
+        baseline_idx[name] = cols_features.index(col_name)
     # print(_df['consumption_regression'].head(20))
     if verbose >= 3:
         print(f"baseline_idx: {baseline_idx}")
 
     if verbose >= 2:
-        print(f"Using {len(feature_cols)} features: {feature_cols}")
-        print("Using target:", target_col)
+        print(f"Using {len(cols_features)} features: {cols_features}")
+        print("Using target:", cols_y_nation, "and", cols_Y_regions)
 
-    return _df, feature_cols
+    return pd.DataFrame(_dict), cols_features
 
 
 
 def regression_and_forest(
-    X:             np.ndarray,
-    y:             np.ndarray,
-    target_col:    str,
-    feature_cols:  List[str],
-    dates:         pd.DatetimeIndex,
-    train_end:     int,     # end of training set (exclusive)
-    val_end:       int,     # end of validation set (exclusive)
-    models_cfg:    Dict[str, dict],
-    cache_dir:     str,
+    X:               np.ndarray,
+    y:               np.ndarray,
+    cols_y_nation:      str,
+    cols_features:    List[str],
+    dates:           pd.DatetimeIndex,
+    train_end:       int,     # end of training set (exclusive)
+    val_end:         int,     # end of validation set (exclusive)
+    models_cfg:      Dict[str, dict],
+    cache_dir:       str,
     save_cache_baselines: bool,
-    cache_id_dict: dict,
+    cache_id_dict:   dict,
     force_calculation:bool = False,
-    verbose:       int = 0
+    verbose:         int = 0
 ) -> Tuple[Dict[str, pd.Series], object, pd.DataFrame, List[str]]:
     """
     Leakage-safe contemporaneous tabular baselines:
@@ -188,7 +191,7 @@ def regression_and_forest(
     final_models : Dict[str, fitted model]
     df: pd.DataFrame
         with only selected features
-    feature_cols: List[str]
+    cols_features: List[str]
         said features (df.columns[1:])
     """
 
@@ -224,9 +227,9 @@ def regression_and_forest(
     X_test_scaled  = X_scaled[ test_idx]
 
     # convert to df to have headers
-    X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=feature_cols)
-    X_valid_scaled_df = pd.DataFrame(X_valid_scaled, columns=feature_cols)
-    X_test_scaled_df  = pd.DataFrame(X_test_scaled,  columns=feature_cols)
+    X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=cols_features)
+    X_valid_scaled_df = pd.DataFrame(X_valid_scaled, columns=cols_features)
+    X_test_scaled_df  = pd.DataFrame(X_test_scaled,  columns=cols_features)
 
     models         = dict()
     preds_GW       = dict()
@@ -252,7 +255,7 @@ def regression_and_forest(
         # normal models
         os.makedirs(cache_dir, exist_ok=True)
 
-        _dict_key = cache_id_dict | cfg | {"feature_cols": feature_cols}
+        _dict_key = cache_id_dict | cfg | {"cols_features": cols_features}
         key_str    = json.dumps(_dict_key, sort_keys=True)
             # features for LR, RL, GB (and NNTQ) change with lasso
 
@@ -298,7 +301,7 @@ def regression_and_forest(
 
     # most relevant features
     if verbose >= 3 and {'LR', 'RF'} <= models.keys():
-        most_relevant_features(models['LR'], models['RF'], feature_cols)
+        most_relevant_features(models['LR'], models['RF'], cols_features)
 
 
     return series_pred_GW, models
@@ -309,17 +312,17 @@ def regression_and_forest(
 # TOP FEATURES FOR LINEAR REGRESSION AND RANDOM FOREST
 # ============================================================
 
-def most_relevant_features(model_LR, model_RF, feature_cols: List[str]):
+def most_relevant_features(model_LR, model_RF, cols_features: List[str]):
 
     lr = pd.Series(
         model_LR.coef_,
-        index=feature_cols,
+        index=cols_features,
         name="LR_coef"
     ).astype(np.float32)
 
     rf = pd.Series(
         model_RF.feature_importances_,
-        index=feature_cols,
+        index=cols_features,
         name="RF_importance"
     ).astype(np.float32)
 

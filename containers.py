@@ -17,27 +17,31 @@ import architecture, utils, metamodel, plots
 
 @dataclass
 class DataSplit:
-    name:            str             # 'train'   | 'valid'     | 'test'
-    name_display:    str             # 'training'| 'validation'| 'testing'
+    name:             str             # 'train'   | 'valid'     | 'test'
+    name_display:     str             # 'training'| 'validation'| 'testing'
 
     # Indices into the original series
-    idx:             pd.Index | range
+    idx:              pd.Index | range
 
     # Core data
-    X_dev:           np.ndarray  # torch.Tensor
-    y_dev:           np.ndarray  # torch.Tensor
-    dates:           pd.DatetimeIndex
-    Tavg_degC:       np.ndarray
+    X:                np.ndarray  # torch.Tensor
+    y_nation:         np.ndarray
+    Y_regions:        np.ndarray
 
-    X_columns:       Optional[List[str]]    = None
+    dates:            pd.DatetimeIndex
+    Tavg_degC:        np.ndarray
+
+    true_nation_GW:   Optional[np.ndarray]
+    X_columns:        Optional[List[str]]     = None
 
     # Scaled versions
-    X_scaled_dev:    Optional[torch.Tensor] = None
-    y_scaled_dev:    Optional[torch.Tensor] = None
+    # X_scaled_dev:     Optional[torch.Tensor]  = None
+    # y_nation_scaled_dev:Optional[torch.Tensor]= None
+    # Y_regions:    Optional[torch.Tensor]  = None
 
     # Torch plumbing
-    dataset_scaled:  Optional[torch.utils.data.Dataset   ] = None
-    loader:          Optional[torch.utils.data.DataLoader] = None
+    dataset_scaled:   Optional[torch.utils.data.Dataset   ] = None
+    loader:           Optional[torch.utils.data.DataLoader] = None
 
     # input to metamodels
     input_metamodel_LR:Optional[Dict[str, pd.DataFrame]] = None
@@ -49,9 +53,8 @@ class DataSplit:
     dict_preds_meta: Optional[Dict[str, pd.Series]] = field(default_factory=dict)
 
 
-
     def __len__(self) -> int:
-        return len(self.y_dev)
+        return len(self.y_nation)
 
 
     @property
@@ -63,23 +66,23 @@ class DataSplit:
         return self.dates[-1]
 
 
-    def prediction_day_ahead(self, model, scaler_y,
-            feature_cols: List[str], device,
+    def prediction_day_ahead(self, model, scaler_y_nation,
+            cols_features: List[str], device,
             input_length: int, pred_length: int, valid_length: int,
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
 
         # print(self.name)
         if self.name == 'complete':
-            self.true_GW = pd.Series(self.y_dev, index=self.dates)
+            self.true_nation_GW = pd.Series(self.y_nation, index=self.dates)
             return
 
         # train, valid, test: predict day ahead
-        self.true_GW, self.dict_preds_NNTQ, self.dict_preds_ML, self.origin_times = \
-            utils.subset_predictions_day_ahead(self.X_dev, self.loader,
-                model, scaler_y, feature_cols, device,
+        self.true_nation_GW, self.dict_preds_NNTQ, self.dict_preds_ML, self.origin_times = \
+            utils.subset_predictions_day_ahead(self.X, self.loader,
+                model, scaler_y_nation, cols_features, device,
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
-    # print(pd.concat([self.true_GW, pd.Series(self.y_dev,index=self.dates)],axis=1))
+    # print(pd.concat([self.true_nation_GW, pd.Series(self.y_nation,index=self.dates)],axis=1))
 
 
     def worst_days_by_loss(self,
@@ -90,7 +93,7 @@ class DataSplit:
                            verbose         : int = 0) -> (pd.DataFrame, float):
         return utils.worst_days_by_loss(
             split       = self.name,
-            y_true      = self.true_GW,
+            y_true      = self.true_nation_GW,
             y_pred      = self.dict_preds_NNTQ['q50'],
             temperature = temperature_full.iloc[self.idx],
             holidays    = holidays_full   .iloc[self.idx],
@@ -133,24 +136,25 @@ class DataSplit:
             return
 
         # train, valide, test: prepare input
-        _y_true = pd.Series(self.y_dev, name='y', index=self.dates)
+        _y_nation_true = pd.Series(self.y_nation.squeeze(),
+                                   name='y_nation', index=self.dates)
 
-        _input = pd.concat([_y_true,
+        _input = pd.concat([_y_nation_true,
                             pd.DataFrame(self.dict_preds_ML),
                             self.dict_preds_NNTQ['q50']
                            ],  axis=1, join="inner").astype('float32')
-        _input.columns = ['y'] + list(self.dict_preds_ML.keys()) + ['NNTQ']
-        self.input_metamodel_LR = _input.drop(columns=['y'])
+        _input.columns = ['y_nation'] + list(self.dict_preds_ML.keys()) + ['NNTQ']
+        self.input_metamodel_LR = _input.drop(columns=['y_nation'])
 
         if self.name == split_active:
-            self.y_metamodel_LR = _input[['y']].squeeze()  #.to_numpy()
+            self.y_metamodel_LR = _input[['y_nation']].squeeze()  #.to_numpy()
 
     # compare models
     def compare_models(self, unit: str = "GW", verbose: int = 0) -> pd.DataFrame:
         if verbose > 0:
             print(f"\n{self.name_display:10s} metrics [{unit}]:")
-        return utils.compare_models( self.true_GW,      self.dict_preds_NNTQ,
-                                     self.dict_preds_ML,self.dict_preds_meta,
+        return utils.compare_models( self.true_nation_GW,self.dict_preds_NNTQ,
+                                     self.dict_preds_ML, self.dict_preds_meta,
                                      subset=self.name, unit=unit, verbose=verbose)
 
 
@@ -162,12 +166,12 @@ class DataSplit:
                           num_steps_per_day: int,
                           quantiles:         List[str]):
         # print(self.name)
-        # print(self.true_GW.shape, self.true_GW)
+        # print(self.true_nation_GW.shape, self.true_nation_GW)
         # print(self.dict_preds_NNTQ ['q50'].shape, self.dict_preds_NNTQ ['q50'])
         # print(self.dict_preds_meta['LR'].shape, self.dict_preds_meta['LR'])
 
         plots.diagnostics(self.name,
-            self.true_GW, {q: self.dict_preds_NNTQ[q] for q in quantiles},
+            self.true_nation_GW, {q: self.dict_preds_NNTQ[q] for q in quantiles},
             self.dict_preds_ML, self.dict_preds_meta,
             names_baseline, names_meta, temperature_full.iloc[self.idx],
             num_steps_per_day)
@@ -182,18 +186,20 @@ class DatasetBundle:
     complete:DataSplit
 
     # whole set, unscaled
-    X:      np.ndarray
-    y:      np.ndarray
+    X:        np.ndarray
+    y_nation: np.ndarray
+    Y_regions:np.ndarray
 
     # size of the input data
     num_features  : int
+    weights_regions: Dict[str, float]
     num_time_steps: int
 
     # time increment
     minutes_per_step:  int
     num_steps_per_day: int
 
-    scaler_y: object
+    scaler_y_nation:   object
     scaler_X: Optional[object] = None
 
     # metamodels (added later)
@@ -211,14 +217,14 @@ class DatasetBundle:
         }.items()
 
     def predictions_day_ahead(self, model, scaler_y,
-            feature_cols: List[str], device,
+            cols_features: List[str], device,
             input_length: int, pred_length: int, valid_length: int,
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
         # print("predictions_day_ahead")
         for (_name_split, _data_split) in self.items():
             # print(_name_split)
             _data_split.prediction_day_ahead(
-                model, scaler_y, feature_cols, device,
+                model, scaler_y, cols_features, device,
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
     # Metamodels
@@ -253,7 +259,7 @@ class DatasetBundle:
 
 
     def calculate_metamodel_NN(self,
-                    feature_cols: List[str],
+                    cols_features: List[str],
                     valid_length: int,
                     split_active: str,
                     metamodel_nn_parameters: Dict[str, Any],
@@ -267,7 +273,7 @@ class DatasetBundle:
              list_models, self.avg_weights_meta_NN) = \
                 metamodel.metamodel_NN(
                     self.train, self.valid, self.test,
-                    feature_cols, valid_length, metamodel_nn_parameters, verbose)
+                    cols_features, valid_length, metamodel_nn_parameters, verbose)
         else:  # on valid
             # the second argumennt is actual validation (learning rate scheduling)
             #   /!\ use train for that? or nothing?
@@ -276,7 +282,7 @@ class DatasetBundle:
              list_models, self.avg_weights_meta_NN) = \
                 metamodel.metamodel_NN(
                     self.valid, self.train, self.test,
-                    feature_cols, valid_length, metamodel_nn_parameters, verbose)
+                    cols_features, valid_length, metamodel_nn_parameters, verbose)
 
 
 
@@ -285,6 +291,8 @@ class DatasetBundle:
 class NeuralNet:
 
     device           : object
+
+    weights_regions  : Dict[str, float]
 
     batch_size       : int
     epochs           : int
@@ -334,6 +342,8 @@ class NeuralNet:
     threshold_cold_degC:Optional[float]= None
     lambda_cold      : Optional[float] = None
 
+    lambda_regions   : Optional[float] = None
+
 
 
     # will be created in __post_init__
@@ -349,7 +359,7 @@ class NeuralNet:
                          field(default=None, init=False, repr=False, compare=False)
 
     num_quantiles    : int         = field(default_factory=int)
-
+    num_regions      : int         = field(default_factory=int)
 
     # needed by __post_init__
     len_train_data   : InitVar[Optional[int]]   = None
@@ -365,26 +375,21 @@ class NeuralNet:
         self.num_quantiles = len(self.quantiles) \
             if self.quantiles is not None else None
 
+        self.num_regions   = len(self.weights_regions) \
+            if self.weights_regions is not None else None
+
         self.model = architecture.TimeSeriesTransformer(
                 num_features, self.model_dim, self.num_heads, self.num_layers,
                 self.input_length, self.patch_length, self.stride, self.pred_length,
                 self.features_in_future,
-                self.dropout, self.ffn_size, self.num_quantiles,
+                self.dropout, self.ffn_size, self.num_quantiles, self.num_regions,
                 self.num_geo_blocks, self.geo_block_ratio
             ).to(self.device)
-        # model = torch.compile(model)  # Speedup: 1.5× to 2× on NVIDIA GPUs.
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr          = self.learning_rate,
-                                     weight_decay= self.weight_decay)
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        #     optimizer,
-        #     mode    = "min",
-        #     factor  = SCHED_FACTOR,
-        #     patience= SCHED_PATIENCE,
-        #     min_lr  = 1e-6,
-        #     # verbose = VERBOSE >= 1
-        # )
+        self.optimizer = torch.optim.Adam(
+                            self.model.parameters(),
+                            lr          = self.learning_rate,
+                            weight_decay= self.weight_decay)
 
         def my_lr_warmup_cosine(step):
             return architecture.lr_warmup_cosine(
@@ -485,7 +490,7 @@ class NeuralNet:
     def run(
             self,
             data             : DatasetBundle,
-            feature_cols     : List[str],
+            cols_features     : List[str],
             temperature_full : pd.Series,  # TODO np?
             holidays_full    : pd.Series,
             minutes_per_step : int,
@@ -542,8 +547,8 @@ class NeuralNet:
         t_metamodel_start = time.perf_counter()
 
         data.predictions_day_ahead(
-                self.model, data.scaler_y,
-                feature_cols = feature_cols,
+                self.model, data.scaler_y_nation,
+                cols_features = cols_features,
                 device       = self.device,
                 input_length = self.input_length,
                 pred_length  = self.pred_length,
@@ -578,7 +583,7 @@ class NeuralNet:
         quantile_delta_coverage = {}
         for tau in self.quantiles:
             key = f"q{int(100*tau)}"
-            cov = utils.quantile_coverage(data.test.true_GW,
+            cov = utils.quantile_coverage(data.test.true_nation_GW,
                                           data.test.dict_preds_NNTQ[key])
             quantile_delta_coverage[key] = cov-tau
 

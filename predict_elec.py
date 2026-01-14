@@ -33,7 +33,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    RUN_FAST     = True         # True: smaller system: runs faster, for debugging
+    RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
     MODE = 'once'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']

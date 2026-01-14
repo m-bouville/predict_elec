@@ -137,7 +137,7 @@ def df_features_past_consumption(consumption: pd.Series,
 def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
         lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
-    df, dates_df = IO.load_data(dict_input_csv_fnames, cache_fname,
+    df, dates_df, weights_regions = IO.load_data(dict_input_csv_fnames, cache_fname,
             num_steps_per_day=num_steps_per_day, minutes_per_step=minutes_per_step)
     assert isinstance(df.index, pd.DatetimeIndex)
 
@@ -185,7 +185,7 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
         # (df[['Tavg_degC', 'solar_kW_per_m2', 'wind_m_per_s']]).plot()
         plt.show()
 
-    return df, dates_df
+    return df, dates_df, weights_regions
 
 
 
@@ -197,8 +197,8 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
 
 @torch.no_grad()
 def subset_predictions_day_ahead(
-    X_subset_GW, subset_loader, model, scaler_y,
-    feature_cols: List[str], device,
+    X_subset_GW, subset_loader, model, scaler_y_nation,
+    cols_features: List[str], device,
     input_length: int, pred_length: int, valid_length: int, minutes_per_step: int,
     quantiles: Tuple[float, ...]
 ) -> Tuple[pd.DataFrame, Dict[str, pd.Series], Dict[str, pd.Series],
@@ -212,7 +212,7 @@ def subset_predictions_day_ahead(
     # Baselines available
     baseline_names = [
         nm for nm in ('LR', 'RF', 'LGBM', 'oracle')
-        if f"consumption_{nm}" in feature_cols
+        if f"consumption_{nm}" in cols_features
     ]
     offset_steps = pred_length - valid_length + 1
     # print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
@@ -222,7 +222,7 @@ def subset_predictions_day_ahead(
     max_origin_time = -np.inf
 
     # Iterate once: no aggregation
-    for (X_scaled, y_scaled, T_degC, idx_subset, forecast_origin_int) in subset_loader:
+    for (X_scaled, regions_scaled, y_scaled, T_degC, idx_subset, forecast_origin_int) in subset_loader:
         idx_subset         = idx_subset         .cpu().numpy()   # origin indices
         forecast_origin_int= forecast_origin_int.cpu().numpy()
 
@@ -233,22 +233,24 @@ def subset_predictions_day_ahead(
         # pred_scaled = model(X_scaled_dev).cpu().numpy()  # (B, H, Q)
         # assert pred_scaled.shape[1] == valid_length
         # pred_scaled = pred_scaled[:, -valid_length:]     # (B, V, Q)
-        pred_scaled = model(X_scaled_dev)[:, -valid_length:].cpu().numpy() #(B, V, Q)
+        (pred_nation_scaled_dev, _) = model(X_scaled_dev)
+        pred_nation_scaled_cpu = pred_nation_scaled_dev[:, -valid_length:] .cpu().numpy() # (B, V, Q)
+        # pred_regions_scaled_cpu= pred_regions_scaled_dev[:, -valid_length:].cpu().numpy() # (B, V, R)
 
-        B, V, Q = pred_scaled.shape
+        B, V, Q = pred_nation_scaled_cpu.shape
         # print(B, V, Q)
-        assert V == valid_length
-        assert Q == len(quantiles)
+        assert V == valid_length,   f"{V} != {valid_length}"
+        assert Q == len(quantiles), f"{Q} != {len(quantiles)}"
         # assert B <= batch_size
 
         # Inverse-scale ground truth                 # (B, [1..H])
-        y_true_GW = scaler_y.inverse_transform(
+        true_nation_GW = scaler_y_nation.inverse_transform(
             y_scaled[:, -valid_length:, 0].cpu().numpy().reshape(-1, 1)
         ).reshape(B, V)
 
         # Inverse-scale predictions
-        y_pred_GW = scaler_y.inverse_transform(
-            pred_scaled.reshape(-1, Q)
+        pred_nation_GW = scaler_y_nation.inverse_transform(
+            pred_nation_scaled_cpu.reshape(-1, Q)
         ).reshape(B, V, Q)
 
         # One prediction per target timestamp
@@ -275,15 +277,15 @@ def subset_predictions_day_ahead(
 
                 row = {
                     "time_current": time_current,
-                    "y_true"      : y_true_GW[sample, h],  # starts at 12:30
+                    "y_true"      : true_nation_GW[sample, h],  # starts at 12:30
                 }
 
                 for qi, tau in enumerate(quantiles):
-                    row[f"q{int(100*tau)}"] = y_pred_GW[sample, h, qi] # starts at 12:30
+                    row[f"q{int(100*tau)}"] = pred_nation_GW[sample, h, qi] # starts at 12:30
 
                 # Baselines at the same target time
                 for nm in baseline_names:
-                    col    = feature_cols.index(f"consumption_{nm}")
+                    col    = cols_features.index(f"consumption_{nm}")
                     row[nm]= X_subset_GW[idx_subset_current, col]
 
                 row['h'] = h
