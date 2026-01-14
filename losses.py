@@ -428,7 +428,7 @@ def regions_torch(
         Y_regions_pred  : torch.Tensor,     # (B, V, R)
         Y_regions_true  : torch.Tensor,     # (B, V, R)
         lambda_regions  : float
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
     """
     Torch loss for régional consumption forecasts.
     y_nation_pred, y_nation_true: (B, V, R)
@@ -438,11 +438,10 @@ def regions_torch(
     #       f"Y_regions_true {Y_regions_true.shape}")
 
     if lambda_regions <= 0.:
-        return torch.zeros_like(Y_regions_pred.shape[1])
+        return torch.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
-    err = (Y_regions_pred - Y_regions_true).abs().mean(dim=0)         # (V, R)
-
-    return lambda_regions * torch.sum(err, dim=1)  # (V)
+    err = (Y_regions_pred - Y_regions_true).abs().mean(dim=0)   # (V, R)
+    return lambda_regions * torch.sum(err, dim=1)               # (V)
 
 
 def regions_numpy(
@@ -459,8 +458,8 @@ def regions_numpy(
     #       f"Y_regions_true {Y_regions_true.shape}")
 
     if lambda_regions <= 0.:
-        return np.zeros_like(Y_regions_pred.shape[1])
+        return np.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
-    err = np.abs(Y_regions_pred - Y_regions_true).mean(axis=0)        # (V, R)
-    return lambda_regions * np.sum(err, axis=1)  # (V)
+    err = np.abs(Y_regions_pred - Y_regions_true).mean(axis=0)      # (V, R)
+    return lambda_regions * np.sum(err, axis=1)                     # (V)
 

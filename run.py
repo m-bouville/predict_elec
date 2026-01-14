@@ -20,7 +20,7 @@ import pandas as pd
 
 
 import MC_search, Bayes_search, containers, architecture, \
-    utils, baselines, IO, plots, plot_statistics
+    utils, baselines, IO, plot_statistics   # plots,
 
 
 # system dimensions
@@ -176,11 +176,6 @@ def normalize_features(df              : pd.DataFrame,
         print(f"Test mean :{data.test .y_nation.mean():6.2f} GW")
 
 
-    del array
-
-    gc.collect()
-    torch.cuda.empty_cache()
-
     return data, X_test_scaled
 
 
@@ -203,6 +198,7 @@ def postprocess(baseline_parameters   : Dict[str, Any],
                 csv_path              : str   = 'parameter_search.csv',
                 verbose               : int   = 0
                 ) -> [Dict[str, Any], [float, float]]:
+
     flat_metrics = {}
     for model in df_metrics.index:
         for metric in df_metrics.columns:
@@ -210,11 +206,10 @@ def postprocess(baseline_parameters   : Dict[str, Any],
             flat_metrics[key] = float(df_metrics.loc[model, metric])
 
     # learning_rate and weight_decay are so small
-    NNTQ_parameters    ['learning_rate' ]= NNTQ_parameters  ['learning_rate'] * 1e6
-    metamodel_parameters['learning_rate']=metamodel_parameters['learning_rate']*1e6
-
-    NNTQ_parameters    ['weight_decay' ]= NNTQ_parameters  ['weight_decay'] * 1e6
-    metamodel_parameters['weight_decay']=metamodel_parameters['weight_decay']*1e6
+    # round to avoid 0.999999
+    for _name in ['learning_rate', 'weight_decay']:
+        NNTQ_parameters     [_name]= round(NNTQ_parameters    [_name] * 1e6, 6)
+        metamodel_parameters[_name]= round(metamodel_parameters[_name]* 1e6, 6)
 
     # flatten sequences
     _dict_quantiles = expand_sequence(name="quantiles",
@@ -232,7 +227,7 @@ def postprocess(baseline_parameters   : Dict[str, Any],
                            verbose=verbose)
     _loss_meta = loss_meta(flat_metrics, verbose=verbose)
 
-    # BUG does not do the job
+    # BUG: this does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
         baseline_parameters['RF']['max_features'] = \
             round(baseline_parameters['RF']['max_features'], 1)
@@ -301,7 +296,6 @@ def run_model_once(
     np.   random.seed(seed)
     torch.manual_seed(seed)
 
-
     if verbose > 0:
         print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
     if torch.cuda.is_available():
@@ -310,10 +304,10 @@ def run_model_once(
                   f"CUDA version: {torch.version.cuda}, "
                   f"CUDNN version: {torch.backends.cudnn.version()}")
 
-        # clear VRAM
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(torch.cuda.memory_summary())
+        # # clear VRAM
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        # # print(torch.cuda.memory_summary())
     elif verbose > 0:
         print("CUDA unavailable")
         print()
@@ -380,7 +374,6 @@ def run_model_once(
 
 
 
-
     # ============================================================
     # NNTQ: Neural Network predicting Quantiles with Transformers
     # ============================================================
@@ -390,7 +383,7 @@ def run_model_once(
         os.makedirs(cache_dir, exist_ok=True)
 
         key_str    = json.dumps(
-            baseline_parameters['lasso'] |
+            # baseline_parameters['lasso'] |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'},
                 sort_keys=True)
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
@@ -421,6 +414,8 @@ def run_model_once(
             verbose)
 
         del df  # pd.DataFrame no longer needed, we use np.ndarray now
+        gc.collect()
+
 
         # print(f"X_test_scaled.shape {X_test_scaled.shape}")
 
@@ -444,7 +439,6 @@ def run_model_once(
                              avg_abs_worst_days_test_NN_median), f)
             if verbose > 0:
                 print(f"Saved NNTQ predictions to: {cache_path}")
-
 
 
     # ============================================================
@@ -537,11 +531,6 @@ def run_model_once(
     except NameError:
         pass
 
-    if torch.cuda.is_available():
-        # clear VRAM
-        gc.collect()
-        torch.cuda.empty_cache()
-        # torch.cuda.synchronize()
 
     dict_row, (_loss_NNTQ, _loss_meta) = postprocess(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
@@ -549,6 +538,12 @@ def run_model_once(
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
         avg_abs_worst_days_test_NN_median, run_id, trials_csv_path, verbose)
 
+
+    if torch.cuda.is_available():
+        # clear VRAM
+        gc.collect()
+        torch.cuda.empty_cache()
+        # torch.cuda.synchronize()
 
     return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
         (num_worst_days, avg_abs_worst_days_test_NN_median), (_loss_NNTQ, _loss_meta)

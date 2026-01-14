@@ -481,7 +481,7 @@ class NeuralNet:
                     print(f"Early stopping triggered at epoch {epoch+1}.")
                 break
 
-            torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
         return (list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
                 dict_valid_loss_quantile_h)

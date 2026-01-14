@@ -70,8 +70,6 @@ class DayAheadDataset(torch.utils.data.Dataset):
         self.index_y_nation = index_y_nation
         self.indices_Y_regions= indices_Y_regions
 
-        print("self.index_y_nation:", self.index_y_nation)
-
         # Pre-compute valid forecast indices
         self.start_indices_subset= []
         self.forecast_origins    = []
@@ -197,7 +195,6 @@ def make_X_and_y(array,
     indices_features    = [col_to_idx[c] for c in cols_features]
     indices_Y_regions= [col_to_idx[c] for c in cols_Y_regions]
     index_y_nation   =  col_to_idx[col_y_nation]
-    print("index_y_nation:", index_y_nation)
 
     test_data   = array[idx_test]
     X_test_GW   = test_data[:, indices_features]
@@ -209,8 +206,7 @@ def make_X_and_y(array,
     X_GW         = array[:, indices_features]
     y_nation_GW  = array[:, index_y_nation].squeeze()
     Y_regions_GW = array[:, indices_Y_regions]
-
-    print("y_nation_GW.shape:", y_nation_GW.shape)
+    # print("y_nation_GW.shape:", y_nation_GW.shape)
 
     # 2. Fit two different scalers (on training set)
     scaler_X        = StandardScaler()
@@ -735,7 +731,9 @@ def subset_evolution_torch(
         # model_NN.optimizer).zero_grad(set_to_none=True)
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
-            (pred_nation_scaled_dev, pred_regions_scaled_dev) = model(X_scaled_dev)
+            (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
+            pred_nation_scaled_dev = pred_nation_scaled .to(device) # (B, H, Q)
+            pred_regions_scaled_dev= pred_regions_scaled.to(device) # (B, H, R)
 
             # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
 
@@ -748,12 +746,15 @@ def subset_evolution_torch(
                      'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
                 Tavg_current=T_degC_dev[:, -valid_length:, :])
 
-            loss_region_scaled_h_batch = losses.regions_torch(
-                    pred_regions_scaled_dev[:, -valid_length:, :],     # (B, V, R)
-                    Y_regions_scaled_dev   [:, -valid_length:, :],     # (B, V, R)
-                    model_NN.lambda_regions
-                )
-            loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+            if model_NN.lambda_regions > 0:
+                loss_region_scaled_h_batch = losses.regions_torch(
+                        pred_regions_scaled_dev[:, -valid_length:, :],     # (B, V, R)
+                        Y_regions_scaled_dev   [:, -valid_length:, :],     # (B, V, R)
+                        model_NN.lambda_regions
+                    )
+                loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+            else:
+                loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
         amp_scaler.scale(loss_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -816,9 +817,9 @@ def subset_evolution_numpy(
         # origins_cpu = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()].cpu()
 
         # NN forward
-        (pred_nation_scaled_dev, pred_regions_scaled_dev) = model(X_scaled_dev)
-        pred_nation_scaled_cpu = pred_nation_scaled_dev .cpu().numpy() # (B, H, Q)
-        pred_regions_scaled_cpu= pred_regions_scaled_dev.cpu().numpy() # (B, H, R)
+        (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
+        pred_nation_scaled_cpu = pred_nation_scaled .cpu().numpy() # (B, H, Q)
+        pred_regions_scaled_cpu= pred_regions_scaled.cpu().numpy() # (B, H, R)
 
         # assert y_scaled_cpu.shape[1] == pred_scaled_cpu.shape[1] == pred_length
 
@@ -833,12 +834,15 @@ def subset_evolution_numpy(
                  'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
                 Tavg_current=T_degC_cpu[:, -valid_length:])
 
-        loss_region_scaled_h_batch = losses.regions_numpy(
-                pred_regions_scaled_cpu[:, -valid_length:, :],     # (B, V, R)
-                Y_regions_scaled_cpu   [:, -valid_length:, :],     # (B, V, R)
-                model_NN.lambda_regions
-            )
-        loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+        if model_NN.lambda_regions > 0:
+            loss_region_scaled_h_batch = losses.regions_numpy(
+                    pred_regions_scaled_cpu[:, -valid_length:, :],     # (B, V, R)
+                    Y_regions_scaled_cpu   [:, -valid_length:, :],     # (B, V, R)
+                    model_NN.lambda_regions
+                )
+            loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+        else:
+            loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
 
         # print("batch:\n", loss_scaled_h_batch.round(2))

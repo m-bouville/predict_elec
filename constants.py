@@ -146,7 +146,7 @@ METAMODEL_NN_PARAMETERS: dict = {
     'epochs'           :   12,
 
     # optimizer
-    'learning_rate'    :  4e-4,
+    'learning_rate'    :  5e-4,
     'weight_decay'     :  6e-6,
     'dropout'          :  0.1,
 
@@ -169,7 +169,7 @@ CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
 BASELINES_PARAMETERS = {
-    'lasso': {"alpha": 0.00, 'max_iter': 2_000},
+    # 'lasso': {"alpha": 0.00, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
     'RF': {
@@ -192,9 +192,9 @@ BASELINES_PARAMETERS = {
         "n_estimators":    500,       # More trees for a robust model
         "min_child_samples":25,       # Minimum samples per leaf
         "subsample":         0.6,    # Fraction of samples used to train each tree
-        "colsample_bytree":  0.75,    # Fraction of features used for each tree
-        "reg_alpha":         0.12,     # L1 regularization
-        "reg_lambda":        0.08,    # L2 regularization
+        "colsample_bytree":  0.7,    # Fraction of features used for each tree
+        "reg_alpha":         0.1,     # L1 regularization
+        "reg_lambda":        0.1,    # L2 regularization
         "random_state":      0,       # Seed for reproducibility
         "n_jobs":            4,       # Number of parallel jobs
         "verbose":          -1        # Suppress output
@@ -203,23 +203,25 @@ BASELINES_PARAMETERS = {
 
 
 
+# # Optional: plug in Bayesian best parameters
+# _new_parameters = { #'lasso_alpha': 0.0,
+#     'LR_type': 'ridge', 'LR_alpha': 1.45, 'RF_n_estimators': 490, 'RF_max_depth': 23,
+#     'RF_min_samples_leaf': 11, 'RF_min_samples_split': 12, 'RF_max_features': 'sqrt',
+#     'LGBM_boosting_type': 'gbdt', 'LGBM_num_leaves': 15, 'LGBM_max_depth': 2,
+#     'LGBM_learning_rate': 0.07, 'LGBM_n_estimators': 630, 'LGBM_min_child_samples': 13,
+#     'LGBM_subsample': 0.72, 'LGBM_colsample_bytree': 0.98, 'LGBM_reg_alpha': 0.06,
+#     'LGBM_reg_lambda': 0.08, 'metaNN_epochs': 20, 'metaNN_batch_size': 96,
+#     'metaNN_learning_rate': 0.0025, 'metaNN_weight_decay': 3.054e-08,
+#     'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
+# } # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
 
-# Optional: plug in Bayesian best parameters
-_new_parameters = { #'lasso_alpha': 0.0,
-    'LR_type': 'ridge', 'LR_alpha': 1.45, 'RF_n_estimators': 490, 'RF_max_depth': 23,
-    'RF_min_samples_leaf': 11, 'RF_min_samples_split': 12, 'RF_max_features': 'sqrt',
-    'GB_boosting_type': 'gbdt', 'GB_num_leaves': 15, 'GB_max_depth': 2,
-    'GB_learning_rate': 0.07, 'GB_n_estimators': 630, 'GB_min_child_samples': 13,
-    'GB_subsample': 0.72, 'GB_colsample_bytree': 0.98, 'GB_reg_alpha': 0.06,
-    'GB_reg_lambda': 0.08, 'metaNN_epochs': 20, 'metaNN_batch_size': 96,
-    'metaNN_learning_rate': 0.0025, 'metaNN_weight_decay': 3.054e-08,
-    'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
-} # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
+# for _model in ['LR', 'RF', 'LGBM']:
+#     BASELINES_PARAMETERS[_model].update(
+#         {k.removeprefix(_model+'_'): v
+#                         for (k, v) in _new_parameters.items() if _model in k})
 
-for _model in ['LR', 'RF', 'LGBM']:
-    BASELINES_PARAMETERS[_model].update(
-        {k.strip(_model+'_'): v for (k, v) in _new_parameters.items() if _model in k})
-METAMODEL_NN_PARAMETERS.update({k.strip('metaNN_'): v for (k, v) in _new_parameters.items() if 'metaNN' in k})
+# METAMODEL_NN_PARAMETERS.update({k.removeprefix('metaNN_'): v
+#                         for (k, v) in _new_parameters.items() if 'metaNN' in k})
 
 
 
@@ -266,7 +268,7 @@ def fast_parameters(nntq_parameters        : Dict[str, Any],
 
 
 baseline_params_fast = {
-    'lasso': {"alpha": 0.04, 'max_iter': 2_000},
+    # 'lasso': {"alpha": 0.04, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
     'RF': {

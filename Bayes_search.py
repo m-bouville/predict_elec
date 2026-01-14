@@ -25,8 +25,8 @@ import run
 # -------------------------------------------------------
 
 DISTRIBUTIONS_BASELINES = {
-    'lasso_alpha':    FloatDistribution(low=0.000,high=0.000,step=0.0005),  # constant
-    'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
+    # 'lasso_alpha':    FloatDistribution(low=0.000,high=0.000,step=0.0005),  # constant
+    # 'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
 
     'LR_type':        CategoricalDistribution(choices=['lasso', 'ridge']),
     'LR_alpha':      FloatDistribution(low=0.00, high=2.0,step=0.05),
@@ -42,16 +42,16 @@ DISTRIBUTIONS_BASELINES = {
     'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4','0.5','0.6']),
 
     # gradient boosting (LGBM)
-    'GB_boosting_type':CategoricalDistribution(choices=['gbdt']),
-    'GB_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1]),
-    'GB_max_depth':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
-    'GB_learning_rate':FloatDistribution(low=0.01, high=0.15,step=0.01),
-    'GB_n_estimators': IntDistribution  (low=300,  high=650, step=10),
-    'GB_min_child_samples':IntDistribution(low=10, high=25,  step=1),
-    'GB_subsample':    FloatDistribution(low=0.6,  high=1.0, step=0.02),
-    'GB_colsample_bytree':FloatDistribution(low=0.6,high=1.0,step=0.02),
-    'GB_reg_alpha':    FloatDistribution(low=0.05, high=0.3, step=0.01),
-    'GB_reg_lambda':   FloatDistribution(low=0.05, high=0.3, step=0.01)
+    'LGBM_boosting_type':CategoricalDistribution(choices=['gbdt']),
+    'LGBM_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1]),
+    'LGBM_max_depth':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
+    'LGBM_learning_rate':FloatDistribution(low=0.01, high=0.15,step=0.01),
+    'LGBM_n_estimators': IntDistribution  (low=300,  high=650, step=10),
+    'LGBM_min_child_samples':IntDistribution(low=10, high=25,  step=1),
+    'LGBM_subsample':    FloatDistribution(low=0.6,  high=1.0, step=0.02),
+    'LGBM_colsample_bytree':FloatDistribution(low=0.6,high=1.0,step=0.02),
+    'LGBM_reg_alpha':    FloatDistribution(low=0.05, high=0.3, step=0.01),
+    'LGBM_reg_lambda':   FloatDistribution(low=0.05, high=0.3, step=0.01)
 }
 
 DISTRIBUTIONS_NNTQ = {
@@ -68,7 +68,7 @@ DISTRIBUTIONS_NNTQ = {
     'lambda_coverage':FloatDistribution(low=0.1,high=0.4, step=0.02),
     'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.004),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
-    'smoothing_cross':FloatDistribution(low=0.005, high=0.05, step=0.001),
+    'smoothing_cross':FloatDistribution(low=0.005, high=0.051, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
     'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
@@ -89,7 +89,7 @@ DISTRIBUTIONS_NNTQ = {
 }
 
 DISTRIBUTIONS_METAMODEL_NN = {
-    'metaNN_epochs':      IntDistribution(low=5, high=20, step=1),  # 1: NNTQ search
+    'metaNN_epochs':      IntDistribution(low=1, high=20, step=1),  # 1: NNTQ search
     'metaNN_batch_size':  CategoricalDistribution(
         choices=[96, 128, 192, 256, 384, 512, 640]),
     'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0040, step=0.0001),
@@ -156,25 +156,25 @@ def sample_baseline_parameters(
 
         elif _baseline == 'LGBM':
             if 'boosting_type' in p:   # TODO add more?
-                p['boosting_type'] = trial.suggest_categorical('GB_boosting_type', ['gbdt'])
+                p['boosting_type'] = trial.suggest_categorical('LGBM_boosting_type', ['gbdt'])
             if 'num_leaves' in p:
-                p['num_leaves'] = trial.suggest_categorical('GB_num_leaves', [8-1, 16-1, 32-1])
+                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves', [8-1, 16-1, 32-1])
             if 'max_depth' in p:
-                p['max_depth'] = trial.suggest_categorical('GB_max_depth', [2, 3, 4, 5, 6])
+                p['max_depth'] = trial.suggest_categorical('LGBM_max_depth', [2, 3, 4, 5, 6])
             if 'learning_rate' in p:
-                p['learning_rate']=trial.suggest_float('GB_learning_rate', 0.01,0.15, step=0.01)
+                p['learning_rate']=trial.suggest_float('LGBM_learning_rate', 0.01,0.15, step=0.01)
             if 'n_estimators' in p:
-                p['n_estimators'] = trial.suggest_int('GB_n_estimators', 300, 650, step=10)
+                p['n_estimators'] = trial.suggest_int('LGBM_n_estimators', 300, 650, step=10)
             if 'min_child_samples' in p:
-                p['min_child_samples']=trial.suggest_int('GB_min_child_samples', 12, 22, step=1)
+                p['min_child_samples']=trial.suggest_int('LGBM_min_child_samples', 12, 22, step=1)
             if 'subsample' in p:
-                p['subsample'] = trial.suggest_float('GB_subsample', 0.6, 1.0, step=0.02)
+                p['subsample'] = trial.suggest_float('LGBM_subsample', 0.6, 1.0, step=0.1)
             if 'colsample_bytree' in p:   # fraction of features used for each tree
-                p['colsample_bytree']= trial.suggest_float('GB_colsample_bytree',0.6,1.,step=0.02)
+                p['colsample_bytree']= trial.suggest_float('LGBM_colsample_bytree',0.6,1.,step=0.1)
             if 'reg_alpha' in p:   # L1 regularization
-                p['reg_alpha'] = trial.suggest_float('GB_reg_alpha', 0.05, 0.15, step=0.01)
+                p['reg_alpha'] = trial.suggest_float('LGBM_reg_alpha', 0.05, 0.15, step=0.01)
             if 'reg_lambda' in p:   # L2 regularization
-                p['reg_lambda']= trial.suggest_float('GB_reg_lambda',0.05, 0.15, step=0.01)
+                p['reg_lambda']= trial.suggest_float('LGBM_reg_lambda',0.05, 0.15, step=0.01)
 
     return p0
 
@@ -404,8 +404,8 @@ def cols_not_paras() -> List[str]:
     cols_not_paras = ['run'] + \
         ['quantiles_0','quantiles_1','quantiles_2','quantiles_3','quantiles_4'] + \
         ['RF_type', 'RF_random_state', 'RF_n_jobs'] + \
-        ['GB_type', 'GB_objective'] + \
-        ['GB_random_state','GB_n_jobs',	'GB_verbose'] + \
+        ['LGBM_type', 'LGBM_objective'] + \
+        ['LGBM_random_state','LGBM_n_jobs',	'LGBM_verbose'] + \
         ['input_length', 'pred_length', 'valid_length', 'num_patches'] + \
         ['device', 'metaNN_device', 'features_in_future']
         # ,'GB_boosting_type'
@@ -431,7 +431,8 @@ def load_frozen_trials(csv_path     : str,
 
     _cols_not_paras = cols_not_paras()
 
-    _superfluous = [e for e in _cols_not_paras if e not in results_df.columns]
+    print(list(results_df.columns))
+    _superfluous = set(_cols_not_paras) - set(results_df.columns)
     assert len(_superfluous) == 0, _superfluous
 
     results_df.drop(columns=_cols_not_paras, inplace=True)
@@ -439,8 +440,9 @@ def load_frozen_trials(csv_path     : str,
 
     results_df[['learning_rate', 'weight_decay',
                 'metaNN_learning_rate', 'metaNN_weight_decay']] =\
-        results_df[['learning_rate', 'weight_decay',
-                    'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6
+        (results_df[['learning_rate', 'weight_decay',
+                    'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6).round(9)
+            # round to avoid 0.999999
 
     # can be 'sqrt' or a float => type issues
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
@@ -521,9 +523,9 @@ def run_Bayes_search(
 
         # lasso controls features and is thus relevant to everyone
         baseline_parameters = copy.deepcopy(base_baseline_params)
-        if 'lasso' in baseline_parameters and 'alpha' in baseline_parameters['lasso']:
-            baseline_parameters['lasso']['alpha'] = \
-                trial.suggest_float('lasso_alpha', 0.000, 0.000, step=0.0005)
+        # if 'lasso' in baseline_parameters and 'alpha' in baseline_parameters['lasso']:
+        #     baseline_parameters['lasso']['alpha'] = \
+        #         trial.suggest_float('lasso_alpha', 0.000, 0.000, step=0.0005)
 
         # three possible bahaviors:
         #   - all:  we sample everything

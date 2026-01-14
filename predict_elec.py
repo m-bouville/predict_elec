@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
     RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
-    MODE = 'once'
+    MODE = 'Bayes_NNTQ'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
     if RUN_FAST:
@@ -45,10 +45,10 @@ if __name__ == "__main__":
 
     if MODE in ['once']:
         num_runs =  1
-        VERBOSE: int = 2  # 2 if RUN_FAST else 1
+        VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = True  # VERBOSE >= 3
     else:
-        num_runs = 10
+        num_runs = 60
         force_calc_baselines = False
         VERBOSE: int = 0
 
