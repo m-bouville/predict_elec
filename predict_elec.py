@@ -45,8 +45,8 @@ if __name__ == "__main__":
 
     if MODE in ['once']:
         num_runs =  1
-        VERBOSE: int = 1  # 2 if RUN_FAST else 1
-        force_calc_baselines = False  # VERBOSE >= 3
+        VERBOSE: int = 2  # 2 if RUN_FAST else 1
+        force_calc_baselines = True  # VERBOSE >= 3
     else:
         num_runs = 10
         force_calc_baselines = False

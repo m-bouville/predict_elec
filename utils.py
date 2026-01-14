@@ -49,7 +49,7 @@ def df_features_calendar(dates: pd.DatetimeIndex,
 
     for _days, _name in zip([1.75, 3.5, 7], ["1_75", "3_5", "7"]): # several per week
         df['sin_'+_name+'day'] = np.sin(7/_days * 2*np.pi * df['dow_norm'])
-    df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
+    # df['sin_1wk']  = np.sin(2*np.pi*df['dow_norm'])
 
     for _months in [3, 4, 6, 12]:  # several periods per year
         df['cos_'+str(_months)+'mo'] = np.cos(12/_months * 2*np.pi * df['doy_norm'])
@@ -179,11 +179,11 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
         df.drop(columns=['consumption_GW']).iloc[-(8*24*2):].plot()
         plt.show()
 
-        # no time modification
-        plt.figure(figsize=(10,6))
-        (df[['Tmax_degC', 'Tavg_degC']]).plot()
-        # (df[['Tavg_degC', 'solar_kW_per_m2', 'wind_m_per_s']]).plot()
-        plt.show()
+        # # no time modification
+        # plt.figure(figsize=(10,6))
+        # (df[['Tmax_degC', 'Tavg_degC']]).plot()
+        # # (df[['Tavg_degC', 'solar_kW_per_m2', 'wind_m_per_s']]).plot()
+        # plt.show()
 
     return df, dates_df, weights_regions
 
@@ -426,10 +426,10 @@ def compare_models(true_series:     pd.Series,
         df_rmse_hour = pd.DataFrame({
             name: (
                 df_eval
-                .groupby("hour")
+                .groupby('hour')
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in df_eval.columns if name != 'true'
+            for name in df_eval.columns if name not in ['true', 'hour']
         })
         print(df_rmse_hour.round(2))
 
@@ -458,7 +458,7 @@ def compare_models(true_series:     pd.Series,
                 .groupby("month")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in df_eval.columns if name != 'true'
+            for name in df_eval.columns if name not in ['true', 'month']
         })
         print(df_rmse_month.round(2))
 

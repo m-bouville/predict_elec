@@ -74,6 +74,8 @@ DISTRIBUTIONS_NNTQ = {
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
     'lambda_cold':    FloatDistribution(low=0.05,high=0.21, step=0.02),
 
+    'lambda_regions': FloatDistribution(low=0.,high=0.1, step=0.02),
+
     'model_dim':    IntDistribution(low=90, high=360, step=1),
     'ffn_size':     IntDistribution(low=2, high=7, step=1),
     'num_heads':    IntDistribution(low=3, high=9, step=1),
@@ -212,9 +214,11 @@ def sample_NNTQ_parameters(
         p['threshold_cold_degC']=trial.suggest_float('threshold_cold_degC',0.,5.,step=0.1)
     if 'saturation_cold_degC' in p:
         p['saturation_cold_degC']=trial.suggest_float('saturation_cold_degC',
-                                                      -8., -2., step=0.1)
+                                                     -8., -2., step=0.1)
     if 'lambda_cold' in p:
         p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.05, 0.21,step=0.02)
+    if 'lambda_regions' in p:
+        p['lambda_regions'     ]= trial.suggest_float('lambda_regions', 0.0, 0.1,step=0.02)
 
     # Architecture
     if 'model_dim' in p:

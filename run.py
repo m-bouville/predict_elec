@@ -170,10 +170,10 @@ def normalize_features(df              : pd.DataFrame,
 
 
     if verbose >= 2:
-        print(f"Train mean:{data.scaler_y.mean_ [0]:6.2f} GW")
-        print(f"Train std :{data.scaler_y.scale_[0]:6.2f} GW")
-        print(f"Valid mean:{data.valid.y_dev.mean():6.2f} GW")
-        print(f"Test mean :{data.test .y_dev.mean():6.2f} GW")
+        print(f"Train mean:{data.scaler_y_nation.mean_ [0]:6.2f} GW")
+        print(f"Train std :{data.scaler_y_nation.scale_[0]:6.2f} GW")
+        print(f"Valid mean:{data.valid.y_nation.mean():6.2f} GW")
+        print(f"Test mean :{data.test .y_nation.mean():6.2f} GW")
 
 
     del array

@@ -18,8 +18,7 @@ import constants, architecture, plots
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
 # depth of historical data: 2012 to date (M-1)
 # Last processing
-#    December  2, 2025 4:28 PM (metadata)
-#    December  2, 2025 4:28 PM (data)
+#    January 13, 2026
 
 def load_consumption(path, verbose: int = 0):
 
@@ -73,8 +72,7 @@ def load_consumption(path, verbose: int = 0):
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute-regionale/
 # depth of historical data: 2013 to date (M-1)
 # Last processing
-#    December  2, 2025 4:28 PM (metadata)
-#    December  2, 2025 4:28 PM (data)
+#    January 13, 2026
 
 def load_consumption_by_region(path,
                                verbose: int = 0) -> [pd.DataFrame, List[float]]:
@@ -158,8 +156,7 @@ def load_weights(path, verbose: int = 0) -> Dict[str, float]:
 
 # https://odre.opendatasoft.com/explore/dataset/temperature-quotidienne-regionale/
 # Last processing
-#   December 12, 2025 3:00 AM (metadata)
-#   December  2, 2025 3:01 AM (data)
+#   January 3, 2026 3:00 AM (data)
 
 def load_temperature(
         path, weights,
@@ -193,7 +190,7 @@ def load_temperature(
     if 'Date' not in df.columns:
         raise RuntimeError(f"No date column found in {path}")
 
-    df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%y', utc=True)
+    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d', utc=True)
     df = df.set_index('Date').sort_index()
     df.index.name = "date"
 
@@ -224,6 +221,8 @@ def load_temperature(
 
     out = pd.DataFrame(index=Tavg.index)
     out["Tavg_degC"] = weighted_mean(Tavg, weights)
+    out["Tmin_degC"] = weighted_mean(Tmin, weights)
+    out["Tmax_degC"] = weighted_mean(Tmax, weights)
 
 
     # weighted averages by geographic cluster
@@ -261,58 +260,37 @@ def load_temperature(
 
     # 5. Build output features
 
+    # Regional spread (heterogeneity)
+    out["Tavg_région_spread_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
+
+
     for _cluster in CLUSTERS.keys():
-        # Averages
+        # Averages per type of T°, per région
         out[f"Tavg_{_cluster}_degC"] = Tavg[_cluster]
-        out[f"Tmin_{_cluster}_degC"] = Tmin[_cluster]
-        out[f"Tmax_{_cluster}_degC"] = Tmax[_cluster]
+        # out[f"Tmin_{_cluster}_degC"] = Tmin[_cluster]
+        # out[f"Tmax_{_cluster}_degC"] = Tmax[_cluster]
 
-        # # Cold / hot tails
-        # quantile_pc: int = 25
-        # out[f'Tavg_{_cluster}_q{quantile_pc}_degC'] = \
-        #         weighted_q(Tavg,  quantile_pc/100.)
-        # out[f'Tmin_{_cluster}_q{quantile_pc}_degC'] = \
-        #         weighted_q(Tmin,  quantile_pc/100.)
-        # out[f'Tmax_{_cluster}_q{quantile_pc}_degC'] = \
-        #         weighted_q(Tmax,1-quantile_pc/100.)
+        out[f"T_spread_{_cluster}_K"] = Tmax[_cluster] - Tmin[_cluster]
 
-        # Regional spread (heterogeneity)
-        out[f"T_spread_{_cluster}_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
+        # threshold relevant to heating, per région
+        Tref_degC = 15
+        out[f'Tavg_{_cluster}_inf_{Tref_degC}degC'] = \
+            Tavg[_cluster].clip(upper=Tref_degC)
 
+    # North-east: account for very cold days (even Tmax is low)
+    Tref_cold_degC = 6
+    out[f'Tmax_NE_inf_{Tref_cold_degC}degC']=Tmax['NE'].clip(upper=Tref_cold_degC)
 
-        # for heating, we care only about T_avg <= 15 °C, very cold days: T_avg <= 3 °C
-        # air-conditioning days: T_avg >= 22 °C
-        for (T, name_T) in zip([Tavg, Tmin, Tmax],  ['avg', 'min', 'max']):
-            for (Tref_degC, direction) in zip([15, 3, 22], ['low', 'low', 'high']):
-                if direction == 'low':  # heating
-                    Tsat = T[_cluster].clip(upper=Tref_degC)
-                    _direction_str = "inf"
-                else:  # air-conditioning
-                    Tsat = T[_cluster].clip(lower=Tref_degC)
-                    _direction_str = "sup"
-
-                name_Tsat = f'T{name_T}_{_cluster}_{_direction_str}_{Tref_degC}degC'
-                out[name_Tsat] = Tsat
-
-                # # fraction of the population heating/cooling
-                # _frac_avg = (Tsat < Tref_degC)\
-                #     .astype(int).mul(weights, axis=1).sum(axis=1)
-                # out['frac_'+name_Tsat]      = _frac_avg
-
-                if name_T == 'avg':
-                    for duration_days in ([3, 10] if Tref_degC <= 15 else [10]):
-                        Tsat_SMA = Tsat.rolling(duration_days,
-                                        min_periods=int(duration_days*.8)).mean()
-                        name_Tsat_SMA = f'{name_Tsat}_SMA_{duration_days}days'
-
-                        out[name_Tsat_SMA] = Tsat_SMA
-                        # out['frac_'+name_Tsat_SMA]= weighted_mean(Tsat_SMA).\
-                        #  rolling(duration_days, min_periods=int(duration_days*.8)).mean()
+    # south: account for air-conditioning (even Tmin is high)
+    Tref_AC_degC = 18
+    out[f'Tmin_S_sup_{Tref_AC_degC}degC']  = Tmin['S' ].clip(lower=Tref_AC_degC)
 
 
-
-        # drop temperatures that turn out to be useless in LR and RF
-        # out.drop(columns=['Tavg_sat2_degC', 'Tavg_sat22_degC'], inplace=True)
+    # simple moving average (SMA) for Tavg, per région
+    for _cluster in CLUSTERS.keys():
+        for duration_days in [3, 10]:
+            out[f'Tavg_SMA_{duration_days}days'] = Tavg[_cluster] \
+                .rolling(duration_days, min_periods=int(duration_days*.8)).mean()
 
 
     # para-dates
