@@ -55,11 +55,14 @@ DISTRIBUTIONS_BASELINES = {
 }
 
 DISTRIBUTIONS_NNTQ = {
-    'patch_length':IntDistribution(low=24, high=24),  # constant
-    'stride':      IntDistribution(low=12, high=12),  # constant
+    # number of steps
+    'patch_length':IntDistribution(low=12, high=36, step=6),
+    'stride':      IntDistribution(low= 6, high=12, step=3),
+    'input_length':IntDistribution(low=10*48,high=16*48,step=2*48),
+
     'epochs':      IntDistribution(low=20, high=45, step=1),
     'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.003,high=0.011, step=0.0004),
+    'learning_rate':FloatDistribution(low=0.003,high=0.013, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.25, step=0.01),
 
@@ -73,8 +76,9 @@ DISTRIBUTIONS_NNTQ = {
     'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
     'lambda_cold':    FloatDistribution(low=0.05,high=0.21, step=0.02),
-
-    'lambda_regions': FloatDistribution(low=0.,high=0.1, step=0.02),
+        # régional consumption
+    'lambda_regions': FloatDistribution(low=0.,   high=0.1, step=0.002),
+    'lambda_regions_sum':FloatDistribution(low=0.,high=0.5, step=0.02),
 
     'model_dim':    IntDistribution(low=90, high=360, step=1),
     'ffn_size':     IntDistribution(low=2, high=7, step=1),
@@ -186,12 +190,20 @@ def sample_NNTQ_parameters(
 
     p = base_params.copy()
 
+    # number of steps
+    if 'patch_length' in p:
+        p['patch_length' ] = trial.suggest_int  ('patch_length', 12, 48, step=12)
+    if 'stride' in p:
+        p['stride'       ] = trial.suggest_int  ('stride',        6, 12, step= 3)
+    if 'input_length' in p:
+        p['input_length' ] = trial.suggest_int  ('input_length',10*48,16*48,step=2*48)
+
     if 'epochs' in p:
         p['epochs'        ] = trial.suggest_int  ('epochs', 20, 45)
     if 'batch_size' in p:
         p['batch_size'    ] = trial.suggest_categorical('batch_size', [64, 96, 128])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.003,0.011,step=0.0004)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',0.003,0.013,step=0.0004)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
@@ -217,8 +229,12 @@ def sample_NNTQ_parameters(
                                                      -8., -2., step=0.1)
     if 'lambda_cold' in p:
         p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.05, 0.21,step=0.02)
+
+        # régional consumption
     if 'lambda_regions' in p:
-        p['lambda_regions'     ]= trial.suggest_float('lambda_regions', 0.0, 0.1,step=0.02)
+        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.05,step=0.002)
+    if 'lambda_regions_sum' in p:
+        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.3,0.5,step=0.02)
 
     # Architecture
     if 'model_dim' in p:
@@ -241,17 +257,24 @@ def sample_NNTQ_parameters(
     if 'min_delta' in p:
         p['min_delta'   ] = trial.suggest_float('min_delta', 0.030, 0.040, step=0.002)
 
+
     # derived
     if 'model_dim' in p and 'num_heads' in p and p['model_dim'] % p['num_heads'] != 0:
+        _old = p['model_dim']
         p['model_dim'] = int(p['num_heads'] * round(p['model_dim'] / p['num_heads']))
+        # if _old != p['model_dim']:
+        #     print(f"model_dim: {_old} -> {p['model_dim']}")
 
     if 'input_length' in p and 'features_in_future' in p and 'pred_length' in p and \
                 'patch_length' in p and 'stride' in p:
         p['num_patches'] = (
             p['input_length']
-            + p['features_in_future'] * p['pred_length']
+            + int(p['features_in_future']) * p['pred_length']
             - p['patch_length']
         ) // p['stride'] + 1
+        # print(f"num_patches: {p['num_patches']} = ({p['input_length']} "
+        #       f"+ {int(p['features_in_future']) * p['pred_length']} "
+        #       f"- {p['patch_length']}) // {p['stride']} + 1")
 
     return p
 
@@ -323,7 +346,7 @@ def plot_optuna(study,
 
 
     # Convergence
-    ######################♠
+    ######################
     df = study.trials_dataframe()
     df = df.sort_values("number")
     df["best_so_far"] = df["value"].cummin()
@@ -367,7 +390,7 @@ def plot_optuna(study,
 
 
     # best parameters (more robust than just the very best)
-    ######################♠
+    ######################
     print(f"shape: {df.shape} -> {df[numeric_cols + ['value']].shape}")
     # print(df[numeric_cols + ['value']])
     # Get the best N trials based on the objective value
@@ -387,7 +410,7 @@ def plot_optuna(study,
 
 
     # histogram
-    ######################♠
+    ######################
     df  = study.trials_dataframe()
     top = df.nsmallest(num_best_runs_hist, "value")
     top[['params_' + e for e in list_parameters_hist]].hist()
@@ -406,9 +429,9 @@ def cols_not_paras() -> List[str]:
         ['RF_type', 'RF_random_state', 'RF_n_jobs'] + \
         ['LGBM_type', 'LGBM_objective'] + \
         ['LGBM_random_state','LGBM_n_jobs',	'LGBM_verbose'] + \
-        ['input_length', 'pred_length', 'valid_length', 'num_patches'] + \
+        ['pred_length', 'valid_length', 'num_patches'] + \
         ['device', 'metaNN_device', 'features_in_future']
-        # ,'GB_boosting_type'
+        # ,'GB_boosting_type', 'input_length',
 
     # output
     cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
@@ -544,36 +567,39 @@ def run_Bayes_search(
         if stage == 'NNTQ':
             metamodel_parameters['epochs'] = 1  # for speed
 
-        dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-            (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
-                run.run_model_once(
-                  # configuration bundles
-                  baseline_parameters= baseline_parameters,
-                  NNTQ_parameters   = NNTQ_parameters,
-                  metamodel_NN_parameters=metamodel_parameters,
-                  dict_input_csv_fnames= dict_input_csv_fnames,
-                  trials_csv_path   = trials_csv_path,
+        try:
+            dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+                (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
+                    run.run_model_once(
+                      # configuration bundles
+                      baseline_parameters= baseline_parameters,
+                      NNTQ_parameters   = NNTQ_parameters,
+                      metamodel_NN_parameters=metamodel_parameters,
+                      dict_input_csv_fnames= dict_input_csv_fnames,
+                      trials_csv_path   = trials_csv_path,
 
-                  # statistics of the dataset
-                  minutes_per_step  = minutes_per_step,
-                  train_split_fraction=train_split_fraction,
-                  valid_ratio       = valid_ratio,
-                  forecast_hour     = forecast_hour,
-                  seed              = seed + trial.number,
+                      # statistics of the dataset
+                      minutes_per_step  = minutes_per_step,
+                      train_split_fraction=train_split_fraction,
+                      valid_ratio       = valid_ratio,
+                      forecast_hour     = forecast_hour,
+                      seed              = seed + trial.number,
 
-                  force_calc_baselines=force_calc_baselines,
-                  save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
-                  save_cache_NNTQ     = stage == 'meta',  # NNTQ      not sampled
+                      force_calc_baselines=force_calc_baselines,
+                      save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
+                      save_cache_NNTQ     = stage == 'meta',  # NNTQ      not sampled
 
-                  # XXX_EVERY (in epochs)
-                  validate_every    = 999,
-                  display_every     = 999,  # dummy
-                  plot_conv_every   = 999,  # dummy
+                      # XXX_EVERY (in epochs)
+                      validate_every    = 999,
+                      display_every     = 999,  # dummy
+                      plot_conv_every   = 999,  # dummy
 
-                  run_id            = trial.number,
-                  cache_dir         = cache_dir,
-                  verbose           = verbose
-        )
+                      run_id            = trial.number,
+                      cache_dir         = cache_dir,
+                      verbose           = verbose
+            )
+        except:
+            return np.nan
 
         # return the relevant loss
         if stage == 'NNTQ':

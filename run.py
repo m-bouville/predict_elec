@@ -30,7 +30,7 @@ import MC_search, Bayes_search, containers, architecture, \
 # V = validation horizon  = VALID_LENGTH
 # Q = number of quantiles = len(quantiles)
 # F = number of features
-# R ! number of régions (consumption)
+# R = number of régions (for consumption)
 
 
 

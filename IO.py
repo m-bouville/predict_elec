@@ -261,7 +261,7 @@ def load_temperature(
     # 5. Build output features
 
     # Regional spread (heterogeneity)
-    out["Tavg_région_spread_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
+    out["Tavg_region_spread_K"] = Tavg.max(axis=1) - Tavg.min(axis=1)
 
 
     for _cluster in CLUSTERS.keys():

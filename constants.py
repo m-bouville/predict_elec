@@ -92,7 +92,8 @@ NNTQ_PARAMETERS: dict = {
     'threshold_cold_degC':  5.,
     'lambda_cold'      :    0.13,
 
-    'lambda_regions'   :    0.1,  # TODO random
+    'lambda_regions'   :    0.05,
+    'lambda_regions_sum':   0.1,
 }
 
 NNTQ_PARAMETERS['num_patches'] = \
@@ -102,15 +103,26 @@ NNTQ_PARAMETERS['num_patches'] = \
 
 
 # # Optional: plug in Bayesian best parameters
-# NNTQ_PARAMETERS.update({ #'lasso_alpha': 0.0,
+NNTQ_PARAMETERS.update(
+    {'patch_length': 24, 'stride': 12, 'input_length': 768,
+     'epochs': 43, 'batch_size': 64, 'learning_rate': 0.0126, 'weight_decay': 3.517e-09,
+     'dropout': 0.08, 'lambda_cross': 0.08, 'lambda_coverage': 0.34,
+     'lambda_deriv': 0.032, 'lambda_median': 0.048, 'smoothing_cross': 0.045,
+     'threshold_cold_degC': 0.5, 'saturation_cold_degC': -7.3, 'lambda_cold': 0.09,
+     'lambda_regions': 0.022, 'lambda_regions_sum': 0.38, 'model_dim': 350,
+     'ffn_size': 3, 'num_heads': 7, 'num_layers': 1, 'num_geo_blocks': 8,
+     'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.036
+     }  # trial 206, loss 17.6 -> 43.9 [data -> 11/25]
 
-#     # 'epochs': 41, 'batch_size': 32, 'learning_rate': 0.0098, 'weight_decay': 1.125e-08,
-#     # 'dropout': 0.24, 'lambda_cross': 0.028, 'lambda_coverage': 0.34,
-#     # 'lambda_deriv': 0.064, 'lambda_median': 0.08, 'smoothing_cross': 0.025,
-#     # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -6.6, 'lambda_cold': 0.13,
-#     # 'model_dim': 301, 'ffn_size': 3, 'num_heads': 7, 'num_layers': 2,
-#     # 'num_geo_blocks': 5, 'warmup_steps': 2500, 'patience': 7, 'min_delta': 0.022
-#     # }  # loss 13 -> 20  => these are the values used above
+    # {'patch_length': 24, 'stride': 12, 'input_length': 768,
+    #  'epochs': 41, 'batch_size': 32, 'learning_rate': 0.0098, 'weight_decay': 1.125e-08,
+    # 'dropout': 0.24, 'lambda_cross': 0.028, 'lambda_coverage': 0.34,
+    # 'lambda_deriv': 0.064, 'lambda_median': 0.08, 'smoothing_cross': 0.025,
+    # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -6.6, 'lambda_cold': 0.13,
+    # 'lambda_regions': 0.0, 'lambda_regions_sum': 0.0,
+    # 'model_dim': 301, 'ffn_size': 3, 'num_heads': 7, 'num_layers': 2,
+    # 'num_geo_blocks': 5, 'warmup_steps': 2500, 'patience': 7, 'min_delta': 0.022
+    # }  # loss 13 -> 20 [data -> 10/25], 35.5 [11/25] => these are the values used above
 
 #     # 'epochs': 41, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.26e-08,
 #     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
@@ -118,7 +130,7 @@ NNTQ_PARAMETERS['num_patches'] = \
 #     # 'threshold_cold_degC': 2.1, 'saturation_cold_degC': -2.9, 'lambda_cold': 0.07,
 #     # 'model_dim': 348, 'ffn_size': 4, 'num_heads': 6, 'num_layers': 2,
 #     # 'num_geo_blocks': 9, 'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.03
-#     # }  # trial 165, loss 21.5 -> 22
+#     # }  # trial 165, loss 21.5 -> 22 [data -> 10/25]
 
 #     # 'epochs': 40, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.68e-09,
 #     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
@@ -126,8 +138,8 @@ NNTQ_PARAMETERS['num_patches'] = \
 #     # 'threshold_cold_degC': 3.0, 'saturation_cold_degC': -3.0, 'lambda_cold': 0.07,
 #     # 'model_dim': 348, 'ffn_size': 2, 'num_heads': 6, 'num_layers': 2,
 #     # 'num_geo_blocks': 9, 'warmup_steps': 1500, 'patience': 5, 'min_delta': 0.03
-#     # }  # loss 25 -> 30
-# )
+#     # }  # loss 25 -> 30 [data -> 10/25]
+)
 
 
 

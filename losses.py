@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------------
 
 
-from   typing import Dict, Tuple, List  # Sequence  #, Optional
+from   typing import Dict, Tuple  # , List Sequence  #, Optional
 
 import torch
 
@@ -422,12 +422,13 @@ def quantile_numpy(
 # losses for région consumptions
 # ----------------------------------------------------------------------
 
-# /!\ this is where we set what to what region each number in Y_regions_XX corresponds
+# NB: this is where we set to which region each number in Y_regions_XX corresponds
 
 def regions_torch(
-        Y_regions_pred  : torch.Tensor,     # (B, V, R)
-        Y_regions_true  : torch.Tensor,     # (B, V, R)
-        lambda_regions  : float
+        Y_regions_pred    : torch.Tensor,     # (B, V, R)
+        Y_regions_true    : torch.Tensor,     # (B, V, R)
+        lambda_regions    : float,   # comparing pred and true region by region
+        lambda_regions_sum: float    # comparing pred and true nationally
     ) -> torch.Tensor:
     """
     Torch loss for régional consumption forecasts.
@@ -440,14 +441,22 @@ def regions_torch(
     if lambda_regions <= 0.:
         return torch.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
-    err = (Y_regions_pred - Y_regions_true).abs().mean(dim=0)   # (V, R)
-    return lambda_regions * torch.sum(err, dim=1)               # (V)
+    # MAE region by region
+    abs_err= (Y_regions_pred - Y_regions_true).abs().mean(dim=0)   # (V, R)
+    out    = torch.sum(abs_err, dim=1)                             # (V)
+
+    # national total
+    err    = (Y_regions_pred - Y_regions_true)      .mean(dim=0)   # (V, R)
+    out   += torch.sum(err,      dim=1).abs() * lambda_regions_sum # (V)
+
+    return lambda_regions * out
 
 
 def regions_numpy(
-        Y_regions_pred  : np.ndarray,     # (B, V, R)
-        Y_regions_true  : np.ndarray,     # (B, V, R)
-        lambda_regions  : float
+        Y_regions_pred    : np.ndarray,     # (B, V, R)
+        Y_regions_true    : np.ndarray,     # (B, V, R)
+        lambda_regions    : float,   # comparing pred and true region by region
+        lambda_regions_sum: float    # comparing pred and true nationally
     ) -> np.ndarray:
     """
     NumPy loss for régional consumption forecasts.
@@ -460,6 +469,12 @@ def regions_numpy(
     if lambda_regions <= 0.:
         return np.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
-    err = np.abs(Y_regions_pred - Y_regions_true).mean(axis=0)      # (V, R)
-    return lambda_regions * np.sum(err, axis=1)                     # (V)
+    # MAE region by region
+    abs_err= np.abs(Y_regions_pred - Y_regions_true).mean(axis=0)   # (V, R)
+    out    =        np.sum(abs_err, axis=1)                         # (V)
 
+    # national total
+    err    =       (Y_regions_pred - Y_regions_true).mean(axis=0)   # (V, R)
+    out   += np.abs(np.sum(err,     axis=1)) * lambda_regions_sum   # (V)
+
+    return lambda_regions * out

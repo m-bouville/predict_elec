@@ -28,14 +28,12 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 
 
 
-
-
 if __name__ == "__main__":
 
 
     RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
-    MODE = 'Bayes_NNTQ'
+    MODE = 'once'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
     if RUN_FAST:

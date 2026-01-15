@@ -117,7 +117,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
         # print(self.data_subset.shape)
         # print("indices:", self.index_y_nation, self.indices_Y_regions)
         y_nation = self.data_subset[_range_future, self.index_y_nation]
-        Y_regions= self.data_subset[_range_future][:, self.indices_Y_regions]  # (L+H, R)
+        Y_regions= self.data_subset[_range_future][:, self.indices_Y_regions] #(L+H, R)
 
         # Temperatures
         T = self.temperatures_subset[_range_future]
@@ -409,17 +409,16 @@ class TransformerEncoderLayerWithAttn(nn.Module):
 
 
 # ============================================================
-# 5. TRANSFORMER MODEL (ENCODER → REPEAT LAST STATE)
-# - Modified minimally: add a small head to predict future non-target features
+# 5. TRANSFORMER MODEL
 # ============================================================
 
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, patch_length, stride, in_channels, d_model):
+    def __init__(self, patch_length, stride, in_channels, dim_model):
         super().__init__()
         self.proj = nn.Conv1d(
             in_channels = in_channels,
-            out_channels= d_model,
+            out_channels= dim_model,
             kernel_size = patch_length,
             stride      = stride
         )
@@ -507,15 +506,20 @@ class TimeSeriesTransformer(nn.Module):
 
         # guaranteeing: last patch ends exactly at t = L
         if self.pad_length > 0:
+            _old_shape = X.shape
             X = torch.nn.functional.pad(
                 X,
                 pad  = (0, 0, 0, self.pad_length),  # pad time dimension on the right
                 mode = "constant",
                 value= 0.
-        )
+                )
+            # print(f"pad_length = {self.pad_length}: {_old_shape} -> {X.shape}")
 
         # 1. Patch embedding
         h = self.patch_embed(X)                     # (B, num_patches, model_dim)
+        B, T, D = h.shape
+        assert T == self.num_patches, (T, self.num_patches)
+        assert D == self.dim_model,   (D, self.dim_model)
 
         # 2. Transformer encoder
         for layer in self.layers:
@@ -718,7 +722,8 @@ def subset_evolution_torch(
                      'median':    torch.zeros(valid_length, device=device)}
 
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
-    for (X_scaled, Y_regions_scaled, y_nation_scaled, T_degC, _, origin_unix) in subset_loader:
+    for (X_scaled, Y_regions_scaled, y_nation_scaled,
+         T_degC, _, origin_unix) in subset_loader:
         X_scaled_dev        = X_scaled.to(device)   # (B, L, F)
         Y_regions_scaled_dev= Y_regions_scaled.to(device)   # (B, H, R)
         y_nation_scaled_dev = y_nation_scaled .to(device)   # (B, H, 1)
@@ -750,11 +755,11 @@ def subset_evolution_torch(
                 loss_region_scaled_h_batch = losses.regions_torch(
                         pred_regions_scaled_dev[:, -valid_length:, :],     # (B, V, R)
                         Y_regions_scaled_dev   [:, -valid_length:, :],     # (B, V, R)
-                        model_NN.lambda_regions
+                        model_NN.lambda_regions, model_NN.lambda_regions_sum
                     )
-                loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+                loss_scaled_h_batch= loss_quantile_scaled_h_batch+loss_region_scaled_h_batch
             else:
-                loss_scaled_h_batch = loss_quantile_scaled_h_batch
+                loss_scaled_h_batch= loss_quantile_scaled_h_batch
 
         amp_scaler.scale(loss_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -808,7 +813,8 @@ def subset_evolution_numpy(
     # print("initial:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
     # main loop
-    for (X_scaled, Y_regions_scaled, y_nation_scaled, T_degC, _, origin_unix) in subset_loader:
+    for (X_scaled, Y_regions_scaled, y_nation_scaled,
+         T_degC, _, origin_unix) in subset_loader:
         X_scaled_dev             = X_scaled.to(device)
         Y_regions_scaled_cpu     = Y_regions_scaled[:, :, :].cpu().numpy() # (B, H, R)
         y_median_nation_scaled_cpu=y_nation_scaled [:, :, 0].cpu().numpy() # (B, H)
@@ -838,11 +844,11 @@ def subset_evolution_numpy(
             loss_region_scaled_h_batch = losses.regions_numpy(
                     pred_regions_scaled_cpu[:, -valid_length:, :],     # (B, V, R)
                     Y_regions_scaled_cpu   [:, -valid_length:, :],     # (B, V, R)
-                    model_NN.lambda_regions
+                    model_NN.lambda_regions, model_NN.lambda_regions_sum
                 )
-            loss_scaled_h_batch = loss_quantile_scaled_h_batch + loss_region_scaled_h_batch
+            loss_scaled_h_batch= loss_quantile_scaled_h_batch+loss_region_scaled_h_batch
         else:
-            loss_scaled_h_batch = loss_quantile_scaled_h_batch
+            loss_scaled_h_batch= loss_quantile_scaled_h_batch
 
 
         # print("batch:\n", loss_scaled_h_batch.round(2))

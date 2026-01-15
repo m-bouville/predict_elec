@@ -343,6 +343,7 @@ class NeuralNet:
     lambda_cold      : Optional[float] = None
 
     lambda_regions   : Optional[float] = None
+    lambda_regions_sum:Optional[float] = None
 
 
 

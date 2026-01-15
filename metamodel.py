@@ -509,11 +509,11 @@ def metamodel_NN(data_train,
 
         if verbose > 0:
             print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
-            print(f"Average test weights:"
-                  f"NNTQ={avg_weights_test['NNTQ']*100:5.1f}%,"
-                    f"LR={avg_weights_test['LR'  ]*100:5.1f}%,"
-                    f"RF={avg_weights_test['RF'  ]*100:5.1f}%,"
-                  f"LGBM={avg_weights_test['LGBM']*100:5.1f}%")
+            print(f"Average test weights: "
+                  f"NNTQ{avg_weights_test['NNTQ']*100:5.1f}%, "
+                    f"LR{avg_weights_test['LR'  ]*100:5.1f}%, "
+                    f"RF{avg_weights_test['RF'  ]*100:5.1f}%, "
+                  f"LGBM{avg_weights_test['LGBM']*100:5.1f}%")
     else:
         avg_weights_test = None
 
