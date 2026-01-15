@@ -195,7 +195,6 @@ def postprocess(baseline_parameters   : Dict[str, Any],
                 avg_weights_meta_NN   : Dict[str, float],
                 avg_abs_worst_days_test:float,
                 run_id                : int,
-                csv_path              : str   = 'parameter_search.csv',
                 verbose               : int   = 0
                 ) -> [Dict[str, Any], [float, float]]:
 
@@ -251,15 +250,6 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     }
     # print(row)
 
-    df_row = pd.DataFrame([row])
-    df_row.to_csv(
-        csv_path,
-        mode   = "a",
-        header = not os.path.exists(csv_path),
-        index  = False,
-        float_format="%.6f"
-    )
-
     return row, (_loss_NNTQ, _loss_meta)
 
 
@@ -287,7 +277,7 @@ def run_model_once(
         run_id            : int,
 
         cache_dir         : str  = "cache",
-        trials_csv_path   : str  = 'parameter_search.csv',
+        # trials_csv_path   : str  = 'parameter_search.csv',
         num_worst_days    : int  = 20,
         verbose           : int  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
@@ -536,8 +526,7 @@ def run_model_once(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
         len(cols_features),
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        avg_abs_worst_days_test_NN_median, run_id, trials_csv_path, verbose)
-
+        avg_abs_worst_days_test_NN_median, run_id, verbose)
 
     if torch.cuda.is_available():
         # clear VRAM
@@ -600,7 +589,7 @@ def run_model(
                 metamodel_NN_parameters= metamodel_NN_parameters,
 
                 dict_input_csv_fnames= dict_input_csv_fnames,
-                trials_csv_path   = 'parameter_search_one-off.csv',
+                # trials_csv_path   = 'parameter_search_one-off.csv',
 
                 # statistics of the dataset
                 minutes_per_step  = minutes_per_step,
@@ -622,6 +611,16 @@ def run_model(
                 cache_dir         = cache_dir,
                 verbose           = verbose
             )
+
+        df_row = pd.DataFrame([dict_row])
+        df_row.to_csv(
+            'parameter_search_one-off.csv',
+            mode   = "a",
+            header = not os.path.exists('parameter_search_one-off.csv'),
+            index  = False,
+            float_format="%.6f"
+        )
+
         if verbose > 0:
             print(f"loss_NNTQ = {_loss_NNTQ:.2f}, loss_meta = {_loss_meta:.2f}")
 
