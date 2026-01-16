@@ -222,9 +222,9 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     del metamodel_parameters["num_cells"]
     metamodel_parameters.update(_dict_num_cells)
 
-    _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
-                           verbose=verbose)
-    _loss_meta = loss_meta(flat_metrics, verbose=verbose)
+    _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
+                           verbose=verbose), 2)
+    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 3)
 
     # BUG: this does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
@@ -245,8 +245,9 @@ def postprocess(baseline_parameters   : Dict[str, Any],
            for (key, value) in avg_weights_meta_NN.items()},
         **flat_metrics,   # bias, RMSE, MAE
         'avg_abs_worst_days_test': avg_abs_worst_days_test,
+        'num_runs' : 1,
         "loss_NNTQ": _loss_NNTQ,
-        "loss_meta": _loss_meta
+        "loss_meta": _loss_meta,
     }
     # print(row)
 
@@ -255,31 +256,31 @@ def postprocess(baseline_parameters   : Dict[str, Any],
 
 def run_model_once(
         # configuration bundles
-        baseline_parameters:Dict[str, Dict[str, Any]],
-        NNTQ_parameters   : Dict[str, Any],
+        baseline_parameters : Dict[str, Dict[str, Any]],
+        NNTQ_parameters     : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
-        dict_input_csv_fnames: Dict[str, str],
+        dict_input_csv_fnames:Dict[str, str],
         # statistics of the dataset
-        minutes_per_step  : int,
-        train_split_fraction:float,
-        valid_ratio       : float,
-        forecast_hour     : int,
-        seed              : int,
+        minutes_per_step    : int,
+        train_split_fraction: float,
+        valid_ratio         : float,
+        forecast_hour       : int,
+        seed                : int,
 
-        force_calc_baselines:bool,
+        force_calc_baselines: bool,
         save_cache_baselines: bool,
         save_cache_NNTQ     : bool,
 
         # XXX_EVERY (in epochs)
-        validate_every    : int,
-        display_every     : int,
-        plot_conv_every   : int,
-        run_id            : int,
+        validate_every      : int,
+        display_every       : int,
+        plot_conv_every     : int,
+        run_id              : int,
 
-        cache_dir         : str  = "cache",
-        # trials_csv_path   : str  = 'parameter_search.csv',
-        num_worst_days    : int  = 20,
-        verbose           : int  = 0
+        cache_dir           : str  = "cache",
+        # trials_csv_path     : str  = 'parameter_search.csv',
+        num_worst_days      : int  = 20,
+        verbose             : int  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
 
@@ -547,7 +548,7 @@ def run_model_once(
 
 def run_model(
         mode                : str,  # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta']
-        num_runs            : Optional[int],
+        num_trials          : Optional[int],
 
         # configuration bundles
         baseline_parameters : Dict[str, Dict[str, Any]],
@@ -576,8 +577,8 @@ def run_model(
                Dict[str, float], Dict[str, float], float, float]:
 
     if mode == 'once':  # single run
-        if num_runs in locals() and num_runs > 1:
-            warnings.warn(f"num_runs ({num_runs}) will not nbe used")
+        if num_trials in locals() and num_trials > 1:
+            warnings.warn(f"num_runs ({num_trials}) will not be used")
 
         dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
             (num_worst_days, avg_abs_worst_days_test_NN_median), \
@@ -653,7 +654,7 @@ def run_model(
 
         parameter_search_function(
                 stage               = stage,
-                num_runs            = num_runs,
+                num_trials          = num_trials,
                 trials_csv_path     = f'parameter_search_{stage}.csv',
 
                 # configuration bundles

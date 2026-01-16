@@ -471,10 +471,11 @@ def load_frozen_trials(csv_path     : str,
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
 
     # check consistency
+    _special_keys = {'timestamp', 'num_runs', 'loss_NNTQ', 'loss_meta'}
     assert set(distributions.keys()) - set(results_df.columns) == set(), \
         set(distributions.keys()) - set(results_df.columns)
     assert set(results_df.columns) - set(distributions.keys()) == \
-                {'timestamp', 'loss_NNTQ_1run', 'loss_NNTQ_avg', 'loss_meta'}, \
+                _special_keys, \
                     set(results_df.columns) - set(distributions.keys())
 
 
@@ -483,20 +484,15 @@ def load_frozen_trials(csv_path     : str,
     distributions_keys = distributions.keys()
     for index, row in results_df.iterrows():
         # print(index)  #, row)
-        _params = {k: row[k] for k in row.keys()
-            if k not in ['timestamp', 'loss_NNTQ_1run', 'loss_NNTQ_avg', 'loss_meta']}
+        _params = {k: row[k] for k in row.keys() if k not in _special_keys}
         assert set(_params.keys()) - set(distributions_keys) == set(), \
                set(_params.keys()) - set(distributions_keys)
         assert set(distributions_keys) - set(_params.keys()) == set(), \
                set(distributions_keys) - set(_params.keys())
 
         # relevant loss
-        _loss_NNTQ = row['loss_NNTQ_avg'] if not pd.isna(row['loss_NNTQ_avg']) \
-                        else row['loss_NNTQ_1run']
-        _value = _loss_NNTQ + row['loss_meta'] if stage == 'all' \
-            else (_loss_NNTQ if stage == 'NNTQ' else row[f'loss_{stage}'])
-
-        # print(stage, index, row['loss_NNTQ_avg'], row['loss_NNTQ_1run'], _loss_NNTQ, _value)
+        _value = row['loss_NNTQ'] + row['loss_meta'] if stage == 'all' \
+            else row[f'loss_{stage}']
 
         trial = optuna.trial.FrozenTrial(
             number        = index,  # Trial number
@@ -524,7 +520,7 @@ def load_frozen_trials(csv_path     : str,
 
 def run_Bayes_search(
             stage               : str,    # in ['NNTQ', 'meta', 'all']
-            num_runs            : int,
+            num_trials          : int,
 
             # configuration bundles
             base_baseline_params: Dict[str, Dict[str, Any]],
@@ -541,8 +537,27 @@ def run_Bayes_search(
             seed                : int,
             force_calc_baselines: bool   = False,
             cache_dir           : Optional[str] = None,
+
+            num_runs            : int  = {'NNTQ': 5,   'meta': 1},
+            min_num_trials      : int  = 20,
+            wiggle_value        : dict = {'NNTQ': 0.5, 'meta': 0.05},
+
             verbose             : int  = 0
         ):
+
+
+    num_runs     = num_runs    [stage]
+    wiggle_value = wiggle_value[stage]
+
+    # average after excluding min and max
+    def clean_avg(l: List[float]) -> float:
+        if len(l) < 3:
+            return np.mean(l)
+
+        _list = l.copy()
+        _list.remove(min(_list))
+        _list.remove(max(_list))
+        return np.mean(_list)
 
 
     def objective(trial: optuna.Trial) -> float:
@@ -571,15 +586,13 @@ def run_Bayes_search(
         if stage == 'NNTQ':
             metamodel_parameters['epochs'] = 1  # for speed
 
-        num_runs = 5 if stage == 'NNTQ' else 1
-
 
         # print(stage, trial.number, num_runs)
 
         # try:
         for i in range(num_runs):
             dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-                (num_worst_days, worst_days_test), (_loss_NNTQ_1run, _loss_meta) = \
+                (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
                     run.run_model_once(
                       # configuration bundles
                       baseline_parameters= baseline_parameters  .copy(),
@@ -611,62 +624,47 @@ def run_Bayes_search(
             # print(trial.number, i, num_runs,
             #    (_loss_NNTQ_1run, _loss_meta), trial.study.best_trial.value)
 
-            if stage=='NNTQ' and num_runs > 1 and trial.number > 20:
+            if stage=='NNTQ' and num_runs > 1 and trial.number > min_num_trials:
                 if i == 0: # we must decide whether to run more
-                    if _loss_NNTQ_1run <= trial.study.best_trial.value:
-                        _list_losses_NNTQ = [_loss_NNTQ_1run]
+                    if _loss_NNTQ <= trial.study.best_trial.value + wiggle_value:
+                        _list_losses_NNTQ = [_loss_NNTQ]
                         _list_losses_meta = [_loss_meta]
-                        _loss_NNTQ_first_run = _loss_NNTQ_1run
-                        print(f"(potential) NEW record: {_loss_NNTQ_1run} "
-                              f"against {trial.study.best_trial.value}")
+                        print(f"(potential) NEW record: {_loss_NNTQ:.1f} "
+                              f"against {trial.study.best_trial.value:.1f}")
                     else:
-                        _loss_NNTQ = _loss_NNTQ_1run
-                        dict_row['loss_NNTQ_1run'] = _loss_NNTQ_1run
-                        dict_row['loss_NNTQ_avg' ] = np.nan
-                        # print(f"no new record: {_loss_NNTQ_1run} "
-                        #       f"against {trial.study.best_trial.value}")
-                        break  # do not run more than once
+                        break  # no need to run more than once
 
                 else:  # we committed to running `num_runs` times
-                    _list_losses_NNTQ.append(_loss_NNTQ_1run)
+                    _list_losses_NNTQ.append(_loss_NNTQ)
                     _list_losses_meta.append(_loss_meta)
                     # print(i, _list_losses_NNTQ)
 
-                if i == num_runs-1:  # done
+                if i == num_runs-1:  # we just ran the last
+                    dict_row['num_runs'] = num_runs
+
                     # average after excluding min and max
-                    _list_losses_NNTQ.remove(min(_list_losses_NNTQ))
-                    _list_losses_NNTQ.remove(max(_list_losses_NNTQ))
-                    dict_row['loss_NNTQ_avg'] = round(np.mean(_list_losses_NNTQ), 5)
+                    dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
+                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 3)
 
-                    _list_losses_meta.remove(min(_list_losses_meta))
-                    _list_losses_meta.remove(max(_list_losses_meta))
-                    _loss_meta = round(np.mean(_list_losses_meta), 6)
+                    _loss_NNTQ = dict_row['loss_NNTQ']
+                    _loss_meta = dict_row['loss_meta']
 
-                    dict_row['loss_NNTQ_1run'] = _loss_NNTQ_first_run
-
-                    _loss_NNTQ = dict_row['loss_NNTQ_avg' ]
                     print(f"Ran {num_runs} times for trial {trial.number}, losses "
-                          f"1st {_loss_NNTQ_first_run:.3f} -> "
-                          f"avg {dict_row['loss_NNTQ_avg']:.3f}")
+                          f"{_list_losses_NNTQ} -> avg {_loss_NNTQ:.3f}")
 
-            if stage=='NNTQ' and (num_runs == 1 or trial.number <= 20):
-                _loss_NNTQ                 = _loss_NNTQ_1run  # no multi-run result
-                dict_row['loss_NNTQ_1run'] = _loss_NNTQ_1run
-                dict_row['loss_NNTQ_avg' ] = np.nan
+        # if stage=='NNTQ':
+        #     dict_row.pop('loss_NNTQ')  # replaced by 2 variants
+        #     # print(_loss_NNTQ, dict_row['loss_NNTQ_1run'], dict_row['loss_NNTQ_avg'])
 
-        if stage=='NNTQ':
-            dict_row.pop('loss_NNTQ')  # replaced by 2 variants
-            # print(_loss_NNTQ, dict_row['loss_NNTQ_1run'], dict_row['loss_NNTQ_avg'])
+        #     df_row = pd.DataFrame([dict_row])
 
-            df_row = pd.DataFrame([dict_row])
+        #     # reorder columns for compatibility with csv
+        #     new_order_last_3 = ['loss_NNTQ_1run', 'loss_NNTQ_avg', 'loss_meta']
+        #     df_row = df_row[df_row.columns.tolist()[:-3] + new_order_last_3]
 
-            # reorder columns for compatibility with csv
-            new_order_last_3 = ['loss_NNTQ_1run', 'loss_NNTQ_avg', 'loss_meta']
-            df_row = df_row[df_row.columns.tolist()[:-3] + new_order_last_3]
-
-        else:
-            df_row = pd.DataFrame([dict_row])
-
+        # else:
+        #     df_row = pd.DataFrame([dict_row])
+        df_row = pd.DataFrame([dict_row])
 
         # except:
         #     return np.nan
@@ -716,8 +714,8 @@ def run_Bayes_search(
 
 
     # Run optimization
-    print(f"\nStarting {num_runs} Bayesian trials ({stage})...")
-    study.optimize(objective, n_trials=num_runs)
+    print(f"\nStarting {num_trials} Bayesian trials ({stage})...")
+    study.optimize(objective, n_trials=num_trials)
 
 
     # Print the best parameters found

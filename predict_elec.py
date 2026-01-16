@@ -22,7 +22,6 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 # TODO make the metamodel reduce the bias (how?)
 # TODO have separate public holidays, as with the school holidays
 # TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
-# use several samples in NNTQ Bayesian searches for promising cases
 
 
 
@@ -33,7 +32,7 @@ if __name__ == "__main__":
 
     RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
-    MODE = 'once'
+    MODE = 'Bayes_NNTQ'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
     if RUN_FAST:
@@ -42,11 +41,11 @@ if __name__ == "__main__":
 
 
     if MODE in ['once']:
-        num_runs =  1
+        num_trials =  1
         VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = True  # VERBOSE >= 3
     else:
-        num_runs = 60
+        num_trials = 30
         force_calc_baselines = False
         VERBOSE: int = 0
 
@@ -58,7 +57,7 @@ if __name__ == "__main__":
 
     run.run_model(
         mode                = MODE,
-        num_runs            = num_runs,
+        num_trials          = num_trials,
 
         # configuration bundles
         baseline_parameters = BASELINES_PARAMETERS,

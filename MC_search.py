@@ -218,7 +218,7 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
 
 def run_Monte_Carlo_search(
             stage               : str,    # only 'all' is implemented
-            num_runs            : int,
+            num_trials          : int,
 
             # configuration bundles
             base_baseline_params: Dict[str, Dict[str, Any]],
@@ -249,7 +249,7 @@ def run_Monte_Carlo_search(
     # rng = np.random.default_rng(seed)
     list_results = []
 
-    for run_id in trange(num_runs, desc="MC runs"):
+    for run_id in trange(num_trials, desc="MC runs"):
         # print(f"Starting run {run_id} out of {num_runs}")
         # meta_cfg = sample_meta_params(base_meta_NN_params, rng)
 
