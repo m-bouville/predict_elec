@@ -35,7 +35,7 @@ DISTRIBUTIONS_BASELINES = {
     'LR_max_iter':   IntDistribution(low=2000, high=2000),  # constant
 
     # random forest
-    'RF_n_estimators': IntDistribution(low=300, high=700, step=10),
+    'RF_n_estimators': IntDistribution(low=200, high=700, step=10),
     'RF_max_depth':    IntDistribution(low=15, high=25, step=1),
     'RF_min_samples_leaf': IntDistribution(low= 8, high=20, step=1),
     'RF_min_samples_split':IntDistribution(low=12, high=25, step=1),
@@ -43,15 +43,15 @@ DISTRIBUTIONS_BASELINES = {
 
     # gradient boosting (LGBM)
     'LGBM_boosting_type':CategoricalDistribution(choices=['gbdt']),
-    'LGBM_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1]),
-    'LGBM_max_depth':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
-    'LGBM_learning_rate':FloatDistribution(low=0.01, high=0.15,step=0.01),
-    'LGBM_n_estimators': IntDistribution  (low=300,  high=650, step=10),
-    'LGBM_min_child_samples':IntDistribution(low=10, high=25,  step=1),
+    'LGBM_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1, 64-1]),
+    'LGBM_max_depth':    IntDistribution  (low=2,  high=10, step=1),
+    'LGBM_learning_rate':FloatDistribution(low=0.001, high=0.15,step=0.001),
+    'LGBM_n_estimators': IntDistribution  (low=300,  high=850, step=10),
+    'LGBM_min_child_samples':IntDistribution(low= 6, high=25,  step=1),
     'LGBM_subsample':    FloatDistribution(low=0.6,  high=1.0, step=0.02),
     'LGBM_colsample_bytree':FloatDistribution(low=0.6,high=1.0,step=0.02),
-    'LGBM_reg_alpha':    FloatDistribution(low=0.05, high=0.3, step=0.01),
-    'LGBM_reg_lambda':   FloatDistribution(low=0.05, high=0.3, step=0.01)
+    'LGBM_reg_alpha':    FloatDistribution(low=0.04, high=0.3, step=0.01),
+    'LGBM_reg_lambda':   FloatDistribution(low=0.0, high=0.3, step=0.005)
 }
 
 DISTRIBUTIONS_NNTQ = {
@@ -95,12 +95,12 @@ DISTRIBUTIONS_NNTQ = {
 DISTRIBUTIONS_METAMODEL_NN = {
     'metaNN_epochs':      IntDistribution(low=1, high=20, step=1),  # 1: NNTQ search
     'metaNN_batch_size':  CategoricalDistribution(
-        choices=[96, 128, 192, 256, 384, 512, 640]),
-    'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0040, step=0.0001),
+        choices=[16, 32, 64, 96, 128, 192, 256, 384, 512, 640]),
+    'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0050, step=0.0001),
     'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
-    'metaNN_dropout':     FloatDistribution(low=0., high=0.4,step=0.01),
+    'metaNN_dropout':     FloatDistribution(low=0., high=0.4,step=0.001),
     'metaNN_num_cells_0': IntDistribution  (low=24, high=64, step=8),
-    'metaNN_num_cells_1': IntDistribution  (low=12, high=32, step=4),
+    'metaNN_num_cells_1': IntDistribution  (low= 8, high=32, step=4),
     'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
     'metaNN_factor':      FloatDistribution(low=0.6, high=0.85, step=0.01),
 }
@@ -145,9 +145,9 @@ def sample_baseline_parameters(
 
         elif _baseline == 'RF':
             if 'n_estimators' in p:  # number of trees in the Random Forest
-                p['n_estimators'] = trial.suggest_int('RF_n_estimators', 300, 600, step=10)
+                p['n_estimators'] = trial.suggest_int('RF_n_estimators', 200, 600, step=10)
             if 'max_depth' in p:     # maximum depth of the trees
-                p['max_depth'] = trial.suggest_int('RF_max_depth', 18, 25, step=1)
+                p['max_depth'] = trial.suggest_int('RF_max_depth', 15, 25, step=1)
             if 'min_samples_leaf' in p:   # minimum number of samples required a leaf node
                 p['min_samples_leaf']= trial.suggest_int('RF_min_samples_leaf',  8, 18,step=1)
             if 'min_samples_split' in p:   # min number of samples to split an internal node
@@ -162,23 +162,23 @@ def sample_baseline_parameters(
             if 'boosting_type' in p:   # TODO add more?
                 p['boosting_type'] = trial.suggest_categorical('LGBM_boosting_type', ['gbdt'])
             if 'num_leaves' in p:
-                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves', [8-1, 16-1, 32-1])
+                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves', [8-1,16-1,32-1,64-1])
             if 'max_depth' in p:
-                p['max_depth'] = trial.suggest_categorical('LGBM_max_depth', [2, 3, 4, 5, 6])
+                p['max_depth'] = trial.suggest_int('LGBM_max_depth', 2, 10)
             if 'learning_rate' in p:
-                p['learning_rate']=trial.suggest_float('LGBM_learning_rate', 0.01,0.15, step=0.01)
+                p['learning_rate']=trial.suggest_float('LGBM_learning_rate',0.001,0.15,step=0.001)
             if 'n_estimators' in p:
-                p['n_estimators'] = trial.suggest_int('LGBM_n_estimators', 300, 650, step=10)
+                p['n_estimators'] = trial.suggest_int('LGBM_n_estimators', 300, 850, step=10)
             if 'min_child_samples' in p:
-                p['min_child_samples']=trial.suggest_int('LGBM_min_child_samples', 12, 22, step=1)
+                p['min_child_samples']=trial.suggest_int('LGBM_min_child_samples',6,22,step=1)
             if 'subsample' in p:
-                p['subsample'] = trial.suggest_float('LGBM_subsample', 0.6, 1.0, step=0.1)
+                p['subsample'] = trial.suggest_float('LGBM_subsample', 0.6, .94, step=0.02)
             if 'colsample_bytree' in p:   # fraction of features used for each tree
-                p['colsample_bytree']= trial.suggest_float('LGBM_colsample_bytree',0.6,1.,step=0.1)
+                p['colsample_bytree']=trial.suggest_float('LGBM_colsample_bytree',.6,.94,step=0.02)
             if 'reg_alpha' in p:   # L1 regularization
-                p['reg_alpha'] = trial.suggest_float('LGBM_reg_alpha', 0.05, 0.15, step=0.01)
+                p['reg_alpha'] = trial.suggest_float('LGBM_reg_alpha', 0.04, 0.15, step=0.01)
             if 'reg_lambda' in p:   # L2 regularization
-                p['reg_lambda']= trial.suggest_float('LGBM_reg_lambda',0.05, 0.15, step=0.01)
+                p['reg_lambda']= trial.suggest_float('LGBM_reg_lambda',0., 0.15, step=0.005)
 
     return p0
 
@@ -290,18 +290,18 @@ def sample_metamodel_NN_parameters(
         p['epochs']      = trial.suggest_int('metaNN_epochs', 12, 20)
     if 'batch_size' in p:
         p['batch_size']  = trial.suggest_categorical(
-            'metaNN_batch_size', [96, 128, 192, 256, 384, 512, 640])
+            'metaNN_batch_size', [16, 32, 64, 96, 128, 192, 256, 384, 512, 640])
     if 'learning_rate' in p:
         p['learning_rate']=trial.suggest_float('metaNN_learning_rate',
-                                               low=0.0005, high=0.0040, step=0.0005)
+                                               low=0.0005, high=0.0050, step=0.0005)
     if 'weight_decay' in p:    # BUG: 0 in csv at start
         p['weight_decay']= trial.suggest_float('metaNN_weight_decay',5e-9,10e-5,log=True)
     if 'dropout' in p:
-        p['dropout']     = trial.suggest_float('metaNN_dropout', 0.0, 0.2, step=0.01)
+        p['dropout']     = trial.suggest_float('metaNN_dropout', 0.0, 0.2, step=0.001)
 
     if 'num_cells' in p:
         p['num_cells']= [trial.suggest_int('metaNN_num_cells_0', 24, 64, step=8),
-                         trial.suggest_int('metaNN_num_cells_1', 12, 32, step=4)]
+                         trial.suggest_int('metaNN_num_cells_1',  8, 32, step=4)]
 
     # Early stopping
     if 'metaNN_patience' in p:
@@ -337,9 +337,10 @@ def run_Bayes_search(
             force_calc_baselines: bool   = False,
             cache_dir           : Optional[str] = None,
 
-            num_runs            : int  = {'NNTQ': 7,  'meta': 1},
-            min_num_trials      : int  = 20,
-            wiggle_value        : dict = {'NNTQ': 5., 'meta': 0.05},
+            # multi-run for best candidtes (robustness)
+            num_runs            : int  = {'NNTQ': 7,  'meta': 5},
+            min_num_trials      : int  = 10,
+            wiggle_value        : dict = {'NNTQ': 5., 'meta': 0.007},
 
             verbose             : int  = 0
         ):
@@ -422,13 +423,15 @@ def run_Bayes_search(
             # print(trial.number, i, num_runs,
             #    (_loss_NNTQ_1run, _loss_meta), trial.study.best_trial.value)
 
-            if stage=='NNTQ' and num_runs > 1 and trial.number > min_num_trials:
+            _loss_1run = _loss_NNTQ if stage == 'NNTQ' else _loss_meta
+
+            if num_runs > 1 and trial.number > min_num_trials:
                 if i == 0: # we must decide whether to run more
-                    if _loss_NNTQ <= trial.study.best_trial.value + wiggle_value:
+                    if _loss_1run <= trial.study.best_trial.value + wiggle_value:
                         _list_losses_NNTQ = [_loss_NNTQ]
                         _list_losses_meta = [_loss_meta]
-                        print(f"potential new record: {_loss_NNTQ:.2f} "
-                              f"against {trial.study.best_trial.value:.2f} "
+                        print(f"potential new record: {_loss_1run} "
+                              f"against {trial.study.best_trial.value} "
                               f"=> starting {num_runs-1} more runs...")
                     else:
                         break  # no need to run more than once
@@ -443,13 +446,14 @@ def run_Bayes_search(
 
                     # average after excluding min and max
                     dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
-                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 3)
+                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 4)
 
                     _loss_NNTQ = dict_row['loss_NNTQ']
                     _loss_meta = dict_row['loss_meta']
 
                     print(f"{num_runs} runs: losses "
-                          f"{_list_losses_NNTQ} -> avg {_loss_NNTQ:.2f}")
+                          f"{_list_losses_NNTQ if stage == 'NNTQ' else _list_losses_meta} "
+                          f"-> avg {dict_row[f'loss_{stage}']}")
 
         df_row = pd.DataFrame([dict_row])
 
@@ -494,7 +498,10 @@ def run_Bayes_search(
                              # "learning_rate", "dropout"
                              ] \
         if stage == 'NNTQ' else \
-            ['LR_alpha', 'RF_max_depth', 'GB_max_depth', 'metaNN_learning_rate']
+            [ 'LGBM_min_child_samples', 'LGBM_reg_alpha', 'LGBM_colsample_bytree',
+             'metaNN_learning_rate', 'metaNN_num_cells_1', 'RF_min_samples_split'
+            # 'LR_alpha', 'RF_max_depth', 'LGBM_max_depth', 'metaNN_learning_rate'
+             ]
     # plot_optuna(study, ist_parameters_hist=_list_parameters_hist)
 
 
@@ -514,7 +521,7 @@ def run_Bayes_search(
 
 
     # Plotting
-    plot_optuna(study, list_parameters_hist=_list_parameters_hist)
+    plot_optuna(study, stage, list_parameters_hist=_list_parameters_hist)
 
 
     return study.best_params
@@ -526,6 +533,7 @@ def run_Bayes_search(
 # -------------------------------------------------------
 
 def plot_optuna(study,
+                stage                   : str,
                 list_parameters_hist    : List[str],
                 num_best_runs_params    : int =  5,
                 num_best_runs_hist      : int = 15,
@@ -562,6 +570,8 @@ def plot_optuna(study,
     import matplotlib.pyplot as plt
     plt.figure()
     df.plot(x="number", y=["value", "best_so_far"])
+    plt.xlabel("trial number")
+    plt.ylabel(f"{stage} loss")
     plt.yscale('log')
     plt.show()
 

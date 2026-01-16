@@ -15,24 +15,13 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 
 
 
-# BUG NNTQ misses whole days for no apparent reason
-# BUG bias => bad coverage of quantiles.
-# TODO make future T° noisy to mimic the uncertainty of forecasts
-# BUG RF and Boosting generalize poorly
-# TODO make the metamodel reduce the bias (how?)
-# TODO have separate public holidays, as with the school holidays
-# TODO add `q75` minus `q25` (uncertainty proxy) to NN metamodel
-
-
-
-
 
 if __name__ == "__main__":
 
 
     RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
-    MODE = 'Bayes_NNTQ'
+    MODE = 'Bayes_meta'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
     if RUN_FAST:
@@ -45,7 +34,7 @@ if __name__ == "__main__":
         VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = True  # VERBOSE >= 3
     else:
-        num_trials = 30
+        num_trials = 10
         force_calc_baselines = False
         VERBOSE: int = 0
 
