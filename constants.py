@@ -104,42 +104,50 @@ NNTQ_PARAMETERS['num_patches'] = \
 
 # # Optional: plug in Bayesian best parameters
 NNTQ_PARAMETERS.update(
-    {'patch_length': 24, 'stride': 12, 'input_length': 768,
-     'epochs': 43, 'batch_size': 64, 'learning_rate': 0.0126, 'weight_decay': 3.517e-09,
-     'dropout': 0.08, 'lambda_cross': 0.08, 'lambda_coverage': 0.34,
-     'lambda_deriv': 0.032, 'lambda_median': 0.048, 'smoothing_cross': 0.045,
-     'threshold_cold_degC': 0.5, 'saturation_cold_degC': -7.3, 'lambda_cold': 0.09,
-     'lambda_regions': 0.022, 'lambda_regions_sum': 0.38, 'model_dim': 350,
-     'ffn_size': 3, 'num_heads': 7, 'num_layers': 1, 'num_geo_blocks': 8,
-     'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.036
-     }  # trial 206, loss 17.6 -> 43.9 [data -> 11/25]
+    # {'patch_length': 36, 'stride': 12, 'input_length': 768, 'epochs': 15,
+    #  'batch_size': 64, 'learning_rate': 0.0122, 'weight_decay': 1.5650e-09,
+    #  'dropout': 0.08, 'lambda_cross': 0.016, 'lambda_coverage': 0.2,
+    #  'lambda_deriv': 0.028, 'lambda_median': 0.04, 'smoothing_cross': 0.049,
+    #  'threshold_cold_degC': 0.30, 'saturation_cold_degC': -3.6, 'lambda_cold': 0.09,
+    #  'lambda_regions': 0.044, 'lambda_regions_sum': 0.42, 'model_dim': 350,
+    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 1, 'num_geo_blocks': 8,
+    #  'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.034
+    #  }  # trial 358: avg loss 18.90 over 7 runs [data -> 11/25]
+    #     #   losses [11.11, 19.03, 18.63, 17.77, 20.1, 18.98, 20.16]
 
-    # {'patch_length': 24, 'stride': 12, 'input_length': 768,
-    #  'epochs': 41, 'batch_size': 32, 'learning_rate': 0.0098, 'weight_decay': 1.125e-08,
-    # 'dropout': 0.24, 'lambda_cross': 0.028, 'lambda_coverage': 0.34,
-    # 'lambda_deriv': 0.064, 'lambda_median': 0.08, 'smoothing_cross': 0.025,
-    # 'threshold_cold_degC': 4.9, 'saturation_cold_degC': -6.6, 'lambda_cold': 0.13,
-    # 'lambda_regions': 0.0, 'lambda_regions_sum': 0.0,
-    # 'model_dim': 301, 'ffn_size': 3, 'num_heads': 7, 'num_layers': 2,
-    # 'num_geo_blocks': 5, 'warmup_steps': 2500, 'patience': 7, 'min_delta': 0.022
-    # }  # loss 13 -> 20 [data -> 10/25], 35.5 [11/25] => these are the values used above
+    # {'patch_length': 36, 'stride': 12, 'input_length': 576, 'epochs': 15,
+    #  'batch_size': 64, 'learning_rate': 0.0138, 'weight_decay': 1.421e-09,
+    #  'dropout': 0.1, 'lambda_cross': 0.008, 'lambda_coverage': 0.16,
+    #  'lambda_deriv': 0.028, 'lambda_median': 0.04, 'smoothing_cross': 0.055,
+    #  'threshold_cold_degC': -0.3, 'saturation_cold_degC': -3.9, 'lambda_cold': 0.09,
+    #  'lambda_regions': 0.054, 'lambda_regions_sum': 0.42, 'model_dim': 375,
+    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 1, 'num_geo_blocks': 8,
+    #  'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.034
+    #  }  # trial 373: avg loss 15.86 over 7 runs [data -> 11/25]
+    #     #   losses [17.84, 15.14, 21.44, 19.22, 15.58, 21.17, 12.12]
 
-#     # 'epochs': 41, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.26e-08,
-#     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
-#     # 'lambda_deriv': 0.044, 'lambda_median': 0.056, 'smoothing_cross': 0.041,
-#     # 'threshold_cold_degC': 2.1, 'saturation_cold_degC': -2.9, 'lambda_cold': 0.07,
-#     # 'model_dim': 348, 'ffn_size': 4, 'num_heads': 6, 'num_layers': 2,
-#     # 'num_geo_blocks': 9, 'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.03
-#     # }  # trial 165, loss 21.5 -> 22 [data -> 10/25]
+    # {'patch_length': 36, 'stride': 15, 'input_length': 576, 'epochs': 15,
+    #  'batch_size': 64, 'learning_rate': 0.0158, 'weight_decay': 1.56054e-09,
+    #  'dropout': 0.11, 'lambda_cross': 0.0, 'lambda_coverage': 0.18,
+    #  'lambda_deriv': 0.048, 'lambda_median': 0.04, 'smoothing_cross': 0.057,
+    #  'threshold_cold_degC': -0.8, 'saturation_cold_degC': -4.2, 'lambda_cold': 0.13,
+    #  'lambda_regions': 0.052, 'lambda_regions_sum': 0.42, 'model_dim': 525,
+    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 4, 'num_geo_blocks': 8,
+    #  'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.034
+    #  }  # trial 420: avg loss 12.79 over 7 runs [data -> 11/25]
+    #     #   7 runs: losses [8.73, 11.42, 18.16, 8.84, 18.88, 18.36, 21.07] -> avg 15.13
 
-#     # 'epochs': 40, 'batch_size': 64, 'learning_rate': 0.0106, 'weight_decay': 1.68e-09,
-#     # 'dropout': 0.24, 'lambda_cross': 0.032, 'lambda_coverage': 0.28,
-#     # 'lambda_deriv': 0.012, 'lambda_median': 0.04, 'smoothing_cross': 0.027,
-#     # 'threshold_cold_degC': 3.0, 'saturation_cold_degC': -3.0, 'lambda_cold': 0.07,
-#     # 'model_dim': 348, 'ffn_size': 2, 'num_heads': 6, 'num_layers': 2,
-#     # 'num_geo_blocks': 9, 'warmup_steps': 1500, 'patience': 5, 'min_delta': 0.03
-#     # }  # loss 25 -> 30 [data -> 10/25]
-)
+    {'patch_length': 36, 'stride': 15, 'input_length': 576, 'epochs': 15,
+     'batch_size': 64, 'learning_rate': 0.0162, 'weight_decay': 1.4469e-09,
+     'dropout': 0.12, 'lambda_cross': 0.0, 'lambda_coverage': 0.18,
+     'lambda_deriv': 0.048, 'lambda_median': 0.04, 'smoothing_cross': 0.057,
+     'threshold_cold_degC': -1.0, 'saturation_cold_degC': -4.3, 'lambda_cold': 0.13,
+     'lambda_regions': 0.052, 'lambda_regions_sum': 0.42, 'model_dim': 525,
+     'ffn_size': 4, 'num_heads': 5, 'num_layers': 4, 'num_geo_blocks': 8,
+     'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.034
+     }  # trial 426: avg loss 8.81 over 7 runs [data -> 11/25]
+        #   losses [8.62, 7.06, 7.37, 9.67, 9.45, 8.94, 17.88] -> avg 8.81
+   )
 
 
 

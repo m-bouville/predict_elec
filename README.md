@@ -47,7 +47,7 @@ The strategy is based on a **two-stage architecture** with a strict separation o
 
 There is no feedback loop between the two stages.
 
-The main file is `predict_elec.py`. Two Bayesian hyperparameter searches are available: for NNTQ and for metamodels.
+The main file is `predict_elec.py`. 
 
 
 ### Stage 1 — Quantile Neural Network
@@ -93,6 +93,15 @@ This stage is self-contained and remains unchanged by the downstream metamodel.
 - Optimize operational point accuracy
 
 
+### Bayesian hyperparameter searches
+Two Bayesian searches are available: for NNTQ and for metamodels. In each case, one chooses intervals of possible values for each hyperparameter and the algorithm (Optuna) seeks the best value combination.
+
+#### Robustness
+Bayesian searches for NNTQ can yield overspecialized parameter sets. This problem is similar to apparently good training results not generalizing to testing; but here the parameters are specifically good not just for the time range used but also specific random numbers. 
+
+When a set of parameters seems an improvement, more runs (with different random seeds) can be carried out: the average loss is used in order to improve robustness. This is particularly useful for configurations prone to overfitting (e.g. deep networks), which would otherwise have to be excluded.
+
+
   
 ---
 
@@ -105,13 +114,9 @@ This stage is self-contained and remains unchanged by the downstream metamodel.
 
 **Empirical coverage of predicted quantiles**
 - While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
-- This also improved (but to a lower extend) with Bayesian parameters.
+- This also improved (but to a lower extent) with Bayesian parameters.
  
 
-### Plans
-**Bayesian robustness**
-- Bayesian searches for NNTQ are sensitive to the random seed (a problemù similar to good training results not generalizing to testing).
-- Todo: use several samples in search (just for promising cases?)
-  
+### Plans  
 **Miscellaneous**
 - `q75` minus `q25` (uncertainty proxy) could be used as a feature in the NN metamodel.

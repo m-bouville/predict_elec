@@ -57,12 +57,12 @@ DISTRIBUTIONS_BASELINES = {
 DISTRIBUTIONS_NNTQ = {
     # number of steps
     'patch_length':IntDistribution(low=12, high=48, step=6),
-    'stride':      IntDistribution(low= 6, high=12, step=3),
+    'stride':      IntDistribution(low= 6, high=18, step=3),
     'input_length':IntDistribution(low=10*48,high=16*48,step=2*48),
 
-    'epochs':      IntDistribution(low=20, high=45, step=1),
+    'epochs':      IntDistribution(low=10, high=45, step=1),
     'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.003,high=0.013, step=0.0004),
+    'learning_rate':FloatDistribution(low=0.003,high=0.017, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.25, step=0.01),
 
@@ -71,16 +71,16 @@ DISTRIBUTIONS_NNTQ = {
     'lambda_coverage':FloatDistribution(low=0.1,high=0.4, step=0.02),
     'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.004),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
-    'smoothing_cross':FloatDistribution(low=0.005, high=0.051, step=0.001),
+    'smoothing_cross':FloatDistribution(low=0.005, high=0.061, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
-    'threshold_cold_degC': FloatDistribution(low= 0., high= 5., step=0.1),
+    'threshold_cold_degC': FloatDistribution(low=-1., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
     'lambda_cold':    FloatDistribution(low=0.05,high=0.21, step=0.02),
         # régional consumption
     'lambda_regions': FloatDistribution(low=0.,   high=0.1, step=0.002),
     'lambda_regions_sum':FloatDistribution(low=0.,high=0.5, step=0.02),
 
-    'model_dim':    IntDistribution(low=90, high=360, step=1),
+    'model_dim':    IntDistribution(low=90, high=610, step=1),
     'ffn_size':     IntDistribution(low=2, high=7, step=1),
     'num_heads':    IntDistribution(low=3, high=9, step=1),
     'num_layers':   IntDistribution(low=1, high=7, step=1),
@@ -192,18 +192,18 @@ def sample_NNTQ_parameters(
 
     # number of steps
     if 'patch_length' in p:
-        p['patch_length' ] = trial.suggest_int  ('patch_length', 12, 48, step=12)
+        p['patch_length' ] = trial.suggest_int  ('patch_length', 24, 48, step=12)
     if 'stride' in p:
-        p['stride'       ] = trial.suggest_int  ('stride',        6, 12, step= 3)
+        p['stride'       ] = trial.suggest_int  ('stride',        6, 18, step= 3)
     if 'input_length' in p:
         p['input_length' ] = trial.suggest_int  ('input_length',10*48,16*48,step=2*48)
 
     if 'epochs' in p:
-        p['epochs'        ] = trial.suggest_int  ('epochs', 20, 45)
+        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 25, step=5)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [64, 96, 128])
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.003,0.013,step=0.0004)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',0.003,0.017,step=0.0004)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
@@ -219,11 +219,11 @@ def sample_NNTQ_parameters(
     if 'lambda_median' in p:
         p['lambda_median' ] = trial.suggest_float('lambda_median',  0., 0.096, step=0.008)
     if 'smoothing_cross' in p:
-        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.005,0.051,step=0.002)
+        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.005,0.059,step=0.002)
 
         # temperature-dependence (pinball loss, coverage penalty)
     if 'threshold_cold_degC' in p:
-        p['threshold_cold_degC']=trial.suggest_float('threshold_cold_degC',0.,5.,step=0.1)
+        p['threshold_cold_degC']=trial.suggest_float('threshold_cold_degC',-1.,5.,step=0.1)
     if 'saturation_cold_degC' in p:
         p['saturation_cold_degC']=trial.suggest_float('saturation_cold_degC',
                                                      -8., -2., step=0.1)
@@ -232,19 +232,19 @@ def sample_NNTQ_parameters(
 
         # régional consumption
     if 'lambda_regions' in p:
-        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.05,step=0.002)
+        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.07,step=0.002)
     if 'lambda_regions_sum' in p:
         p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.3,0.5,step=0.02)
 
     # Architecture
     if 'model_dim' in p:
-        p['model_dim'  ] = trial.suggest_int('model_dim', 100, 350, step=25)
+        p['model_dim'  ] = trial.suggest_int('model_dim', 100, 600, step=25)
     if 'ffn_size' in p:
-        p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 4)
+        p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 6)
     if 'num_heads' in p:
         p['num_heads'  ] = trial.suggest_int('num_heads', 4, 8)
     if 'num_layers' in p:
-        p['num_layers' ] = trial.suggest_int('num_layers',1, 3)
+        p['num_layers' ] = trial.suggest_int('num_layers',1, 6)
 
     if 'num_geo_blocks' in p:
         p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 4, 10)
@@ -260,7 +260,7 @@ def sample_NNTQ_parameters(
 
     # derived
     if 'model_dim' in p and 'num_heads' in p and p['model_dim'] % p['num_heads'] != 0:
-        _old = p['model_dim']
+        # _old = p['model_dim']
         p['model_dim'] = int(p['num_heads'] * round(p['model_dim'] / p['num_heads']))
         # if _old != p['model_dim']:
         #     print(f"model_dim: {_old} -> {p['model_dim']}")
@@ -310,6 +310,214 @@ def sample_metamodel_NN_parameters(
         p['factor'  ] = trial.suggest_float('factor', 0.6, 0.85, step=0.01)
 
     return p
+
+
+
+# -------------------------------------------------------
+# run Bayesian search
+# -------------------------------------------------------
+
+def run_Bayes_search(
+            stage               : str,    # in ['NNTQ', 'meta', 'all']
+            num_trials          : int,
+
+            # configuration bundles
+            base_baseline_params: Dict[str, Dict[str, Any]],
+            base_NNTQ_params    : Dict[str, Any],
+            base_meta_NN_params : Dict[str, Any],
+            dict_input_csv_fnames:Dict[str, str],
+            trials_csv_path     : str,
+
+            # statistics of the dataset
+            minutes_per_step    : int,
+            train_split_fraction: float,
+            valid_ratio         : float,
+            forecast_hour       : int,
+            seed                : int,
+            force_calc_baselines: bool   = False,
+            cache_dir           : Optional[str] = None,
+
+            num_runs            : int  = {'NNTQ': 7,  'meta': 1},
+            min_num_trials      : int  = 20,
+            wiggle_value        : dict = {'NNTQ': 5., 'meta': 0.05},
+
+            verbose             : int  = 0
+        ):
+
+
+    num_runs     = num_runs    [stage]
+    wiggle_value = wiggle_value[stage]
+
+    # average after excluding min and max
+    def clean_avg(l: List[float]) -> float:
+        if len(l) < 3:
+            return np.mean(l)
+
+        _list = l.copy()
+        _list.remove(min(_list))
+        _list.remove(max(_list))
+        return np.mean(_list)
+
+
+    def objective(trial: optuna.Trial) -> float:
+        # print(f"Starting run {run_id} out of {num_runs}")
+
+        # lasso controls features and is thus relevant to everyone
+        baseline_parameters = copy.deepcopy(base_baseline_params)
+        # if 'lasso' in baseline_parameters and 'alpha' in baseline_parameters['lasso']:
+        #     baseline_parameters['lasso']['alpha'] = \
+        #         trial.suggest_float('lasso_alpha', 0.000, 0.000, step=0.0005)
+
+        # three possible bahaviors:
+        #   - all:  we sample everything
+        #   - NNTQ: we sample NNTQ parameters only
+        #       (metamodel is not used, baselines are used, but frozen)
+        #   - meta: we sample baselines and metamodel parameters
+        #       (NNTQ parameters are frozen to values found in `NNTQ` search)
+
+        baseline_parameters= sample_baseline_parameters   (trial, baseline_parameters)\
+            if stage in [        'meta', 'all'] else baseline_parameters
+        NNTQ_parameters    = sample_NNTQ_parameters       (trial, base_NNTQ_params)\
+            if stage in ['NNTQ',         'all'] else base_NNTQ_params.copy()
+        metamodel_parameters=sample_metamodel_NN_parameters(trial,base_meta_NN_params)\
+            if stage in [        'meta', 'all'] else base_meta_NN_params.copy()
+
+        if stage == 'NNTQ':
+            metamodel_parameters['epochs'] = 1  # for speed
+
+
+        # print(stage, trial.number, num_runs)
+
+        for i in range(num_runs):
+            dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+                (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
+                    run.run_model_once(
+                      # configuration bundles
+                      baseline_parameters= baseline_parameters  .copy(),
+                      NNTQ_parameters   = NNTQ_parameters       .copy(),
+                      metamodel_NN_parameters=metamodel_parameters.copy(),
+                      dict_input_csv_fnames= dict_input_csv_fnames,
+                      # trials_csv_path   = trials_csv_path,
+
+                      # statistics of the dataset
+                      minutes_per_step  = minutes_per_step,
+                      train_split_fraction=train_split_fraction,
+                      valid_ratio       = valid_ratio,
+                      forecast_hour     = forecast_hour,
+                      seed              = seed*100 + trial.number*10 + i,
+
+                      force_calc_baselines=force_calc_baselines,
+                      save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
+                      save_cache_NNTQ     = stage == 'meta',  # NNTQ      not sampled
+
+                      # XXX_EVERY (in epochs)
+                      validate_every    = 999,
+                      display_every     = 999,  # dummy
+                      plot_conv_every   = 999,  # dummy
+
+                      run_id            = trial.number,
+                      cache_dir         = cache_dir,
+                      verbose           = verbose
+                )
+            # print(trial.number, i, num_runs,
+            #    (_loss_NNTQ_1run, _loss_meta), trial.study.best_trial.value)
+
+            if stage=='NNTQ' and num_runs > 1 and trial.number > min_num_trials:
+                if i == 0: # we must decide whether to run more
+                    if _loss_NNTQ <= trial.study.best_trial.value + wiggle_value:
+                        _list_losses_NNTQ = [_loss_NNTQ]
+                        _list_losses_meta = [_loss_meta]
+                        print(f"potential new record: {_loss_NNTQ:.2f} "
+                              f"against {trial.study.best_trial.value:.2f} "
+                              f"=> starting {num_runs-1} more runs...")
+                    else:
+                        break  # no need to run more than once
+
+                else:  # we committed to running `num_runs` times
+                    _list_losses_NNTQ.append(_loss_NNTQ)
+                    _list_losses_meta.append(_loss_meta)
+                    # print(i, _list_losses_NNTQ)
+
+                if i == num_runs-1:  # we just ran the last
+                    dict_row['num_runs'] = num_runs
+
+                    # average after excluding min and max
+                    dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
+                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 3)
+
+                    _loss_NNTQ = dict_row['loss_NNTQ']
+                    _loss_meta = dict_row['loss_meta']
+
+                    print(f"{num_runs} runs: losses "
+                          f"{_list_losses_NNTQ} -> avg {_loss_NNTQ:.2f}")
+
+        df_row = pd.DataFrame([dict_row])
+
+        df_row.to_csv(
+            trials_csv_path,
+            mode   = "a",
+            header = not os.path.exists(trials_csv_path),
+            index  = False,
+            float_format="%.6f"
+        )
+
+        print()
+
+        # return the relevant loss
+        if stage == 'NNTQ':
+            return _loss_NNTQ
+        if stage == 'meta':
+            return _loss_meta
+        if stage == 'all':
+            return _loss_NNTQ + _loss_meta
+
+
+
+    # Create a study with the previous trials
+    study   = optuna.create_study(direction= 'minimize',
+                                  sampler  = optuna.samplers.TPESampler())
+
+    _ALL_DISTRIBUTIONS = DISTRIBUTIONS_BASELINES | \
+                         DISTRIBUTIONS_NNTQ | DISTRIBUTIONS_METAMODEL_NN
+
+    # Load the CSV file containing MC runs
+    if os.path.exists(trials_csv_path):
+        trials = load_frozen_trials(trials_csv_path, _ALL_DISTRIBUTIONS, stage)
+
+        # Add previous trials to the study
+        for index, trial in enumerate(trials):
+            # print(index)
+            study.add_trial(trial)
+
+    # Plotting
+    _list_parameters_hist = ['model_dim', 'num_layers', 'num_heads', 'ffn_size',
+                             # "learning_rate", "dropout"
+                             ] \
+        if stage == 'NNTQ' else \
+            ['LR_alpha', 'RF_max_depth', 'GB_max_depth', 'metaNN_learning_rate']
+    # plot_optuna(study, ist_parameters_hist=_list_parameters_hist)
+
+
+    # Run optimization
+    print(f"\nStarting {num_trials} Bayesian trials ({stage})...")
+    study.optimize(objective, n_trials=num_trials)
+
+
+    # Print the best parameters found
+    print("Best trial:")
+    trial = study.best_trial
+    print(f"  Value: {trial.value}")
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print(f"    {key}: {value}")
+    # print(f"Best hyperparameters: {study.best_params}")
+
+
+    # Plotting
+    plot_optuna(study, list_parameters_hist=_list_parameters_hist)
+
+
+    return study.best_params
 
 
 
@@ -365,8 +573,8 @@ def plot_optuna(study,
     dict_corr = dict()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     numeric_cols = [col for col in numeric_cols
-                    if col not in ['value', 'number', 'best_so_far'] + cols_unusable\
-                    and not np.issubdtype(df[col].dtype, np.timedelta64)]
+                if col not in ['value', 'number', 'best_so_far'] + cols_unusable\
+                and not np.issubdtype(df[col].dtype, np.timedelta64)]
         # `weight_decay` was so small it was initially rounded down to zero
 
     for p in numeric_cols:
@@ -425,7 +633,7 @@ def cols_not_paras() -> List[str]:
     # columns from the csv that do not contain optimisable parameters
     # parameters we do not optimise
     cols_not_paras = ['run'] + \
-        ['quantiles_0','quantiles_1','quantiles_2','quantiles_3','quantiles_4'] + \
+        ['quantiles_0','quantiles_1','quantiles_2','quantiles_3','quantiles_4'] +\
         ['RF_type', 'RF_random_state', 'RF_n_jobs'] + \
         ['LGBM_type', 'LGBM_objective'] + \
         ['LGBM_random_state','LGBM_n_jobs',	'LGBM_verbose'] + \
@@ -454,7 +662,7 @@ def load_frozen_trials(csv_path     : str,
 
     _cols_not_paras = cols_not_paras()
 
-    print(list(results_df.columns))
+    # print(list(results_df.columns))
     _superfluous = set(_cols_not_paras) - set(results_df.columns)
     assert len(_superfluous) == 0, _superfluous
 
@@ -464,7 +672,7 @@ def load_frozen_trials(csv_path     : str,
     results_df[['learning_rate', 'weight_decay',
                 'metaNN_learning_rate', 'metaNN_weight_decay']] =\
         (results_df[['learning_rate', 'weight_decay',
-                    'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6).round(9)
+                'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6).round(9)
             # round to avoid 0.999999
 
     # can be 'sqrt' or a float => type issues
@@ -512,226 +720,5 @@ def load_frozen_trials(csv_path     : str,
 
     return trials
 
-
-
-# -------------------------------------------------------
-# run Bayesian search
-# -------------------------------------------------------
-
-def run_Bayes_search(
-            stage               : str,    # in ['NNTQ', 'meta', 'all']
-            num_trials          : int,
-
-            # configuration bundles
-            base_baseline_params: Dict[str, Dict[str, Any]],
-            base_NNTQ_params    : Dict[str, Any],
-            base_meta_NN_params : Dict[str, Any],
-            dict_input_csv_fnames:Dict[str, str],
-            trials_csv_path     : str,
-
-            # statistics of the dataset
-            minutes_per_step    : int,
-            train_split_fraction: float,
-            valid_ratio         : float,
-            forecast_hour       : int,
-            seed                : int,
-            force_calc_baselines: bool   = False,
-            cache_dir           : Optional[str] = None,
-
-            num_runs            : int  = {'NNTQ': 5,   'meta': 1},
-            min_num_trials      : int  = 20,
-            wiggle_value        : dict = {'NNTQ': 0.5, 'meta': 0.05},
-
-            verbose             : int  = 0
-        ):
-
-
-    num_runs     = num_runs    [stage]
-    wiggle_value = wiggle_value[stage]
-
-    # average after excluding min and max
-    def clean_avg(l: List[float]) -> float:
-        if len(l) < 3:
-            return np.mean(l)
-
-        _list = l.copy()
-        _list.remove(min(_list))
-        _list.remove(max(_list))
-        return np.mean(_list)
-
-
-    def objective(trial: optuna.Trial) -> float:
-        # print(f"Starting run {run_id} out of {num_runs}")
-
-        # lasso controls features and is thus relevant to everyone
-        baseline_parameters = copy.deepcopy(base_baseline_params)
-        # if 'lasso' in baseline_parameters and 'alpha' in baseline_parameters['lasso']:
-        #     baseline_parameters['lasso']['alpha'] = \
-        #         trial.suggest_float('lasso_alpha', 0.000, 0.000, step=0.0005)
-
-        # three possible bahaviors:
-        #   - all:  we sample everything
-        #   - NNTQ: we sample NNTQ parameters only
-        #       (metamodel is not used, baselines are used, but frozen)
-        #   - meta: we sample baselines and metamodel parameters
-        #       (NNTQ parameters are frozen to values found in `NNTQ` search)
-
-        baseline_parameters= sample_baseline_parameters   (trial, baseline_parameters)\
-            if stage in [        'meta', 'all'] else baseline_parameters
-        NNTQ_parameters    = sample_NNTQ_parameters       (trial, base_NNTQ_params)\
-            if stage in ['NNTQ',         'all'] else base_NNTQ_params.copy()
-        metamodel_parameters=sample_metamodel_NN_parameters(trial,base_meta_NN_params)\
-            if stage in [        'meta', 'all'] else base_meta_NN_params.copy()
-
-        if stage == 'NNTQ':
-            metamodel_parameters['epochs'] = 1  # for speed
-
-
-        # print(stage, trial.number, num_runs)
-
-        # try:
-        for i in range(num_runs):
-            dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-                (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
-                    run.run_model_once(
-                      # configuration bundles
-                      baseline_parameters= baseline_parameters  .copy(),
-                      NNTQ_parameters   = NNTQ_parameters       .copy(),
-                      metamodel_NN_parameters=metamodel_parameters.copy(),
-                      dict_input_csv_fnames= dict_input_csv_fnames,
-                      # trials_csv_path   = trials_csv_path,
-
-                      # statistics of the dataset
-                      minutes_per_step  = minutes_per_step,
-                      train_split_fraction=train_split_fraction,
-                      valid_ratio       = valid_ratio,
-                      forecast_hour     = forecast_hour,
-                      seed              = seed*100 + trial.number*10 + i,
-
-                      force_calc_baselines=force_calc_baselines,
-                      save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
-                      save_cache_NNTQ     = stage == 'meta',  # NNTQ      not sampled
-
-                      # XXX_EVERY (in epochs)
-                      validate_every    = 999,
-                      display_every     = 999,  # dummy
-                      plot_conv_every   = 999,  # dummy
-
-                      run_id            = trial.number,
-                      cache_dir         = cache_dir,
-                      verbose           = verbose
-                )
-            # print(trial.number, i, num_runs,
-            #    (_loss_NNTQ_1run, _loss_meta), trial.study.best_trial.value)
-
-            if stage=='NNTQ' and num_runs > 1 and trial.number > min_num_trials:
-                if i == 0: # we must decide whether to run more
-                    if _loss_NNTQ <= trial.study.best_trial.value + wiggle_value:
-                        _list_losses_NNTQ = [_loss_NNTQ]
-                        _list_losses_meta = [_loss_meta]
-                        print(f"(potential) NEW record: {_loss_NNTQ:.1f} "
-                              f"against {trial.study.best_trial.value:.1f}")
-                    else:
-                        break  # no need to run more than once
-
-                else:  # we committed to running `num_runs` times
-                    _list_losses_NNTQ.append(_loss_NNTQ)
-                    _list_losses_meta.append(_loss_meta)
-                    # print(i, _list_losses_NNTQ)
-
-                if i == num_runs-1:  # we just ran the last
-                    dict_row['num_runs'] = num_runs
-
-                    # average after excluding min and max
-                    dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
-                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 3)
-
-                    _loss_NNTQ = dict_row['loss_NNTQ']
-                    _loss_meta = dict_row['loss_meta']
-
-                    print(f"Ran {num_runs} times for trial {trial.number}, losses "
-                          f"{_list_losses_NNTQ} -> avg {_loss_NNTQ:.3f}")
-
-        # if stage=='NNTQ':
-        #     dict_row.pop('loss_NNTQ')  # replaced by 2 variants
-        #     # print(_loss_NNTQ, dict_row['loss_NNTQ_1run'], dict_row['loss_NNTQ_avg'])
-
-        #     df_row = pd.DataFrame([dict_row])
-
-        #     # reorder columns for compatibility with csv
-        #     new_order_last_3 = ['loss_NNTQ_1run', 'loss_NNTQ_avg', 'loss_meta']
-        #     df_row = df_row[df_row.columns.tolist()[:-3] + new_order_last_3]
-
-        # else:
-        #     df_row = pd.DataFrame([dict_row])
-        df_row = pd.DataFrame([dict_row])
-
-        # except:
-        #     return np.nan
-
-
-
-
-        df_row.to_csv(
-            trials_csv_path,
-            mode   = "a",
-            header = not os.path.exists(trials_csv_path),
-            index  = False,
-            float_format="%.6f"
-        )
-
-        # return the relevant loss
-        if stage == 'NNTQ':
-            return _loss_NNTQ
-        if stage == 'meta':
-            return _loss_meta
-        if stage == 'all':
-            return _loss_NNTQ + _loss_meta
-
-
-
-    # Create a study with the previous trials
-    study   = optuna.create_study(direction= 'minimize',
-                                  sampler  = optuna.samplers.TPESampler())
-
-    _ALL_DISTRIBUTIONS = DISTRIBUTIONS_BASELINES | \
-                         DISTRIBUTIONS_NNTQ | DISTRIBUTIONS_METAMODEL_NN
-
-    # Load the CSV file containing MC runs
-    if os.path.exists(trials_csv_path):
-        trials = load_frozen_trials(trials_csv_path, _ALL_DISTRIBUTIONS, stage)
-
-        # Add previous trials to the study
-        for index, trial in enumerate(trials):
-            # print(index)
-            study.add_trial(trial)
-
-    # Plotting
-    _list_parameters_hist = ["learning_rate", "dropout"] \
-        if stage == 'NNTQ' else \
-            ['LR_alpha', 'RF_max_depth', 'GB_max_depth', 'metaNN_learning_rate']
-    # plot_optuna(study, ist_parameters_hist=_list_parameters_hist)
-
-
-    # Run optimization
-    print(f"\nStarting {num_trials} Bayesian trials ({stage})...")
-    study.optimize(objective, n_trials=num_trials)
-
-
-    # Print the best parameters found
-    print("Best trial:")
-    trial = study.best_trial
-    print(f"  Value: {trial.value}")
-    print("  Params: ")
-    for key, value in trial.params.items():
-        print(f"    {key}: {value}")
-    # print(f"Best hyperparameters: {study.best_params}")
-
-
-    # Plotting
-    plot_optuna(study, list_parameters_hist=_list_parameters_hist)
-
-
-    return study.best_params
 
 
