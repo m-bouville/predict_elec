@@ -1,16 +1,166 @@
-# import sys
+import sys
 
 from   typing   import Dict, Optional, Tuple, Sequence, List  # , Any,
 
 import numpy  as np
 import pandas as pd
 
-# import matplotlib.pyplot as plt
+from   sklearn.linear_model import LinearRegression
+
+import matplotlib.pyplot as plt
 
 
 import plots  # containers
 
 
+
+
+
+def thermosensitivity_regions(df_consumption       : pd.DataFrame,
+                              df_temperature       : pd.DataFrame,
+                              threshold_winter_degC: float = 15.,
+                              threshold_summer_degC: float = 20.) -> None:
+    df_consumption.drop(columns=['year', 'month', 'dateofyear', 'timeofday'],
+                        inplace=True)
+    df_consumption.columns = [_col.split("_")[1]
+                              for _col in list(df_consumption.columns)]
+    df_consumption = df_consumption.resample('D').mean().dropna()  # half-hour -> day
+
+    df_temperature = df_temperature.dropna()
+
+    assert set(df_consumption.columns) == set(df_temperature.columns), \
+        f"{df_consumption.columns} != {df_temperature.columns}"
+
+    # print("df_consumption:", df_consumption.shape, list(df_consumption.columns))
+    # print("df_temperature:", df_temperature.shape, list(df_temperature.columns))
+
+    # Reindex both DataFrames to keep only common indices
+    common_indices = df_consumption.index.intersection(df_temperature.index)
+    df_consumption = df_consumption.reindex(common_indices)
+    df_temperature = df_temperature.reindex(common_indices)
+
+    # print("common shape:", df_consumption.shape)
+    # print("df_consumption:", df_consumption.shape, list(df_consumption.columns))
+    # print("df_temperature:", df_temperature.shape, list(df_temperature.columns))
+
+
+    # national
+    _avg_conso = df_consumption.mean().mean()
+    plt.scatter(df_temperature.mean(axis=1),
+                df_consumption.mean(axis=1) / _avg_conso,
+                s=10, alpha=0.15)
+    plt.xlim(-2, 27)
+    plt.ylim(0.6, 1.7)
+    plt.xlabel("average daily temperature [°C]")
+    plt.ylabel("national consumption / its average")
+    plt.show()
+
+
+    # per région
+
+    for _col in list(df_consumption.columns):
+        _avg_conso = df_consumption[_col].mean()
+        _consumption_norm = df_consumption[_col]/_avg_conso
+        plt.scatter(df_temperature[_col].rolling(7, min_periods=6).mean(),
+                    _consumption_norm   .rolling(7, min_periods=6).mean(),
+                    label=_col, s=10, alpha=0.05)
+
+    plt.legend(loc='upper right')
+    plt.xlim(-5, 30)
+    plt.ylim(0.6, 1.8)
+    plt.xlabel("average daily temperature [°C]")
+    plt.ylabel("consumption / its average")
+    plt.show()
+
+    list_regions_plots = ['Occi.', 'HdF']
+
+
+    # per région, winter
+    _slopes_winter_pc = pd.Series()
+
+    for _col in list(df_consumption.columns):
+        _avg_conso = df_consumption[_col].mean()
+        _consumption_norm = df_consumption[_col]/_avg_conso
+
+        # saturating T°
+        _temp_sat_winter = df_temperature[_col].clip(upper=threshold_winter_degC)
+        _conso_winter   = _consumption_norm[_temp_sat_winter < threshold_winter_degC]
+        _temp_sat_winter= _temp_sat_winter [_temp_sat_winter < threshold_winter_degC]
+
+        # linear regression to quantify thermosensitivity in winter
+        model_winter = LinearRegression()
+        model_winter.fit(_temp_sat_winter.to_frame(), _conso_winter)
+        _slopes_winter_pc[_col] = -round(float(model_winter.coef_[0]) * 100, 2)
+
+        if _col in list_regions_plots:
+            plt.scatter(_temp_sat_winter, _conso_winter, label=_col, s=30, alpha=0.3)
+
+    plt.legend(loc='lower left')
+    plt.xlim(-6, threshold_winter_degC)
+    plt.ylim(0.6, 1.9)
+    plt.xlabel(f"average daily temperature < {threshold_winter_degC:n} °C")
+    plt.ylabel("consumption / its average")
+    plt.show()
+
+
+    # per région, summer
+    _slopes_summer_pc = pd.Series()
+
+    for _col in list(df_consumption.columns):
+        _avg_conso = df_consumption[_col].mean()
+        _consumption_norm = df_consumption[_col]/_avg_conso
+
+        # saturating T°
+        _temp_sat_summer= df_temperature[_col].clip(lower=threshold_summer_degC)
+        _conso_summer   = _consumption_norm[_temp_sat_summer > threshold_summer_degC]
+        _temp_sat_summer= _temp_sat_summer [_temp_sat_summer > threshold_summer_degC]
+
+        # linear regression to quantify thermosensitivity in summer
+        model_summer = LinearRegression()
+        model_summer.fit(_temp_sat_summer.to_frame(), _conso_summer)
+        _slopes_summer_pc[_col]  = round(float(model_summer.coef_[0]) * 100, 2)
+
+        if _col in list_regions_plots:
+            plt.scatter(_temp_sat_summer, _conso_summer, label=_col, s=30, alpha=0.5)
+
+    plt.legend(loc='lower right')
+    plt.xlim(threshold_summer_degC, 31)
+    plt.ylim(0.6, 1.1)
+    plt.xlabel(f"average daily temperature > {threshold_summer_degC:n} °C")
+    plt.ylabel("consumption / its average")
+    plt.show()
+
+
+    _df_slopes_pc = pd.concat([_slopes_winter_pc.T, _slopes_summer_pc.T], axis=1)
+    _df_slopes_pc.columns = ["winter", "summer"]
+    print(_df_slopes_pc.T.to_string())
+
+
+    # plot summer f° winter
+    plt.scatter(_df_slopes_pc['winter'], _df_slopes_pc['summer'], s=100)
+
+    # Annotate each point with its key
+    for _col in _df_slopes_pc.index:
+        plt.annotate(_col, (_df_slopes_pc['winter'].loc[_col] + 0.05,
+                            _df_slopes_pc['summer'].loc[_col]))
+
+    plt.xlabel(f"winter (T_avg < {threshold_winter_degC:n} °C)")
+    plt.ylabel(f"summer (T_avg > {threshold_summer_degC:n} °C)")
+    if plt.ylim()[0] > 0:
+        plt.ylim(bottom=0)
+    plt.ylim(top=plt.ylim()[1]+0.05)
+    # plt.xlim(top=plt.xlim()[1]+0.05)
+    plt.title("Seasonal thermosensitivities [% avg demand per K]")
+
+
+
+
+    sys.exit()
+
+
+# -------------------------------------------------------
+# thermosensitivity
+# -------------------------------------------------------
 
 
 def apply_threshold(df            : pd.DataFrame,

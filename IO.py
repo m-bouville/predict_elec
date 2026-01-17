@@ -14,13 +14,18 @@ import numpy  as np
 import pandas as pd
 
 
-import architecture, plots  # constants
+import architecture, plots, plot_statistics  # constants
 
 
 
 os.makedirs('data',  exist_ok=True)
 os.makedirs('cache', exist_ok=True)
 
+
+
+# -------------------------------------------------------
+# consumption
+# -------------------------------------------------------
 
 
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
@@ -98,8 +103,8 @@ def load_consumption_by_region(
         path   : str =  'data/consommation-quotidienne-brute-regionale.csv',
         cache_path:str='cache/consommation-quotidienne-brute-regionale.pkl',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
-                       'datasets/consommation-quotidienne-brute-regionale/exports/csv?'
-                       'lang=en&timezone=timezone=Europe%2FParis&'
+                       'datasets/consommation-quotidienne-brute-regionale/exports/'
+                       'csv?lang=en&timezone=timezone=Europe%2FParis&'
                        'use_labels=true&delimiter=%3B',
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
@@ -141,7 +146,7 @@ def load_consumption_by_region(
         #           xlabel="date", ylabel="consumption (MW)")
 
         df['datetime'] = df.index
-        df = df.pivot_table(index="datetime", columns="Région", values='consumption_GW',
+        df = df.pivot_table(index="datetime",columns="Région",values='consumption_GW',
                       aggfunc='mean').sort_index()
         _names_regions = list(df.columns)
         df.columns = ["consumption_" + SHORT_NAMES_REGIONS[normalize_name(r)] + \
@@ -180,6 +185,10 @@ def load_consumption_by_region(
     return df, _names_regions
 
 
+
+# -------------------------------------------------------
+# temperature
+# -------------------------------------------------------
 
 # weights (electricity consumption per region):
 #    https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
@@ -229,7 +238,7 @@ def load_temperature(
                        'datasets/temperature-quotidienne-regionale/exports/csv?'
                        'lang=en&timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
         # noise_std: float or Tuple[float] = 0.,# realistic forecast error
-        verbose: int = 0) -> pd.DataFrame:
+        verbose: int = 0) -> [pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
     # 4. Weighted aggregation helpers
     # def weighted_quantile(values, weights, q):
@@ -289,35 +298,32 @@ def load_temperature(
         )
 
     df = df.reset_index()
-    Tavg = _pivot("Tavg_degC")
-    Tmin = _pivot("Tmin_degC")
-    Tmax = _pivot("Tmax_degC")
+    Tavg_full = _pivot("Tavg_degC")
+    Tmin_full = _pivot("Tmin_degC")
+    Tmax_full = _pivot("Tmax_degC")
     # print(Tavg)
 
 
-    out = pd.DataFrame(index=Tavg.index)
-    out["Tavg_degC"] = weighted_mean(Tavg, weights)
-    out["Tmin_degC"] = weighted_mean(Tmin, weights)
-    out["Tmax_degC"] = weighted_mean(Tmax, weights)
+    out = pd.DataFrame(index=Tavg_full.index)
+    out["Tavg_degC"] = weighted_mean(Tavg_full, weights)
+    out["Tmin_degC"] = weighted_mean(Tmin_full, weights)
+    out["Tmax_degC"] = weighted_mean(Tmax_full, weights)
 
 
     # weighted averages by geographic cluster
-    _df = pd.DataFrame()
+    Tavg = pd.DataFrame()
     # print("weights:", weights)
     for (_cluster, _list) in CLUSTERS.items():
         # print(_cluster, _list)
-        _df[_cluster] = weighted_mean(Tavg[_list], [weights[e] for e in _list])
-    Tavg = _df
+        Tavg[_cluster] = weighted_mean(Tavg_full[_list], [weights[e] for e in _list])
 
-    _df = pd.DataFrame()
+    Tmin = pd.DataFrame()
     for (_cluster, _list) in CLUSTERS.items():
-        _df[_cluster] = weighted_mean(Tmin[_list], [weights[e] for e in _list])
-    Tmin = _df
+        Tmin[_cluster] = weighted_mean(Tmin_full[_list], [weights[e] for e in _list])
 
-    _df = pd.DataFrame()
+    Tmax = pd.DataFrame()
     for (_cluster, _list) in CLUSTERS.items():
-        _df[_cluster] = weighted_mean(Tmax[_list], [weights[e] for e in _list])
-    Tmax = _df
+        Tmax[_cluster] = weighted_mean(Tmax_full[_list], [weights[e] for e in _list])
 
     # print(Tavg)
     # Tavg['num_NAs'] = Tavg.isna().sum(axis=1)
@@ -391,7 +397,7 @@ def load_temperature(
 
     # print(list(out.columns))
 
-    return out
+    return out, Tavg_full, Tmin_full, Tmax_full
 
 
 # https://odre.opendatasoft.com/explore/dataset/
@@ -428,58 +434,10 @@ def load_temperature(
     return df
 
 
-def analyze_datetime(df, freq=None, name="dataset"):
-    """
-    Report duplicates and missing timestamps in a datetime-indexed DataFrame.
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame with a DatetimeIndex.
-    freq : str or None
-        Expected frequency string ('30T', 'H', 'D', etc.).
-        If None, missing-time analysis is skipped.
-    name : str
-        Dataset name for display.
-    """
-    print(f"\n=== Analyzing {name} ===")
-
-    # -------------------------------
-    # 1. Check for duplicates
-    # -------------------------------
-    if df.index.has_duplicates:
-        print("/!\ Duplicates found:")
-        dup_rows = df[df.index.duplicated(keep=False)].sort_index().index
-        print(dup_rows)
-
-        # counts = df.index[df.index.duplicated()].value_counts()
-        # print("\nDuplicate counts:")
-        # print(counts)
-    else:
-        print("No duplicate timestamps.")
-
-    # -------------------------------
-    # 2. Check for missing timestamps
-    # -------------------------------
-    if freq is not None:
-        # full expected index
-        full_index = pd.date_range(
-            start=df.index.min(),
-            end=df.index.max(),
-            freq=freq,
-            tz=df.index.tz  # preserve timezone awareness
-        )
-
-        missing = full_index.difference(df.index)
-
-        if len(missing) > 0:
-            print(f"\n Missing {len(missing)} timestamps:")
-            print(missing[:20])     # first 20 only
-            if len(missing) > 20:
-                print("... (more omitted)")
-        else:
-            print(f"No missing timestamps at freq = {freq}")
-
+# -------------------------------------------------------
+# Load all data
+# -------------------------------------------------------
 
 def load_data(dict_input_csv_fnames: dict, cache_fname: str,
               num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
@@ -510,14 +468,19 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                                  freq=f"{minutes_per_step}T", name="consumption")
 
         elif name == 'temperature':
-            dfs[name] = load_temperature(path, weights_regions, verbose=verbose)
+            dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
+                load_temperature(path, weights_regions, verbose=verbose)
             if verbose >= 3:
-                analyze_datetime(dfs["temperature"], freq="D",  name="temperature")
+                analyze_datetime(dfs['temperature'], freq="D",  name="temperature")
         # elif name == 'solar':
             # BUG: The whole of September 2021 is missing
             # dfs[name] = load_solar(path, verbose=verbose)
             # if verbose >= 3:
             #     analyze_datetime(dfs["solar"],       freq="3H", name="solar")
+
+    if verbose >= 3:
+        plot_statistics.thermosensitivity_regions(
+            dfs['consumption_by_region'], Tavg_regions)
 
     starts = {name: df.index.min() for name, df in dfs.items()}
     ends   = {name: df.index.max() for name, df in dfs.items()}
@@ -607,9 +570,9 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
 
 
-# ============================================================
-# Régions
-# ============================================================
+# -------------------------------------------------------
+# utils
+# -------------------------------------------------------
 
 
 def normalize_name(s: str) -> str:
@@ -626,12 +589,11 @@ def normalize_name(s: str) -> str:
          .strip()
     )
 
-
 SHORT_NAMES_REGIONS: Dict[str, str] = \
-{'auvergne-rhone-alpes': "AuRA", 'bourgogne-franche-comte': "Bourg",
- 'bretagne': "Bret", 'centre-val de loire': "Centre", 'corse': 'corse',
- 'grand est': "Est", 'hauts-de-france': "Nord", 'normandie': 'Norm',
- 'nouvelle-aquitaine': "Aqui", 'occitanie': "Occi", 'pays de la loire': "Loire",
+{'auvergne-rhone-alpes': "AuRA", 'bourgogne-franche-comte': "Bourg.",
+ 'bretagne': "Bret.", 'centre-val de loire': "Centre", 'corse': 'corse',
+ 'grand est': "Gd Est", 'hauts-de-france': "HdF", 'normandie': 'Norm.',
+ 'nouvelle-aquitaine': "Aqui.", 'occitanie': "Occi.", 'pays de la loire': "Loire",
  "provence-alpes-cote d'azur": "PACA", 'ile-de-france': "IdF"}
 
 CLUSTERS = {
@@ -643,6 +605,60 @@ CLUSTERS = {
    }
 CLUSTERS = {_cluster: [SHORT_NAMES_REGIONS[normalize_name(v)] for v in _list]
                     for (_cluster, _list) in CLUSTERS.items()}
+
+
+def analyze_datetime(df, freq=None, name="dataset"):
+    """
+    Report duplicates and missing timestamps in a datetime-indexed DataFrame.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with a DatetimeIndex.
+    freq : str or None
+        Expected frequency string ('30T', 'H', 'D', etc.).
+        If None, missing-time analysis is skipped.
+    name : str
+        Dataset name for display.
+    """
+    print(f"\n=== Analyzing {name} ===")
+
+    # -------------------------------
+    # 1. Check for duplicates
+    # -------------------------------
+    if df.index.has_duplicates:
+        print("/!\ Duplicates found:")
+        dup_rows = df[df.index.duplicated(keep=False)].sort_index().index
+        print(dup_rows)
+
+        # counts = df.index[df.index.duplicated()].value_counts()
+        # print("\nDuplicate counts:")
+        # print(counts)
+    else:
+        print("No duplicate timestamps.")
+
+    # -------------------------------
+    # 2. Check for missing timestamps
+    # -------------------------------
+    if freq is not None:
+        # full expected index
+        full_index = pd.date_range(
+            start=df.index.min(),
+            end=df.index.max(),
+            freq=freq,
+            tz=df.index.tz  # preserve timezone awareness
+        )
+
+        missing = full_index.difference(df.index)
+
+        if len(missing) > 0:
+            print(f"\n Missing {len(missing)} timestamps:")
+            print(missing[:20])     # first 20 only
+            if len(missing) > 20:
+                print("... (more omitted)")
+        else:
+            print(f"No missing timestamps at freq = {freq}")
+
 
 
 # ----------------------------------------------------------------------
