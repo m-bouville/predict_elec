@@ -5,14 +5,19 @@
 # ----------------------------------------------------------------------
 
 
-import os, sys
+import os  # , sys
 from   typing import List, Tuple, Dict  #, Optional
 
 import numpy  as np
 import pandas as pd
 
 
-import constants, architecture, plots
+import architecture, plots  # constants
+
+
+
+os.makedirs('data', exist_ok=True)
+
 
 
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
@@ -20,9 +25,21 @@ import constants, architecture, plots
 # Last processing
 #    January 13, 2026
 
-def load_consumption(path, verbose: int = 0):
+def load_consumption(
+        path,
+        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/consommation-quotidienne-brute/exports/csv?'
+                       'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
+        verbose: int = 0) -> pd.DataFrame:
 
-    df = pd.read_csv(path, sep=';')
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df = pd.read_csv(url, sep=';')
+        df.to_csv(path, sep=';')
+
 
     if 'Date - Heure' not in df.columns:
         raise RuntimeError(f"No datetime-like column found in {path}")
@@ -74,10 +91,22 @@ def load_consumption(path, verbose: int = 0):
 # Last processing
 #    January 13, 2026
 
-def load_consumption_by_region(path,
-                               verbose: int = 0) -> [pd.DataFrame, List[float]]:
+def load_consumption_by_region(
+        path,
+        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/consommation-quotidienne-brute-regionale/exports/csv?'
+                       'lang=en&timezone=timezone=Europe%2FParis&'
+                       'use_labels=true&delimiter=%3B',
+        verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
-    df = pd.read_csv(path, sep=';')
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df = pd.read_csv(url, sep=';')
+        df.to_csv(path, sep=';')
+
 
     if 'Date - Heure' not in df.columns:
         raise RuntimeError(f"No datetime-like column found in {path}")
@@ -130,11 +159,25 @@ def load_consumption_by_region(path,
     return df, _names_regions
 
 
-# weights: https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
+
+# weights (electricity consumption per region):
+#    https://www.data.gouv.fr/datasets/consommation-annuelle-brute-regionale/
 #    latest update: November 10 2025
-def load_weights(path, verbose: int = 0) -> Dict[str, float]:
-    # weights (electricity consumption per region)
-    df_weigths = pd.read_csv(path, sep=';')
+def load_weights(
+        path   : str = 'data/consommation-annuelle-brute-regionale.csv',
+        url    : str = 'https://www.data.gouv.fr/api/1/datasets/r/'
+                       '20cbe478-4ee4-42e7-ad54-174f7e1f3a40',
+        verbose: int = 0) -> Dict[str, float]:
+
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df_weigths = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df_weigths = pd.read_csv(url, sep=';')
+        df_weigths.to_csv(path, sep=';')
+
+
     # print(df_weigths.columns)
     df_weigths = (
             df_weigths
@@ -159,10 +202,13 @@ def load_weights(path, verbose: int = 0) -> Dict[str, float]:
 #   January 3, 2026 3:00 AM (data)
 
 def load_temperature(
-        path, weights,
+        path,
+        weights,
+        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/temperature-quotidienne-regionale/exports/csv?'
+                       'lang=en&timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
         # noise_std: float or Tuple[float] = 0.,# realistic forecast error
-        verbose: int = 0):
-
+        verbose: int = 0) -> pd.DataFrame:
 
     # 4. Weighted aggregation helpers
     # def weighted_quantile(values, weights, q):
@@ -186,7 +232,16 @@ def load_temperature(
 
 
     # temperature data
-    df      = pd.read_csv(path, sep=';')
+
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df = pd.read_csv(url, sep=';')
+        df.to_csv(path, sep=';')
+
+
     if 'Date' not in df.columns:
         raise RuntimeError(f"No date column found in {path}")
 
@@ -410,7 +465,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     dfs = {}
 
-    weights_regions = load_weights('data/consommation-annuelle-brute-regionale.csv', verbose)
+    weights_regions = load_weights(verbose=verbose)
     # print("weights_regions:", weights_regions)
 
     # Load both CSVs
@@ -422,7 +477,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         if verbose >= 1:
             print(f"Loading {path}...")
         if name == 'consumption':
-            dfs[name] = load_consumption(path, verbose)
+            dfs[name] = load_consumption(path, verbose=verbose)
             if verbose >= 3:
                 analyze_datetime(dfs["consumption"],
                                  freq=f"{minutes_per_step}T", name="consumption")
@@ -439,7 +494,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                 analyze_datetime(dfs["temperature"], freq="D",  name="temperature")
         # elif name == 'solar':
             # BUG: The whole of September 2021 is missing
-            # dfs[name] = load_solar(path, verbose)
+            # dfs[name] = load_solar(path, verbose=verbose)
             # if verbose >= 3:
             #     analyze_datetime(dfs["solar"],       freq="3H", name="solar")
 
@@ -598,12 +653,20 @@ CANONICAL_HOLIDAYS = {
     ],
 }
 
-def school_holidays(fname1: str='data/fr-en-calendrier-scolaire.csv',
-                    fname2: str='data/vacances_scolaires_2015_2017.csv')->pd.DataFrame:
-    # URL = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/'
-    # 'fr-en-calendrier-scolaire/exports/csv?delimiter=;'
+def school_holidays(
+        fname1: str = 'data/fr-en-calendrier-scolaire.csv',
+        url1  : str = 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/'
+                      'fr-en-calendrier-scolaire/exports/csv?delimiter=;',
+        fname2: str = 'data/vacances_scolaires_2015_2017.csv') -> pd.DataFrame:
 
-    holidays = pd.read_csv(fname1, sep=";")
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(fname1):
+        holidays = pd.read_csv(fname1, sep=";")
+    else:
+        # Load from URL
+        holidays = pd.read_csv(url1, sep=';')
+        holidays.to_csv(fname1, sep=';')
+
 
     # Keep only metropolitan France, which is A/B/C zones
     holidays = holidays[holidays['population' ] != "Enseignants"] # students or all
