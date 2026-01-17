@@ -482,6 +482,14 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         plot_statistics.thermosensitivity_regions(
             dfs['consumption_by_region'], Tavg_regions)
 
+        plot_statistics.drift_with_time(
+             dfs['consumption']['consumption_GW'],
+             dfs['temperature']["Tavg_degC"],
+             num_steps_per_day=num_steps_per_day
+        )
+
+
+
     starts = {name: df.index.min() for name, df in dfs.items()}
     ends   = {name: df.index.max() for name, df in dfs.items()}
     dates_df = pd.DataFrame({

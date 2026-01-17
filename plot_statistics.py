@@ -15,6 +15,125 @@ import plots  # containers
 
 
 
+# -------------------------------------------------------
+# thermosensitivity by time of day or by T°
+# -------------------------------------------------------
+
+def drift_with_time(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     num_steps_per_day: int,
+     )   -> None:
+
+    # print("consumption:", consumption)
+    # print("temperature:", temperature)
+
+    (start_date, end_date) = [consumption.index[ 0] + pd.DateOffset(months=12), \
+                              consumption.index[-1] - pd.DateOffset(months= 7)]
+    moving_average=365
+    print("date_range:", [start_date, end_date])
+    print("moving_average:", moving_average, "days")
+
+
+    _consumption  = consumption.resample('D').mean()
+    _temperature_sat = (temperature.clip(upper=15) - 15)
+    # _temperature  = (temperature.rolling(moving_average, center=True) \
+    #                  .mean()).loc[start_date:end_date]
+
+    # thermosensitive model
+    common_indices = _consumption.dropna().index.intersection(
+        _temperature_sat.dropna().index)
+    _temperature_common = _temperature_sat.reindex(common_indices)
+    _consumption_common = _consumption    .reindex(common_indices)
+    _year = pd.Series(common_indices.year - 2020 + common_indices.dayofyear/365,
+                      index = common_indices, name="year")  # for long-term drift
+
+
+    # linear regression to quantify thermosensitivity in winter
+    model_LR = LinearRegression()
+    model_LR.fit(pd.concat([_temperature_common, _year], axis=1),
+                 _consumption_common)
+    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+    _formula_model = f"{model_LR.intercept_:.1f} GW  " \
+                     f"{model_LR.coef_[0]:.2f} * min(T, 15 °C)  " \
+                     f"{model_LR.coef_[1]:.2f} * (year - 2020)"
+    print(_formula_model)
+
+    conso_model =  _temperature_common * model_LR.coef_[0] + \
+                    _year * model_LR.coef_[1] + model_LR.intercept_
+
+    _consumption  = (consumption.resample('D').mean()
+                     .rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+
+    _conso_model  = (conso_model.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+    # _temperature_sat = ((temperature.clip(upper=15) - 15). \
+    #                     rolling(moving_average, center=True) \
+    #                  .mean()).loc[start_date:end_date]
+    # _temperature  = (temperature.rolling(moving_average, center=True) \
+    #                  .mean()).loc[start_date:end_date]
+
+    plt.figure(figsize=(10,6))
+    # print("_consumption:", _consumption)
+    plt.plot(_consumption.index, _consumption.values,
+             label="real", color="red")
+    plt.plot(_conso_model.index, _conso_model.values,
+             label=f"model: {_formula_model}", color="blue")
+    plt.ylabel("consumption [GW], annual moving average")
+
+    # ax2 = plt.twinx()
+    # ax2.plot(_temperature.index, _temperature.values,
+    #          label="temperature", color="grey")
+    # ax2.set_ylabel("temperature [°C], annual moving average")
+
+
+    # if ylim   is not None:  plt.ylim  (ylim)
+    plt.xlabel("date")
+    plt.legend()
+    # if title  is not None:  plt.title (title)
+
+    # lines1, labels1 = plt.gca().get_legend_handles_labels()
+    # lines2, labels2 = ax2      .get_legend_handles_labels()
+    # plt.legend(lines1 + lines2, labels1 + labels2, loc="lower left")
+
+    plt.show()
+
+
+    # print(_consumption.index.has_duplicates)
+    # print(_temperature.index.has_duplicates)
+
+
+
+    # plt.figure(figsize=(10,6))
+    # plt.scatter(_temperature_common, _consumption_common, s=300, alpha=0.3)
+    # plt.scatter(_temperature_common, conso_model, s=300, alpha=0.3)
+    # plt.xlabel("temperature [°C], annual moving average")
+    # plt.ylabel("consumption [GW], annual moving average")
+    # plt.show()
+
+
+
+
+
+    plt.figure(figsize=(10,6))
+    # print("_consumption:", _consumption)
+    plt.plot(_consumption.index, (_consumption - _conso_model).values, color="blue")
+    plt.hlines(0, common_indices[0], common_indices[-1], color="black")
+    plt.xlabel("date")
+    plt.ylabel("consumption residual [GW], annual moving average")
+    plt.show()
+
+
+
+    sys.exit()
+
+
+
+
+# -------------------------------------------------------
+# thermosensitivity by région
+# -------------------------------------------------------
 
 def thermosensitivity_regions(df_consumption       : pd.DataFrame,
                               df_temperature       : pd.DataFrame,
@@ -155,13 +274,9 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
 
 
-    sys.exit()
-
-
 # -------------------------------------------------------
-# thermosensitivity
+# thermosensitivity by time of day or by T°
 # -------------------------------------------------------
-
 
 def apply_threshold(df            : pd.DataFrame,
                     threshold_degC: float,
@@ -382,7 +497,7 @@ def thermosensitivity_per_temperature(
          xlabel="threshold T_avg [°C]",
          ylabel="thermosensitivity [GW/K]",
          title=f"{data_split.name_display}",
-             ylim=ylim, date_range=None, moving_average=7, groupby=None)
+         ylim=ylim, date_range=None, moving_average=7, groupby=None)
 
 
 
