@@ -183,7 +183,7 @@ DICT_INPUT_CSV_FNAMES = {
     "consumption":          "data/consommation-quotidienne-brute.csv",
     "consumption_by_region":'data/consommation-quotidienne-brute-regionale.csv',
     "temperature":          'data/temperature-quotidienne-regionale.csv',
-    "solar":                'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
+    # "solar":                'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
 }
 CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
@@ -234,6 +234,18 @@ BASELINES_PARAMETERS = {
 #     'metaNN_learning_rate': 0.0025, 'metaNN_weight_decay': 3.054e-08,
 #     'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
 # } # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
+
+# _new_parameters = {'LR_type': 'ridge', 'LR_alpha': 1.2, 'RF_n_estimators': 500,
+#     'RF_max_depth': 20, 'RF_min_samples_leaf': 10, 'RF_min_samples_split': 15,
+#     'RF_max_features': 'sqrt', 'LGBM_boosting_type': 'gbdt',
+#     'LGBM_num_leaves': 15, 'LGBM_max_depth': 3, 'LGBM_learning_rate': 0.01,
+#     'LGBM_n_estimators': 420, 'LGBM_min_child_samples': 12, 'LGBM_subsample': 1.0,
+#     'LGBM_colsample_bytree': 0.9, 'LGBM_reg_alpha': 0.08, 'LGBM_reg_lambda': 0.09,
+#     'metaNN_epochs': 18, 'metaNN_batch_size': 96, 'metaNN_learning_rate': 0.0035,
+#     'metaNN_weight_decay': 2.2787e-07, 'metaNN_dropout': 0.0,
+#     'metaNN_num_cells_0': 40, 'metaNN_num_cells_1': 16
+# }  # trial 15: avg loss 1.3474 over 5 runs [data -> 11/25]
+#    #   losses [1.3332, 1.3484, 1.3454, 1.3503, 1.3485]
 
 # for _model in ['LR', 'RF', 'LGBM']:
 #     BASELINES_PARAMETERS[_model].update(

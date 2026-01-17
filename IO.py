@@ -8,6 +8,8 @@
 import os  # , sys
 from   typing import List, Tuple, Dict  #, Optional
 
+import pickle
+
 import numpy  as np
 import pandas as pd
 
@@ -16,7 +18,8 @@ import architecture, plots  # constants
 
 
 
-os.makedirs('data', exist_ok=True)
+os.makedirs('data',  exist_ok=True)
+os.makedirs('cache', exist_ok=True)
 
 
 
@@ -26,7 +29,7 @@ os.makedirs('data', exist_ok=True)
 #    January 13, 2026
 
 def load_consumption(
-        path,
+        path   : str = 'data/consommation-quotidienne-brute.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute/exports/csv?'
                        'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
@@ -92,51 +95,69 @@ def load_consumption(
 #    January 13, 2026
 
 def load_consumption_by_region(
-        path,
+        path   : str =  'data/consommation-quotidienne-brute-regionale.csv',
+        cache_path:str='cache/consommation-quotidienne-brute-regionale.pkl',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute-regionale/exports/csv?'
                        'lang=en&timezone=timezone=Europe%2FParis&'
                        'use_labels=true&delimiter=%3B',
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
-    # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        df = pd.read_csv(path, sep=';')
+    # This input csv is an order of magnitude larger than all others combined
+
+    # either load...
+    if os.path.exists(cache_path):
+        if verbose > 0:
+            print(f"Loading consumption by region from: {cache_path}...")
+        with open(cache_path, "rb") as f:
+            (df, _names_regions) = pickle.load(f)
+
+    # ... or compute
     else:
-        # Load from URL
-        df = pd.read_csv(url, sep=';')
-        df.to_csv(path, sep=';')
+        # load local file if it exists, otherwise get it online
+        if os.path.exists(path):
+            df = pd.read_csv(path, sep=';')
+        else:
+            # Load from URL
+            df = pd.read_csv(url, sep=';')
+            df.to_csv(path, sep=';')
 
 
-    if 'Date - Heure' not in df.columns:
-        raise RuntimeError(f"No datetime-like column found in {path}")
+        if 'Date - Heure' not in df.columns:
+            raise RuntimeError(f"No datetime-like column found in {path}")
 
-    col_datetime = 'Date - Heure'  # given as local time
-    df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)
-    df = df.set_index(col_datetime).sort_index()
-    # df.index.name = "datetime"
+        col_datetime = 'Date - Heure'  # given as local time
+        df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)
+        df = df.set_index(col_datetime).sort_index()
+        # df.index.name = "datetime"
 
-    df = df[['Région', 'Consommation brute électricité (MW) - RTE']]
-    df = df.rename(columns={
-        "Consommation brute électricité (MW) - RTE": 'consumption_GW'
-        })
-    df['consumption_GW'] = df['consumption_GW']/1000
+        df = df[['Région', 'Consommation brute électricité (MW) - RTE']]
+        df = df.rename(columns={
+            "Consommation brute électricité (MW) - RTE": 'consumption_GW'
+            })
+        df['consumption_GW'] = df['consumption_GW']/1000
 
-    # plots.data(df.resample('D').mean(),
-    #           xlabel="date", ylabel="consumption (MW)")
+        # plots.data(df.resample('D').mean(),
+        #           xlabel="date", ylabel="consumption (MW)")
 
-    df['datetime'] = df.index
-    df = df.pivot_table(index="datetime", columns="Région", values='consumption_GW',
-                  aggfunc='mean').sort_index()
-    _names_regions = list(df.columns)
-    df.columns = ["consumption_" + SHORT_NAMES_REGIONS[normalize_name(r)] + \
-                  "_GW" for r in _names_regions]
+        df['datetime'] = df.index
+        df = df.pivot_table(index="datetime", columns="Région", values='consumption_GW',
+                      aggfunc='mean').sort_index()
+        _names_regions = list(df.columns)
+        df.columns = ["consumption_" + SHORT_NAMES_REGIONS[normalize_name(r)] + \
+                      "_GW" for r in _names_regions]
 
-    df['year']     = df.index.year
-    df['month']    = df.index.month
-    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
-        year=2000, month=d.month, day=d.day))
-    df['timeofday']= df.index.hour + df.index.minute/60
+        df['year']     = df.index.year
+        df['month']    = df.index.month
+        df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+            year=2000, month=d.month, day=d.day))
+        df['timeofday']= df.index.hour + df.index.minute/60
+
+        # Save pickle
+        with open(cache_path, "wb") as f:
+            pickle.dump((df, _names_regions), f)
+        if verbose > 0:
+            print(f"Saved consumption by region to: {cache_path}")
 
 
     if verbose >= 3:
