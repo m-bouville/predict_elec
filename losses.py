@@ -317,11 +317,14 @@ def quantile_torch(
         saturation_cold_degC:float,
         threshold_cold_degC: float,
         lambda_cold     : float,
-        Tavg_current    : float,  # /!\ assumes a single one (correct for a single day)
+        Tavg_current    : torch.Tensor,   # (B, V, 1)
+            # /!\ assumes a single one (correct for a single day)
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Torch loss wrapper for quantile forecasts.
     """
+
+    # print("[quantile_torch] Tavg_current", Tavg_current.shape)
     if y_nation_true.ndim == 3:
         y_nation_true = y_nation_true.squeeze(-1)
 
@@ -382,6 +385,7 @@ def quantile_numpy(
     MUST match torch version exactly.
     """
 
+    # print("[quantile_numpy] Tavg_current", Tavg_current.shape)
     if y_nation_true.ndim == 3:
         y_nation_true = y_nation_true.squeeze(-1)
 
@@ -467,7 +471,7 @@ def regions_numpy(
     #       f"Y_regions_true {Y_regions_true.shape}")
 
     if lambda_regions <= 0.:
-        return np.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
+        return np.zeros(Y_regions_pred.shape[1])
 
     # MAE region by region
     abs_err= np.abs(Y_regions_pred - Y_regions_true).mean(axis=0)   # (V, R)

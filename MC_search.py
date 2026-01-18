@@ -14,7 +14,7 @@ import random
 
 
 import run
-
+from   constants import Stage
 
 
 
@@ -25,11 +25,8 @@ def sample_baseline_parameters(base_params: Dict[str, Dict[str, Any]])\
 
     for _baseline in p0.keys():
         p = p0[_baseline]   # Dict[str, Any]
-        if _baseline == 'lasso':
-            if 'alpha' in p.keys():
-                p['alpha']      = round(random.uniform(0.5 / 100., 4 / 100.), 5)
 
-        elif _baseline == 'LR':
+        if _baseline == 'LR':
             if 'type' in p.keys():
                 p['type']      = random.choice(['lasso'])  # 'ridge'
             if 'alpha' in p.keys():
@@ -217,7 +214,7 @@ def sample_metamodel_NN_parameters(base_params : Dict[str, Any]) -> Dict[str, An
 
 
 def run_Monte_Carlo_search(
-            stage               : str,    # only 'all' is implemented
+            stage               : Stage,    # only Stage.all is implemented
             num_trials          : int,
 
             # configuration bundles
@@ -239,8 +236,8 @@ def run_Monte_Carlo_search(
             verbose             : int  = 0
         ):
 
-    if stage != 'all':
-        warnings.warn(f"stage ({stage}) will not be used")
+    if stage != Stage.all:
+        warnings.warn(f"stage ({stage.value}) will not be used")
     # csv_path: str = 'parameter_search_all.csv'
 
     # from   sklearn.exceptions import ConvergenceWarning

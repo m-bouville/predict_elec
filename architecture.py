@@ -506,7 +506,7 @@ class TimeSeriesTransformer(nn.Module):
 
         # guaranteeing: last patch ends exactly at t = L
         if self.pad_length > 0:
-            _old_shape = X.shape
+            # _old_shape = X.shape
             X = torch.nn.functional.pad(
                 X,
                 pad  = (0, 0, 0, self.pad_length),  # pad time dimension on the right

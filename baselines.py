@@ -39,9 +39,10 @@ from   lightgbm                import LGBMRegressor
 # ============================================================
 
 def create_baselines(df            : pd.DataFrame,
-                     cols_y_nation    : str,
+                     cols_y_nation : str,
                      cols_Y_regions: List[str],
-                     cols_features  : List[str],
+                     cols_features : List[str],
+                     dates_df      : pd.DataFrame,
                      baseline_cfg  : Dict[str, Dict[str, Any]],
                      train_split   : float,
                      n_valid       : int,
@@ -55,18 +56,18 @@ def create_baselines(df            : pd.DataFrame,
 
     # Dict describing data + RF config (used to build cache key)
     cache_id = {
-        "target":       cols_y_nation,
+        "target":        cols_y_nation,
         "cols_Y_regions":cols_Y_regions,
         "cols_features": cols_features,
-        'train_end':    train_split-n_valid,
-        'val_end':      train_split,
+        'train_end':     train_split-n_valid,
+        'val_end':       train_split,
         # "split": "v1",   # optional: data split identifier
     }
 
 
     # Extract matrices
     # -------------------------
-    X_GW: np.ndarray = df[cols_features ].values.astype(np.float32)
+    X_GW: np.ndarray = df[cols_features].values.astype(np.float32)
     y_GW: np.ndarray = df[cols_y_nation].values.astype(np.float32)
 
     scaler = StandardScaler()
@@ -79,48 +80,14 @@ def create_baselines(df            : pd.DataFrame,
     X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
 
 
-    # lasso pass to select features
-    # -------------------------
-
-    # # baseline_cfg['lasso']['alpha'] > 0 would be a simple LR,
-    # #    it would not select columns
-    # if 'lasso' in baseline_cfg and baseline_cfg['lasso']['alpha'] > 0:
-    #     cfg = baseline_cfg['lasso'] # .copy()
-
-    #     model_lasso = Lasso(**cfg)
-    #     model_lasso.fit(X_train_scaled, y_train_GW)
-
-    #     coeffs_lasso= pd.Series(model_lasso.coef_, index=cols_features).astype(np.float32)
-    #     # print("coeffs_lasso:", coeffs_lasso)
-
-    #     # Features with non-zero coefficients
-    #     idx_coeffs   = np.where(coeffs_lasso != 0)[0]
-    #     cols_features = list(np.array(cols_features)[idx_coeffs])
-    #     cols_features = [str(feature) for feature in cols_features] # get rid of np.str_
-    #     # print("cols_features:", cols_features)
-    #     if verbose > 0:
-    #         print(f"lasso: {X_GW.shape[1]} -> {len(cols_features)} features")
-
-    #     # print(df.shape, X_GW.shape)
-    #     X_GW = X_GW[:, idx_coeffs]
-    # else:
-    #     if verbose > 0:
-    #         print(f"no lasso: keep all {len(cols_features)} features")
-
-    # _df  = df[[cols_y_nation] + cols_features].copy()
-    # print(df.shape, X_GW.shape)
-
-
-    # start over, with fewer features
-    # -------------------------
-
     baseline_features_GW, baseline_models = \
         regression_and_forest(
             X               = X_GW,
             y               = y_GW,
-            cols_y_nation      = cols_y_nation,
-            cols_features    = cols_features,
+            cols_y_nation   = cols_y_nation,
+            cols_features   = cols_features,
             dates           = df.index,
+            dates_df        = dates_df,
             train_end       = train_split-n_valid,
             val_end         = train_split,
             models_cfg      = baseline_cfg,
@@ -159,9 +126,10 @@ def create_baselines(df            : pd.DataFrame,
 def regression_and_forest(
     X:               np.ndarray,
     y:               np.ndarray,
-    cols_y_nation:      str,
-    cols_features:    List[str],
+    cols_y_nation:   str,
+    cols_features:   List[str],
     dates:           pd.DatetimeIndex,
+    dates_df:        pd.DataFrame,
     train_end:       int,     # end of training set (exclusive)
     val_end:         int,     # end of validation set (exclusive)
     models_cfg:      Dict[str, dict],
@@ -248,16 +216,14 @@ def regression_and_forest(
 
             continue
 
-        if name == 'lasso':
-            continue
-
 
         # normal models
         os.makedirs(cache_dir, exist_ok=True)
 
-        _dict_key = cache_id_dict | cfg | {"cols_features": cols_features}
+        _dict_key = cache_id_dict | cfg | \
+            {"cols_features": cols_features,
+             "dates_df"     : dates_df.to_json(orient='index')}
         key_str    = json.dumps(_dict_key, sort_keys=True)
-            # features for LR, RL, GB (and NNTQ) change with lasso
 
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f"{name}_preds_{cache_key}.pkl")

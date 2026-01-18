@@ -17,6 +17,7 @@ from   optuna.distributions import \
 
 
 import run
+from   constants import Stage
 
 
 
@@ -25,9 +26,6 @@ import run
 # -------------------------------------------------------
 
 DISTRIBUTIONS_BASELINES = {
-    # 'lasso_alpha':    FloatDistribution(low=0.000,high=0.000,step=0.0005),  # constant
-    # 'lasso_max_iter': IntDistribution(low=2000, high=2000),  # constant
-
     'LR_type':        CategoricalDistribution(choices=['lasso', 'ridge']),
     'LR_alpha':      FloatDistribution(low=0.00, high=2.0,step=0.05),
     # 'LR_alpha_lasso': FloatDistribution(low=0.005, high=0.04, log=True),
@@ -130,10 +128,6 @@ def sample_baseline_parameters(
     for _baseline in p0.keys():
         p = p0[_baseline]  # Get the parameters for the current baseline model
 
-        # if _baseline == 'lasso':
-        #     if 'alpha' in p:
-        #         p['alpha'] = trial.suggest_float('lasso_alpha', 0.005, 0.04, log=True)
-
         if _baseline == 'LR':
             if 'type' in p:
                 p['type'] = trial.suggest_categorical('LR_type', ['ridge'])  # 'lasso',
@@ -162,7 +156,7 @@ def sample_baseline_parameters(
             if 'boosting_type' in p:   # TODO add more?
                 p['boosting_type'] = trial.suggest_categorical('LGBM_boosting_type', ['gbdt'])
             if 'num_leaves' in p:
-                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves', [8-1,16-1,32-1,64-1])
+                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves',[8-1,16-1,32-1,64-1])
             if 'max_depth' in p:
                 p['max_depth'] = trial.suggest_int('LGBM_max_depth', 2, 10)
             if 'learning_rate' in p:
@@ -318,7 +312,7 @@ def sample_metamodel_NN_parameters(
 # -------------------------------------------------------
 
 def run_Bayes_search(
-            stage               : str,    # in ['NNTQ', 'meta', 'all']
+            stage               : Stage,  # in [Stage.NNTQ, Stage.meta, Stage.all]
             num_trials          : int,
 
             # configuration bundles
@@ -338,9 +332,9 @@ def run_Bayes_search(
             cache_dir           : Optional[str] = None,
 
             # multi-run for best candidtes (robustness)
-            num_runs            : int  = {'NNTQ': 7,  'meta': 5},
+            num_runs            : Dict[Stage, int]  = {Stage.NNTQ:7,  Stage.meta:5},
             min_num_trials      : int  = 10,
-            wiggle_value        : dict = {'NNTQ': 5., 'meta': 0.007},
+            wiggle_value        : Dict[Stage, float]= {Stage.NNTQ:5., Stage.meta:0.007},
 
             verbose             : int  = 0
         ):
@@ -363,11 +357,7 @@ def run_Bayes_search(
     def objective(trial: optuna.Trial) -> float:
         # print(f"Starting run {run_id} out of {num_runs}")
 
-        # lasso controls features and is thus relevant to everyone
         baseline_parameters = copy.deepcopy(base_baseline_params)
-        # if 'lasso' in baseline_parameters and 'alpha' in baseline_parameters['lasso']:
-        #     baseline_parameters['lasso']['alpha'] = \
-        #         trial.suggest_float('lasso_alpha', 0.000, 0.000, step=0.0005)
 
         # three possible bahaviors:
         #   - all:  we sample everything
@@ -377,13 +367,13 @@ def run_Bayes_search(
         #       (NNTQ parameters are frozen to values found in `NNTQ` search)
 
         baseline_parameters= sample_baseline_parameters   (trial, baseline_parameters)\
-            if stage in [        'meta', 'all'] else baseline_parameters
+            if stage in [      Stage.meta, Stage.all] else baseline_parameters
         NNTQ_parameters    = sample_NNTQ_parameters       (trial, base_NNTQ_params)\
-            if stage in ['NNTQ',         'all'] else base_NNTQ_params.copy()
+            if stage in [Stage.NNTQ,       Stage.all] else base_NNTQ_params.copy()
         metamodel_parameters=sample_metamodel_NN_parameters(trial,base_meta_NN_params)\
-            if stage in [        'meta', 'all'] else base_meta_NN_params.copy()
+            if stage in [      Stage.meta, Stage.all] else base_meta_NN_params.copy()
 
-        if stage == 'NNTQ':
+        if stage == Stage.NNTQ:
             metamodel_parameters['epochs'] = 1  # for speed
 
 
@@ -408,8 +398,8 @@ def run_Bayes_search(
                       seed              = seed*100 + trial.number*10 + i,
 
                       force_calc_baselines=force_calc_baselines,
-                      save_cache_baselines= stage == 'NNTQ',  # baselines not sampled
-                      save_cache_NNTQ     = stage == 'meta',  # NNTQ      not sampled
+                      save_cache_baselines= stage == Stage.NNTQ,  # baselines not sampled
+                      save_cache_NNTQ     = stage == Stage.meta,  # NNTQ      not sampled
 
                       # XXX_EVERY (in epochs)
                       validate_every    = 999,
@@ -423,7 +413,7 @@ def run_Bayes_search(
             # print(trial.number, i, num_runs,
             #    (_loss_NNTQ_1run, _loss_meta), trial.study.best_trial.value)
 
-            _loss_1run = _loss_NNTQ if stage == 'NNTQ' else _loss_meta
+            _loss_1run = _loss_NNTQ if stage == Stage.NNTQ else _loss_meta
 
             if num_runs > 1 and trial.number > min_num_trials:
                 if i == 0: # we must decide whether to run more
@@ -452,10 +442,11 @@ def run_Bayes_search(
                     _loss_meta = dict_row['loss_meta']
 
                     print(f"{num_runs} runs: losses "
-                          f"{_list_losses_NNTQ if stage == 'NNTQ' else _list_losses_meta} "
-                          f"-> avg {dict_row[f'loss_{stage}']}")
+                          f"{_list_losses_NNTQ if stage == Stage.NNTQ else _list_losses_meta} "
+                          f"-> avg {dict_row[f'loss_{stage.value}']}")
 
         df_row = pd.DataFrame([dict_row])
+        # /_\ with multiple runs, the metrics other than losses are just the last run
 
         df_row.to_csv(
             trials_csv_path,
@@ -468,11 +459,11 @@ def run_Bayes_search(
         print()
 
         # return the relevant loss
-        if stage == 'NNTQ':
+        if stage == Stage.NNTQ:
             return _loss_NNTQ
-        if stage == 'meta':
+        if stage == Stage.meta:
             return _loss_meta
-        if stage == 'all':
+        if stage == Stage.all:
             return _loss_NNTQ + _loss_meta
 
 
@@ -497,7 +488,7 @@ def run_Bayes_search(
     _list_parameters_hist = ['model_dim', 'num_layers', 'num_heads', 'ffn_size',
                              # "learning_rate", "dropout"
                              ] \
-        if stage == 'NNTQ' else \
+        if stage == Stage.NNTQ else \
             [ 'LGBM_min_child_samples', 'LGBM_reg_alpha', 'LGBM_colsample_bytree',
              'metaNN_learning_rate', 'metaNN_num_cells_1', 'RF_min_samples_split'
             # 'LR_alpha', 'RF_max_depth', 'LGBM_max_depth', 'metaNN_learning_rate'
@@ -506,7 +497,7 @@ def run_Bayes_search(
 
 
     # Run optimization
-    print(f"\nStarting {num_trials} Bayesian trials ({stage})...")
+    print(f"\nStarting {num_trials} Bayesian trials ({stage.value})...")
     study.optimize(objective, n_trials=num_trials)
 
 
@@ -533,7 +524,7 @@ def run_Bayes_search(
 # -------------------------------------------------------
 
 def plot_optuna(study,
-                stage                   : str,
+                stage                   : Stage,
                 list_parameters_hist    : List[str],
                 num_best_runs_params    : int =  5,
                 num_best_runs_hist      : int = 15,
@@ -571,7 +562,7 @@ def plot_optuna(study,
     plt.figure()
     df.plot(x="number", y=["value", "best_so_far"])
     plt.xlabel("trial number")
-    plt.ylabel(f"{stage} loss")
+    plt.ylabel(f"{stage.value} loss")
     plt.yscale('log')
     plt.show()
 
@@ -579,7 +570,7 @@ def plot_optuna(study,
     # Parameter importance
     ######################
     cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio', \
-                     'lasso_max_iter', 'patch_length', 'stride']
+                     'patch_length', 'stride']
     dict_corr = dict()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     numeric_cols = [col for col in numeric_cols
@@ -667,7 +658,7 @@ def cols_not_paras() -> List[str]:
 
 def load_frozen_trials(csv_path     : str,
                        distributions: dict,
-                       stage        : str) -> List[optuna.Trial]:
+                       stage        : Stage) -> List[optuna.Trial]:
     results_df = pd.read_csv(csv_path, index_col=False)
 
     _cols_not_paras = cols_not_paras()
@@ -683,7 +674,8 @@ def load_frozen_trials(csv_path     : str,
                 'metaNN_learning_rate', 'metaNN_weight_decay']] =\
         (results_df[['learning_rate', 'weight_decay',
                 'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6).round(9)
-            # round to avoid 0.999999
+            # learning_rate and weight_decay are small, prone to round-off errors:
+            #    save them multiplied by a million (and round to avoid 0.999999)
 
     # can be 'sqrt' or a float => type issues
     results_df['RF_max_features'] = results_df['RF_max_features'].astype(str)
@@ -709,8 +701,8 @@ def load_frozen_trials(csv_path     : str,
                set(distributions_keys) - set(_params.keys())
 
         # relevant loss
-        _value = row['loss_NNTQ'] + row['loss_meta'] if stage == 'all' \
-            else row[f'loss_{stage}']
+        _value = row['loss_NNTQ'] + row['loss_meta'] if stage == Stage.all \
+            else row[f'loss_{stage.value}']
 
         trial = optuna.trial.FrozenTrial(
             number        = index,  # Trial number

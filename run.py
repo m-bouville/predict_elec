@@ -21,7 +21,7 @@ import pandas as pd
 
 import MC_search, Bayes_search, containers, architecture, \
     utils, baselines, IO, plot_statistics   # plots,
-
+from   constants import Stage
 
 # system dimensions
 # B = BATCH_SIZE
@@ -31,7 +31,6 @@ import MC_search, Bayes_search, containers, architecture, \
 # Q = number of quantiles = len(quantiles)
 # F = number of features
 # R = number of régions (for consumption)
-
 
 
 # ============================================================
@@ -101,7 +100,7 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
 
 
     return (df, col_y_nation, cols_Y_regions, cols_features,
-            dates, Tavg_full, holidays_full, weights_regions)
+            dates, Tavg_full, holidays_full, weights_regions, dates_df)
 
 
 
@@ -120,7 +119,6 @@ def normalize_features(df              : pd.DataFrame,
                        temperatures    : pd.DataFrame,
                        train_split     : float,
                        n_valid         : int,
-                       test_months     : int,
                        input_length    : int,
                        pred_length     : int,
                        features_in_future:bool,
@@ -130,9 +128,9 @@ def normalize_features(df              : pd.DataFrame,
 
 
     array = np.column_stack([
-        df[col_y_nation]      .values.astype(np.float32),
+        df[col_y_nation]  .values.astype(np.float32),
         df[cols_Y_regions].values.astype(np.float32),
-        df[cols_features]    .values.astype(np.float32)
+        df[cols_features] .values.astype(np.float32)
     ])
 
     if verbose >= 3:
@@ -144,13 +142,11 @@ def normalize_features(df              : pd.DataFrame,
     if verbose >= 1:
         num_steps_per_day = int(round(24*60/minutes_per_step))
         print(f"{len(array)/num_steps_per_day/365.25:.1f} years of data, "
-              f"train: {train_split/num_steps_per_day/365.25:.2f} yrs "
+              f"train + valid: {train_split/num_steps_per_day/365.25:.2f} yrs "
               # f" ({train_split_fraction*100:.1f}%), "
-              f"test: {test_months/num_steps_per_day/365.25:.2f} yrs"
-              f" (switching  {dates[train_split].date()})")
+              # f"test: {test_months/num_steps_per_day/365.25:.2f} yrs "
+              f"(switching to test {dates[train_split].date()})")
         print()
-    assert input_length + 60 < test_months,\
-        f"input_length ({input_length}) > test_months ({test_months}) - 60"
 
 
     # assert all(ts.hour == 12 for ts in train_dataset.forecast_origins)
@@ -204,8 +200,8 @@ def postprocess(baseline_parameters   : Dict[str, Any],
             key = f"test_{model}_{metric}".replace(" ", "_")
             flat_metrics[key] = float(df_metrics.loc[model, metric])
 
-    # learning_rate and weight_decay are so small
-    # round to avoid 0.999999
+    # learning_rate and weight_decay are small numbers, prone to round-off errors:
+    #    save them multiplied by a million (and round to avoid 0.999999)
     for _name in ['learning_rate', 'weight_decay']:
         NNTQ_parameters     [_name]= round(NNTQ_parameters    [_name] * 1e6, 6)
         metamodel_parameters[_name]= round(metamodel_parameters[_name]* 1e6, 6)
@@ -224,7 +220,7 @@ def postprocess(baseline_parameters   : Dict[str, Any],
 
     _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
                            verbose=verbose), 2)
-    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 3)
+    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 4)
 
     # BUG: this does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
@@ -307,7 +303,7 @@ def run_model_once(
     # load data from csv and create pd.DataFrame
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, col_y_nation, cols_Y_regions, cols_features,
-     dates, Tavg_full, holidays_full, weights_regions) = \
+     dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
             dict_input_csv_fnames, None, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
@@ -345,18 +341,20 @@ def run_model_once(
 
 
     train_split = int(len(df) * train_split_fraction)
-    test_months = len(df)-train_split
+    test_steps  = len(df)-train_split
     n_valid     = int(train_split * valid_ratio)
 
+    input_length = NNTQ_parameters['input_length']
+    assert input_length + 60 < test_steps,\
+        f"input_length ({input_length}) > test_steps ({test_steps}) - 60"
+
     (df_baselines, cols_features) = baselines.create_baselines(df,
-        col_y_nation, cols_Y_regions, cols_features,
+        col_y_nation, cols_Y_regions, cols_features, dates_df,
         baseline_parameters, train_split, n_valid,
         cache_dir, save_cache_baselines,
         force_calculation = force_calc_baselines,
         verbose           = verbose
     )
-        # df now has new columns (baseline predictions)
-        #    but fewer columns overall (some features were removed by lasso)
 
     df = pd.concat([df, df_baselines], axis=1)
     # print(f"post-concat: df.shape {df.shape}")
@@ -373,8 +371,9 @@ def run_model_once(
     if cache_dir is not None:
         os.makedirs(cache_dir, exist_ok=True)
 
-        key_str    = json.dumps(
-            # baseline_parameters['lasso'] |
+        key_str    = json.dumps( {
+            "cols_features": cols_features,
+            "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'},
                 sort_keys=True)
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
@@ -396,7 +395,7 @@ def run_model_once(
         data, X_test_scaled = normalize_features(
             df, col_y_nation, cols_Y_regions, cols_features, weights_regions,
             minutes_per_step, dates, Tavg_full,
-            train_split, n_valid, test_months,
+            train_split, n_valid,
             NNTQ_parameters['input_length'],
             NNTQ_parameters['pred_length'],
             NNTQ_parameters['features_in_future'],
@@ -491,27 +490,27 @@ def run_model_once(
         # )
 
 
+    if verbose >= 2:
+        plot_statistics.thermosensitivity_per_time_of_day(
+             data_split = data.complete,
+             thresholds_degC = [('<=', 10), ('<=', 2), ('>=', 23)],
+             ylim = [0, 2.5],
+             num_steps_per_day=num_steps_per_day
+        )
 
-    plot_statistics.thermosensitivity_per_time_of_day(
-         data_split = data.complete,
-         thresholds_degC = [('<=', 10), ('<=', 2), ('>=', 23)],
-         ylim = [0, 2.5],
-         num_steps_per_day=num_steps_per_day
-    )
+        plot_statistics.thermosensitivity_per_temperature(
+             data_split = data.complete,
+             thresholds_degC= np.arange(-1., 26.5, step=0.1),
+             # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
+             num_steps_per_day=num_steps_per_day
+        )
 
-    plot_statistics.thermosensitivity_per_temperature(
-         data_split = data.complete,
-         thresholds_degC= np.arange(-1., 26.5, step=0.1),
-         # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
-         num_steps_per_day=num_steps_per_day
-    )
-
-    plot_statistics.thermosensitivity_per_temperature(
-         data_split = data.train,
-         thresholds_degC= np.arange(-1., 26.5, step=0.1),
-         # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
-         num_steps_per_day=num_steps_per_day
-    )
+        plot_statistics.thermosensitivity_per_temperature(
+             data_split = data.train,
+             thresholds_degC= np.arange(-1., 26.5, step=0.1),
+             # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
+             num_steps_per_day=num_steps_per_day
+        )
 
 
 
@@ -636,16 +635,16 @@ def run_model(
 
         if mode in ['random', 'Monte Carlo', 'MC']:
             parameter_search_function = MC_search.run_Monte_Carlo_search
-            stage = 'all'  # the only one implemented
+            stage = Stage.all  # the only one implemented
 
         elif 'Bayes' in mode:  # works for `Bayes` and `Bayesian`
             parameter_search_function = Bayes_search.run_Bayes_search
             if 'NNTQ' in mode:
-                stage = 'NNTQ'
+                stage = Stage.NNTQ
             elif 'meta' in mode: # works for `meta` and `metamodel`
-                stage = 'meta'
+                stage = Stage.meta
             elif 'all' in mode:
-                stage = 'all'
+                stage = Stage.all
             else:
                 raise ValueError(f"`{mode}` is not a valid mode")
 
@@ -655,7 +654,7 @@ def run_model(
         parameter_search_function(
                 stage               = stage,
                 num_trials          = num_trials,
-                trials_csv_path     = f'parameter_search_{stage}.csv',
+                trials_csv_path     = f'parameter_search_{stage.value}.csv',
 
                 # configuration bundles
                 base_baseline_params= baseline_parameters,
@@ -737,12 +736,13 @@ def loss_NNTQ(
          verbose                : int  = 0
     ) -> float:
     _quantile_delta_coverage = quantile_delta_coverage.copy()
+        # dict of quantiles: for each, measured - theoretical (e.g. 53% - 50% = 3%)
 
-    # add spread: q90 - q10
+    # add spread: q90 - q10 (again, measured - theoretical)
     _quantile_delta_coverage['spread'] = max(0, _quantile_delta_coverage['q90'] - \
                                                 _quantile_delta_coverage['q10'])
 
-    # add bias
+    # add bias, i.e. signed error
     _bias_mean = np.mean(list(_quantile_delta_coverage.values()))
     _bias_penalty = (  # asymmetrically penalizing 'everything above the truth'
         max(0,  _bias_mean) * 1.  +
@@ -788,6 +788,7 @@ def loss_meta(
     ) -> float:
 
     dict_by_metric = {k: [] for k in list(metric_weights.keys())}
+    _list_models   = []  # models actually used
 
     if isinstance(metrics, dict):
         for key, value in metrics.items():
@@ -796,6 +797,7 @@ def loss_meta(
             metric = parts[-1]             # Ex: "bias", "RMSE", etc.
 
             dict_by_metric[metric].append(model_weights[model] * abs(value))
+            _list_models.append(model)
 
         for metric in dict_by_metric.keys():
             assert len(dict_by_metric[metric]) == len(model_weights)
@@ -805,8 +807,12 @@ def loss_meta(
             dict_by_metric[metric] = [model_weights[model.replace(" ", "_")] * \
                     abs(metrics[metric].loc[model])
                         for model in metrics.index]
+            _list_models = list(metrics.index)
 
-    _sum_model_weights = np.sum(list(model_weights.values()))
+    _sum_model_weights = np.sum([w for (m, w) in model_weights.items()
+                                 if m in _list_models])  # only those actually used
+    # _sum_model_weights = np.sum(list(model_weights.values()))
+
     dict_avg_metrics = {metric: round(float(np.sum(_list) / _sum_model_weights), 5)
                             for (metric, _list) in dict_by_metric.items()}
 

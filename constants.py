@@ -13,6 +13,13 @@ import torch
 # from   IO import normalize_name
 
 
+from enum import Enum
+
+class Stage(Enum):
+    meta = 'meta'
+    NNTQ = 'NNTQ'
+    all  = 'all'
+
 
 
 MINUTES_PER_STEP  = 30
@@ -189,8 +196,6 @@ CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
 BASELINES_PARAMETERS = {
-    # 'lasso': {"alpha": 0.00, 'max_iter': 2_000},
-    # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
     'RF': {
         "type":            "rf",
@@ -224,7 +229,7 @@ BASELINES_PARAMETERS = {
 
 
 # # Optional: plug in Bayesian best parameters
-# _new_parameters = { #'lasso_alpha': 0.0,
+# _new_parameters = {
 #     'LR_type': 'ridge', 'LR_alpha': 1.45, 'RF_n_estimators': 490, 'RF_max_depth': 23,
 #     'RF_min_samples_leaf': 11, 'RF_min_samples_split': 12, 'RF_max_features': 'sqrt',
 #     'LGBM_boosting_type': 'gbdt', 'LGBM_num_leaves': 15, 'LGBM_max_depth': 2,
@@ -300,7 +305,6 @@ def fast_parameters(nntq_parameters        : Dict[str, Any],
 
 
 baseline_params_fast = {
-    # 'lasso': {"alpha": 0.04, 'max_iter': 2_000},
     # "oracle": {1},  # (content is just a place-holder)
     'LR': {"type": "lasso", "alpha": 5 / 100., 'max_iter': 2_000},
     'RF': {
