@@ -54,7 +54,7 @@ DISTRIBUTIONS_BASELINES = {
 }
 
 DISTRIBUTIONS_NNTQ = {
-    # 'use_ML_features':BoolDistribution(),
+    'use_ML_features':IntDistribution(low=0, high=1, step=1),  # Boolean
 
     # number of steps
     'patch_length':IntDistribution(low=12, high=48, step=6),
@@ -188,7 +188,7 @@ def sample_NNTQ_parameters(
     p = base_params.copy()
 
     if 'use_ML_features' in p:
-        p['use_ML_features']= trial.suggest_bool('use_ML_features')
+        p['use_ML_features']=trial.suggest_int('use_ML_features', 0, 0, step=1)
 
     # number of steps
     if 'patch_length' in p:
@@ -196,7 +196,7 @@ def sample_NNTQ_parameters(
     if 'stride' in p:
         p['stride'       ] = trial.suggest_int  ('stride',        6, 18, step= 3)
     if 'input_length' in p:
-        p['input_length' ] = trial.suggest_int  ('input_length',10*48,16*48,step=2*48)
+        p['input_length' ] = trial.suggest_int  ('input_length',12*48,16*48,step=2*48)
 
     if 'epochs' in p:
         p['epochs'        ] = trial.suggest_int  ('epochs', 10, 25, step=5)
@@ -338,9 +338,9 @@ def run_Bayes_search(
             cache_dir           : Optional[str] = None,
 
             # multi-run for best candidtes (robustness)
-            num_runs            : Dict[Stage, int]  = {Stage.NNTQ:7,  Stage.meta:5},
+            num_runs            : Dict[Stage, int]  ={Stage.NNTQ:7,  Stage.meta:5},
             min_num_trials      : int  = 10,
-            wiggle_value        : Dict[Stage, float]= {Stage.NNTQ:5., Stage.meta:0.007},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:3., Stage.meta:0.007},
 
             verbose             : int  = 0
         ):
@@ -491,9 +491,7 @@ def run_Bayes_search(
             study.add_trial(trial)
 
     # Plotting
-    _list_parameters_hist = ['model_dim', 'num_layers', 'num_heads', 'ffn_size',
-                             # "learning_rate", "dropout"
-                             ] \
+    _list_parameters_hist = ['model_dim', 'dropout', 'learning_rate', 'lambda_cross'] \
         if stage == Stage.NNTQ else \
             [ 'LGBM_min_child_samples', 'LGBM_reg_alpha', 'LGBM_colsample_bytree',
              'metaNN_learning_rate', 'metaNN_num_cells_1', 'RF_min_samples_split'
@@ -575,8 +573,8 @@ def plot_optuna(study,
 
     # Parameter importance
     ######################
-    cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio', \
-                     'patch_length', 'stride']
+    cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio']
+                     # 'patch_length', 'stride']
     dict_corr = dict()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     numeric_cols = [col for col in numeric_cols

@@ -21,7 +21,7 @@ import pandas as pd
 
 import MC_search, Bayes_search, containers, architecture, \
     utils, baselines, IO, plot_statistics   # plots,
-from   constants import Stage
+from   constants import Stage, Split
 
 # system dimensions
 # B = BATCH_SIZE
@@ -456,7 +456,7 @@ def run_model_once(
 
     # metamodel LR
     data.calculate_metamodel_LR(
-        split_active='valid', min_weight=0.15, verbose=verbose)
+        split_active = Split.valid, min_weight=0.15, verbose=verbose)
 
     if verbose > 0:
         print(f"weights_meta_LR [%]: "
@@ -469,7 +469,7 @@ def run_model_once(
     # NN metamodel
     # ============================================================
 
-    data.calculate_metamodel_NN(names_cols['features'], valid_length, 'valid',
+    data.calculate_metamodel_NN(names_cols['features'], valid_length, Split.valid,
                                 metamodel_NN_parameters, verbose)
     avg_weights_meta_NN = data.avg_weights_meta_NN
 

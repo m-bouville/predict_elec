@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 
 
 import plots  # containers
+from   constants   import Split
 
 
 
@@ -407,10 +408,10 @@ def thermosensitivity_per_time_of_day(
         plots.curves(
              sensitivity_df['true'] * _sign,
             {_col: sensitivity_df['NNTQ '+_col]*_sign for _col in ['q10', 'q50', 'q90']} \
-                if data_split.name != 'complete' else None,
+                if data_split.name != Split.complete else None,
             None,  # {_col: sensitivity_df[        _col]*_sign for _col in ['LR', 'RF', 'LGBM']},
             {_col: sensitivity_df['meta '+_col]*_sign for _col in ['LR', 'NN']} \
-                if data_split.name == 'test' else None,
+                if data_split.name == Split.test else None,
              xlabel="time of day [UTC]", ylabel="thermosensitivity [GW/K]",
              title=f"{data_split.name_display}, {round(num_days):n} days with {threshold_str}",
              ylim=ylim, date_range=None, moving_average=None, groupby=None)

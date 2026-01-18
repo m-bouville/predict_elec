@@ -14,6 +14,7 @@ import pandas as pd
 
 
 import losses, containers  # utils
+from   constants   import Split
 
 
 
@@ -190,7 +191,7 @@ def make_X_and_y(array           : np.ndarray,
 
     # Map column names -> column indices in train_data
     # print(names_cols)
-    print({k: len(w) for (k, w) in names_cols.items()})
+    # print({k: len(w) for (k, w) in names_cols.items()})
     all_cols  = names_cols['y_nation'] + names_cols['Y_regions'] + \
                 names_cols['features'] + names_cols['ML_preds' ]
     col_to_idx= {col: i for i, col in enumerate(all_cols)}
@@ -321,25 +322,25 @@ def make_X_and_y(array           : np.ndarray,
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
     names_models = [e.split('_')[1] for e in names_cols['ML_preds']]
-    train = containers.DataSplit("train", "training",
+    train = containers.DataSplit(Split.train, "training",
             idx_train, X_train_GW, y_nation_train_GW, Y_regions_train_GW,
             train_dates, train_Tavg_degC, names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML_train, index=train_dates,
                                        columns=names_models).to_dict(),
             loader=train_loader, dataset_scaled=train_dataset_scaled)
-    valid = containers.DataSplit("valid", "validation",
+    valid = containers.DataSplit(Split.valid, "validation",
             idx_valid, X_valid_GW, y_nation_valid_GW, Y_regions_valid_GW,
             valid_dates, valid_Tavg_degC, names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML_valid, index=valid_dates,
                                        columns=names_models).to_dict(),
             loader=valid_loader, dataset_scaled=valid_dataset_scaled)
-    test  = containers.DataSplit("test",  "testing",
+    test  = containers.DataSplit(Split.test,  "testing",
             idx_test,  X_test_GW,  y_nation_test_GW,  Y_regions_test_GW,
             test_dates,  test_Tavg_degC, names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML_test, index=test_dates,
                                        columns=names_models).to_dict(),
             loader=test_loader,  dataset_scaled=test_dataset_scaled)
-    complete=containers.DataSplit("complete",  "all data",
+    complete=containers.DataSplit(Split.complete,  "all data",
             idx_all,  X_GW,   y_nation_GW,  Y_regions_GW,
             dates,  temperatures, names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML, index=dates,

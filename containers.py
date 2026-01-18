@@ -13,12 +13,13 @@ import pandas as pd
 
 
 import architecture, utils, metamodel, plots
+from   constants   import Split
 
 
 @dataclass
 class DataSplit:
-    name:             str             # 'train'   | 'valid'     | 'test'
-    name_display:     str             # 'training'| 'validation'| 'testing'
+    name:             Split    # Split.train    |Split.valid      |Split.test
+    name_display:     str      #      'training'|     'validation'|     'testing'
 
     # Indices into the original series
     idx:              pd.Index | range
@@ -79,7 +80,7 @@ class DataSplit:
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
 
         # print(self.name)
-        if self.name == 'complete':
+        if self.name == Split.complete:
             self.true_nation_GW = pd.Series(self.y_nation, index=self.dates)
             return
 
@@ -233,8 +234,8 @@ class DataSplit:
 
 
     # Metamodel LR
-    def calculate_input_metamodel_LR(self, split_active: str) -> None:
-        if self.name == 'complete':
+    def calculate_input_metamodel_LR(self, split_active: Split) -> None:
+        if self.name == Split.complete:
             self.input_metamodel_LR= None
             self.y_metamodel_LR    = None
             return
@@ -262,8 +263,8 @@ class DataSplit:
         if verbose > 0:
             print(f"\n{self.name_display:10s} metrics [{unit}]:")
         return utils.compare_models( self.true_nation_GW,self.dict_preds_NNTQ,
-                                     self.dict_preds_ML, self.dict_preds_meta,
-                                     subset=self.name, unit=unit, verbose=verbose)
+                            self.dict_preds_ML, self.dict_preds_meta,
+                            subset=self.name_display, unit=unit, verbose=verbose)
 
 
     # plotting
@@ -278,7 +279,7 @@ class DataSplit:
         # print(self.dict_preds_NNTQ ['q50'].shape, self.dict_preds_NNTQ ['q50'])
         # print(self.dict_preds_meta['LR'].shape, self.dict_preds_meta['LR'])
 
-        plots.diagnostics(self.name,
+        plots.diagnostics(self.name_display,
             self.true_nation_GW, {q: self.dict_preds_NNTQ[q] for q in quantiles},
             self.dict_preds_ML, self.dict_preds_meta,
             names_baseline, names_meta, temperature_full.iloc[self.idx],
@@ -318,10 +319,10 @@ class DatasetBundle:
 
     def items(self):
         return {
-            'train':   self.train,
-            'valid':   self.valid,
-            'test':    self.test,
-            'complete':self.complete
+            Split.train:   self.train,
+            Split.valid:   self.valid,
+            Split.test:    self.test,
+            Split.complete:self.complete
         }.items()
 
     def predictions_day_ahead(self, model, scaler_y,
@@ -329,26 +330,26 @@ class DatasetBundle:
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
         # print("predictions_day_ahead")
         for (_name_split, _data_split) in self.items():
-            # print(_name_split)
+            # print(_name_split.value)
             _data_split.prediction_day_ahead(
                 model, scaler_y, device,
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
     # Metamodels
     def calculate_metamodel_LR(self,
-                               split_active:str,
+                               split_active:Split,
                                min_weight:  float = 0.,
                                verbose:     int   = 0) -> None:
-        assert split_active in ['train', 'valid'], split_active
+        assert split_active in [Split.train, Split.valid], split_active
         self.weights_meta_LR = split_active
 
-        for (_split, _data_split) in self.items():
+        for (_name_split, _data_split) in self.items():
             _data_split.calculate_input_metamodel_LR(split_active=split_active)
-            # print(_split, _data_split.input_metamodel_LR is not None,
-            #               _data_split.    y_metamodel_LR is not None)
+            # print(_name_split.value, _data_split.input_metamodel_LR is not None,
+            #                          _data_split.    y_metamodel_LR is not None)
 
 
-        if split_active == 'train':
+        if split_active == Split.train:
             (self.weights_meta_LR,
              self.train.dict_preds_meta['LR'],
              self.valid.dict_preds_meta['LR'],
@@ -369,12 +370,12 @@ class DatasetBundle:
     def calculate_metamodel_NN(self,
                     cols_features: List[str],
                     valid_length : int,
-                    split_active : str,
+                    split_active : Split,
                     metamodel_nn_parameters: Dict[str, Any],
                     verbose      : int = 0) -> None:
-        assert split_active in ['train', 'valid'], split_active
+        assert split_active in [Split.train, Split.valid], split_active
 
-        if split_active == 'train':
+        if split_active == Split.train:
             (self.train.dict_preds_meta['NN'],
              self.valid.dict_preds_meta['NN'],
              self.test .dict_preds_meta['NN'],

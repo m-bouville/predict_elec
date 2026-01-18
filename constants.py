@@ -17,6 +17,12 @@ from enum import Enum
 
 
 
+class Split(Enum):
+    train   = 'train'
+    valid   = 'valid'
+    test    = 'test'
+    complete= 'complete'
+
 class Stage(Enum):
     meta = 'meta'
     NNTQ = 'NNTQ'
@@ -49,8 +55,8 @@ FORECAST_HOUR:int = 12          # 12: noon
 _patch_length = days_to_steps(0.5)
 
 NNTQ_PARAMETERS: dict = {
+    'use_ML_features'  : 0,
     'device'           : DEVICE,
-    'use_ML_features'  : False,
 
     'input_length'     : days_to_steps(14),  # How many half-hours the model sees
     'pred_length'      : days_to_steps( 1 + (24.-FORECAST_HOUR)/24),
@@ -114,49 +120,25 @@ NNTQ_PARAMETERS['num_patches'] = \
 
 # # Optional: plug in Bayesian best parameters
 NNTQ_PARAMETERS.update(
-    # {'patch_length': 36, 'stride': 12, 'input_length': 768, 'epochs': 15,
-    #  'batch_size': 64, 'learning_rate': 0.0122, 'weight_decay': 1.5650e-09,
-    #  'dropout': 0.08, 'lambda_cross': 0.016, 'lambda_coverage': 0.2,
-    #  'lambda_deriv': 0.028, 'lambda_median': 0.04, 'smoothing_cross': 0.049,
-    #  'threshold_cold_degC': 0.30, 'saturation_cold_degC': -3.6, 'lambda_cold': 0.09,
-    #  'lambda_regions': 0.044, 'lambda_regions_sum': 0.42, 'model_dim': 350,
-    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 1, 'num_geo_blocks': 8,
-    #  'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.034
-    #  }  # trial 358: avg loss 18.90 over 7 runs [data -> 11/25]
-    #     #   losses [11.11, 19.03, 18.63, 17.77, 20.1, 18.98, 20.16]
-
-    # {'patch_length': 36, 'stride': 12, 'input_length': 576, 'epochs': 15,
-    #  'batch_size': 64, 'learning_rate': 0.0138, 'weight_decay': 1.421e-09,
-    #  'dropout': 0.1, 'lambda_cross': 0.008, 'lambda_coverage': 0.16,
-    #  'lambda_deriv': 0.028, 'lambda_median': 0.04, 'smoothing_cross': 0.055,
-    #  'threshold_cold_degC': -0.3, 'saturation_cold_degC': -3.9, 'lambda_cold': 0.09,
-    #  'lambda_regions': 0.054, 'lambda_regions_sum': 0.42, 'model_dim': 375,
-    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 1, 'num_geo_blocks': 8,
-    #  'warmup_steps': 1500, 'patience': 6, 'min_delta': 0.034
-    #  }  # trial 373: avg loss 15.86 over 7 runs [data -> 11/25]
-    #     #   losses [17.84, 15.14, 21.44, 19.22, 15.58, 21.17, 12.12]
-
-    # {'patch_length': 36, 'stride': 15, 'input_length': 576, 'epochs': 15,
-    #  'batch_size': 64, 'learning_rate': 0.0158, 'weight_decay': 1.56054e-09,
-    #  'dropout': 0.11, 'lambda_cross': 0.0, 'lambda_coverage': 0.18,
-    #  'lambda_deriv': 0.048, 'lambda_median': 0.04, 'smoothing_cross': 0.057,
-    #  'threshold_cold_degC': -0.8, 'saturation_cold_degC': -4.2, 'lambda_cold': 0.13,
-    #  'lambda_regions': 0.052, 'lambda_regions_sum': 0.42, 'model_dim': 525,
-    #  'ffn_size': 4, 'num_heads': 5, 'num_layers': 4, 'num_geo_blocks': 8,
-    #  'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.034
-    #  }  # trial 420: avg loss 12.79 over 7 runs [data -> 11/25]
-    #     #   7 runs: losses [8.73, 11.42, 18.16, 8.84, 18.88, 18.36, 21.07] -> avg 15.13
-
-    {'patch_length': 36, 'stride': 15, 'input_length': 576, 'epochs': 15,
-     'batch_size': 64, 'learning_rate': 0.0162, 'weight_decay': 1.4469e-09,
-     'dropout': 0.12, 'lambda_cross': 0.0, 'lambda_coverage': 0.18,
-     'lambda_deriv': 0.048, 'lambda_median': 0.04, 'smoothing_cross': 0.057,
-     'threshold_cold_degC': -1.0, 'saturation_cold_degC': -4.3, 'lambda_cold': 0.13,
-     'lambda_regions': 0.052, 'lambda_regions_sum': 0.42, 'model_dim': 525,
-     'ffn_size': 4, 'num_heads': 5, 'num_layers': 4, 'num_geo_blocks': 8,
-     'warmup_steps': 2000, 'patience': 6, 'min_delta': 0.034
-     }  # trial 426: avg loss 8.81 over 7 runs [data -> 11/25]
-        #   losses [8.62, 7.06, 7.37, 9.67, 9.45, 8.94, 17.88] -> avg 8.81
+    {
+        'use_ML_features': 0,
+        'epochs': 15,
+        'patch_length': 36, 'stride': 15,
+        'input_length': 576,
+        'batch_size': 64,
+        'learning_rate': 0.0157, 'dropout': 0.136,
+        'lambda_coverage': 0.124,
+        'lambda_cross': 0.0144,
+        'lambda_deriv': 0.0424,
+        'lambda_median': 0.048,
+        'smoothing_cross': 0.056,
+        'threshold_cold_degC': -0.7, 'saturation_cold_degC': -4.7,'lambda_cold':0.13,
+        'lambda_regions': 0.051, 'lambda_regions_sum': 0.41,
+        'model_dim': 525, 'num_heads': 5, 'ffn_size': 4, 'num_layers': 6,  #5.6
+        'num_geo_blocks': 8, 'geo_block_ratio': 1.,
+        'patience': 6, 'min_delta': 0.034,
+        'warmup_steps': 2200,
+    }  # Average parameters from the best 5 runs
    )
 
 
@@ -193,7 +175,7 @@ DICT_INPUT_CSV_FNAMES = {
     "consumption":          "data/consommation-quotidienne-brute.csv",
     "consumption_by_region":'data/consommation-quotidienne-brute-regionale.csv',
     "temperature":          'data/temperature-quotidienne-regionale.csv',
-    # "solar":                'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
+    # "solar":       'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
 }
 CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 

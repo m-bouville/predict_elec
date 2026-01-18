@@ -8,9 +8,9 @@
 # import os
 import time
 
-from   typing import List, Tuple, Dict, Sequence, Optional, Any
+from   typing import List, Tuple, Dict, Optional  #, Sequence, Any
 
-import torch
+# import torch
 
 import numpy  as np
 import pandas as pd
@@ -24,6 +24,7 @@ import holidays
 
 
 import IO,  plots  # losses, architecture
+from   constants   import Split
 
 
 
@@ -223,7 +224,8 @@ def compare_models(true_series:     pd.Series,
                    dict_pred_series:        Dict[str, pd.Series],
                    dict_preds_ML:  Optional[Dict[str, pd.Series]] = None,
                    dict_preds_meta:Optional[Dict[str, pd.Series]] = None,
-                   subset:   str   = "", unit: str = "",
+                   subset:   str   = "",
+                   unit:     str = "",
                    max_RMSE: float = 4,
                    verbose:  int   = 0) -> pd.DataFrame:
     # if verbose < 1: return  # this function does nothing if it cannot display
@@ -432,7 +434,7 @@ def display_evolution(
 # -------------------------------------------------------
 
 def worst_days_by_loss(
-    split      : str,
+    split      : Split,
     y_true     : np.ndarray,   # shape (T,)
     y_pred     : np.ndarray,   # shape (T,)
     temperature: np.ndarray,
@@ -446,7 +448,7 @@ def worst_days_by_loss(
     """
 
     if verbose > 0:
-        print(f"\nWorst days ({split})")
+        print(f"\nWorst days ({split.value})")
 
     diff   = y_pred - y_true
     diff_pc= diff / y_pred * 100

@@ -458,7 +458,7 @@ def metrics(df_metrics: pd.DataFrame,
             plt.scatter(abs(df_metrics.loc[model, 'bias']),
                             df_metrics.loc[model, 'RMSE'],
                             label=model, s=100, color=_colors[model])
-        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.6)
+        plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.7)
         plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
         plt.show()

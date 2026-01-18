@@ -66,7 +66,7 @@ def create_baselines(df              : pd.DataFrame,
     # Extract matrices
     # -------------------------
     X_GW: np.ndarray = df[names_cols['features']].values.astype(np.float32)
-    y_GW: np.ndarray = df[names_cols['y_nation']].values.astype(np.float32)
+    y_GW: np.ndarray = df[names_cols['y_nation']].values.astype(np.float32).flatten()
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_GW)
