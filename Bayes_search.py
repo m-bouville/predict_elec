@@ -11,7 +11,8 @@ import pandas   as pd
 
 import optuna
 from   optuna.distributions import \
-                IntDistribution, FloatDistribution, CategoricalDistribution
+                IntDistribution, FloatDistribution, \
+                CategoricalDistribution #, BoolDistribution
 
 # import matplotlib.pyplot as plt
 
@@ -26,7 +27,7 @@ from   constants import Stage
 # -------------------------------------------------------
 
 DISTRIBUTIONS_BASELINES = {
-    'LR_type':        CategoricalDistribution(choices=['lasso', 'ridge']),
+    'LR_type':       CategoricalDistribution(choices=['lasso', 'ridge']),
     'LR_alpha':      FloatDistribution(low=0.00, high=2.0,step=0.05),
     # 'LR_alpha_lasso': FloatDistribution(low=0.005, high=0.04, log=True),
     # 'LR_alpha_ridge': FloatDistribution(low=0.5, high=2.0, log=True),
@@ -53,6 +54,8 @@ DISTRIBUTIONS_BASELINES = {
 }
 
 DISTRIBUTIONS_NNTQ = {
+    # 'use_ML_features':BoolDistribution(),
+
     # number of steps
     'patch_length':IntDistribution(low=12, high=48, step=6),
     'stride':      IntDistribution(low= 6, high=18, step=3),
@@ -183,6 +186,9 @@ def sample_NNTQ_parameters(
         ) -> Dict[str, Any]:
 
     p = base_params.copy()
+
+    if 'use_ML_features' in p:
+        p['use_ML_features']= trial.suggest_bool('use_ML_features')
 
     # number of steps
     if 'patch_length' in p:

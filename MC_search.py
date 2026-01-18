@@ -85,6 +85,9 @@ def sample_NNTQ_parameters(base_params: Dict[str, Any]) -> Dict[str, Any]:
 
     p = copy.deepcopy(base_params)
 
+    if 'use_ML_features' in p.keys():
+        p['use_ML_features'] = random.bool()
+
     if 'epochs' in p.keys():
         p['epochs']      = int(random.uniform(20, 40))
     if 'batch_size' in p.keys():

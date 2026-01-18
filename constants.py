@@ -9,17 +9,18 @@ from   typing import Dict, Any  # Tuple, List, Sequence  #, Optional
 
 import torch
 
+from enum import Enum
+
 
 # from   IO import normalize_name
 
 
-from enum import Enum
+
 
 class Stage(Enum):
     meta = 'meta'
     NNTQ = 'NNTQ'
     all  = 'all'
-
 
 
 MINUTES_PER_STEP  = 30
@@ -49,6 +50,8 @@ _patch_length = days_to_steps(0.5)
 
 NNTQ_PARAMETERS: dict = {
     'device'           : DEVICE,
+    'use_ML_features'  : False,
+
     'input_length'     : days_to_steps(14),  # How many half-hours the model sees
     'pred_length'      : days_to_steps( 1 + (24.-FORECAST_HOUR)/24),
         # start at noon, finish at midnight the next day
@@ -292,7 +295,7 @@ def fast_parameters(nntq_parameters        : Dict[str, Any],
                     metamodel_nn_parameters: Dict[str, Any]
                 ) -> [Dict[str, Dict[str, Any]], Dict[str, Any],  Dict[str, Any]]:
     nntq_parameters     ['epochs'        ] =  2
-    nntq_parameters     ['model_dim'     ] = 48
+    nntq_parameters     ['model_dim'     ] = 20
     nntq_parameters     ['num_layers'    ] =  1
     nntq_parameters     ['num_heads'     ] =  2
     nntq_parameters     ['ffn_size'      ] =  2

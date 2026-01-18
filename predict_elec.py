@@ -19,7 +19,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    RUN_FAST     = True         # True: smaller system => runs faster, for debugging
+    RUN_FAST     = False         # True: smaller system => runs faster, for debugging
 
     MODE = 'once'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
@@ -33,9 +33,6 @@ if __name__ == "__main__":
         num_trials =  1
         VERBOSE: int = 1  # 2 if RUN_FAST else 1
         force_calc_baselines = False  # VERBOSE >= 3
-
-
-        METAMODEL_NN_PARAMETERS['epochs'] =  1
     else:
         num_trials = 10
         force_calc_baselines = False

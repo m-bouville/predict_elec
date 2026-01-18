@@ -43,7 +43,7 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
                        num_steps_per_day  :int,
                        minutes_per_step   : int,
                        verbose            : int  = 0) \
-        -> Tuple[pd.DataFrame, str, List[str], List[str],
+        -> Tuple[pd.DataFrame, Dict[str, List[str]],
                  pd.Series, pd.Series, pd.Series, List[float]]:
 
     df, dates_df, weights_regions = utils.df_features(
@@ -67,7 +67,7 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
         c for c in numeric_cols
         if c not in ["year", 'month', 'timeofday', col_y_nation] + cols_Y_regions
     ]
-    # print("cols_features:", cols_features)
+    # print(len(cols_features), "cols_features:", cols_features)
 
     df_len_before = df.shape[0]
 
@@ -99,7 +99,8 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     df = df.reset_index(drop=True)
 
 
-    return (df, col_y_nation, cols_Y_regions, cols_features,
+    return (df, {"features": cols_features,  "Y_regions": cols_Y_regions,
+                 "y_nation": [col_y_nation]},
             dates, Tavg_full, holidays_full, weights_regions, dates_df)
 
 
@@ -110,9 +111,9 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
 # ============================================================
 
 def normalize_features(df              : pd.DataFrame,
-                       col_y_nation    : str,
-                       cols_Y_regions  : List[str],
-                       cols_features   : List[str],
+                       names_cols      : Dict[str, List[str]],
+                       use_ML_features : bool,
+
                        weights_regions : Dict[str, float],
                        minutes_per_step: int,
                        dates           : pd.DatetimeIndex,
@@ -127,10 +128,13 @@ def normalize_features(df              : pd.DataFrame,
                        verbose         : int = 0):
 
 
+    # print({k: len(w) for (k, w) in names_cols.items()})
+
     array = np.column_stack([
-        df[col_y_nation]  .values.astype(np.float32),
-        df[cols_Y_regions].values.astype(np.float32),
-        df[cols_features] .values.astype(np.float32)
+        df[names_cols['y_nation' ]].values.astype(np.float32),
+        df[names_cols['Y_regions']].values.astype(np.float32),
+        df[names_cols['features' ]].values.astype(np.float32),
+        df[names_cols['ML_preds' ]].values.astype(np.float32)
     ])
 
     if verbose >= 3:
@@ -157,8 +161,8 @@ def normalize_features(df              : pd.DataFrame,
 
     data, X_test_scaled = architecture.make_X_and_y(
             array, dates, temperatures.to_numpy(), train_split, n_valid,
-            cols_features, cols_Y_regions, col_y_nation, weights_regions,
-            minutes_per_step,
+            names_cols, use_ML_features,
+            weights_regions, minutes_per_step,
             input_length=input_length, pred_length=pred_length,
             features_in_future=features_in_future, batch_size=batch_size,
             forecast_hour=forecast_hour,
@@ -252,31 +256,32 @@ def postprocess(baseline_parameters   : Dict[str, Any],
 
 def run_model_once(
         # configuration bundles
-        baseline_parameters : Dict[str, Dict[str, Any]],
-        NNTQ_parameters     : Dict[str, Any],
+        baseline_parameters   : Dict[str, Dict[str, Any]],
+        NNTQ_parameters       : Dict[str, Any],
         metamodel_NN_parameters:Dict[str, Any],
-        dict_input_csv_fnames:Dict[str, str],
-        # statistics of the dataset
-        minutes_per_step    : int,
-        train_split_fraction: float,
-        valid_ratio         : float,
-        forecast_hour       : int,
-        seed                : int,
+        dict_input_csv_fnames : Dict[str, str],
 
-        force_calc_baselines: bool,
-        save_cache_baselines: bool,
-        save_cache_NNTQ     : bool,
+        # statistics of the dataset
+        minutes_per_step      : int,
+        train_split_fraction  : float,
+        valid_ratio           : float,
+        forecast_hour         : int,
+        seed                  : int,
+
+        force_calc_baselines  : bool,
+        save_cache_baselines  : bool,
+        save_cache_NNTQ       : bool,
 
         # XXX_EVERY (in epochs)
-        validate_every      : int,
-        display_every       : int,
-        plot_conv_every     : int,
-        run_id              : int,
+        validate_every        : int,
+        display_every         : int,
+        plot_conv_every       : int,
+        run_id                : int,
 
-        cache_dir           : str  = "cache",
-        # trials_csv_path     : str  = 'parameter_search.csv',
-        num_worst_days      : int  = 20,
-        verbose             : int  = 0
+        cache_dir             : str  = "cache",
+        # trials_csv_path       : str  = 'parameter_search.csv',
+        num_worst_days        : int  = 20,
+        verbose               : int  = 0
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
 
@@ -290,11 +295,6 @@ def run_model_once(
             print(f"GPU: {torch.cuda.get_device_name(0)}, "
                   f"CUDA version: {torch.version.cuda}, "
                   f"CUDNN version: {torch.backends.cudnn.version()}")
-
-        # # clear VRAM
-        # gc.collect()
-        # torch.cuda.empty_cache()
-        # # print(torch.cuda.memory_summary())
     elif verbose > 0:
         print("CUDA unavailable")
         print()
@@ -302,8 +302,7 @@ def run_model_once(
 
     # load data from csv and create pd.DataFrame
     num_steps_per_day = int(round(24*60/minutes_per_step))
-    (df, col_y_nation, cols_Y_regions, cols_features,
-     dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
+    (df, names_cols, dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
             dict_input_csv_fnames, None, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
@@ -327,7 +326,7 @@ def run_model_once(
     if verbose >= 2:
         IO.print_model_summary(
                 minutes_per_step, num_steps_per_day,
-                num_time_steps, cols_features,
+                num_time_steps, names_cols['features'],
                 **filtered_parameters, **filtered_meta_parameters
         )
 
@@ -348,16 +347,31 @@ def run_model_once(
     assert input_length + 60 < test_steps,\
         f"input_length ({input_length}) > test_steps ({test_steps}) - 60"
 
-    (df_baselines, cols_features) = baselines.create_baselines(df,
-        col_y_nation, cols_Y_regions, cols_features, dates_df,
+    # ML baselines
+    dict_series_baselines_GW = baselines.create_baselines(df,
+        names_cols, dates_df,
         baseline_parameters, train_split, n_valid,
         cache_dir, save_cache_baselines,
         force_calculation = force_calc_baselines,
         verbose           = verbose
     )
+    # names_cols['ML_preds'] = [f"consumption_{name}"
+    #                           for name in dict_series_baselines_GW.keys()]
 
-    df = pd.concat([df, df_baselines], axis=1)
-    # print(f"post-concat: df.shape {df.shape}")
+    _old_shape = df.shape
+    _df_ML = pd.DataFrame(dict_series_baselines_GW)
+    _df_ML.columns = [f"consumption_{name}" for name in _df_ML.columns]
+    names_cols['ML_preds'] = list(_df_ML.columns)
+    df = pd.concat([df, _df_ML], axis=1, join='inner')
+    if verbose > 0:
+        print(f"ML models added to features: df.shape {_old_shape} -> {df.shape}")
+
+
+    # if NNTQ_parameters['use_ML_features']:
+    #     if verbose >0 :
+    #         print(f"ML models added to features: df.shape {_old_shape} -> {df.shape}")
+    # elif verbose >0 :
+    #     print(f"ML models not added to features: df.shape {df.shape}")
 
     valid_length = NNTQ_parameters['valid_length']
 
@@ -372,7 +386,7 @@ def run_model_once(
         os.makedirs(cache_dir, exist_ok=True)
 
         key_str    = json.dumps( {
-            "cols_features": cols_features,
+            "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'},
                 sort_keys=True)
@@ -392,8 +406,8 @@ def run_model_once(
     # ... or compute
     else:
         # Create splits
-        data, X_test_scaled = normalize_features(
-            df, col_y_nation, cols_Y_regions, cols_features, weights_regions,
+        data, X_test_scaled = normalize_features(df, names_cols,
+            NNTQ_parameters['use_ML_features'], weights_regions,
             minutes_per_step, dates, Tavg_full,
             train_split, n_valid,
             NNTQ_parameters['input_length'],
@@ -410,6 +424,11 @@ def run_model_once(
         # print(f"X_test_scaled.shape {X_test_scaled.shape}")
 
         # Create model
+
+        # # for NNTQ: features may include ML preds
+        # _num_features = data.num_features + \
+        #     NNTQ_parameters['use_ML_features'] * len(dict_series_baselines_GW.keys())
+
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
                                           len_train_data= len(data.train),
                                           num_features  = data.num_features,
@@ -418,7 +437,7 @@ def run_model_once(
         # run training, validation, test
         (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median) = \
             NNTQ_model.run(
-                data, cols_features, Tavg_full, holidays_full,
+                data, Tavg_full, holidays_full,
                 minutes_per_step, validate_every, display_every, plot_conv_every,
                 cache_dir, num_worst_days, verbose)
 
@@ -450,7 +469,7 @@ def run_model_once(
     # NN metamodel
     # ============================================================
 
-    data.calculate_metamodel_NN(cols_features, valid_length, 'valid',
+    data.calculate_metamodel_NN(names_cols['features'], valid_length, 'valid',
                                 metamodel_NN_parameters, verbose)
     avg_weights_meta_NN = data.avg_weights_meta_NN
 
@@ -524,7 +543,7 @@ def run_model_once(
 
     dict_row, (_loss_NNTQ, _loss_meta) = postprocess(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
-        len(cols_features),
+        len(names_cols['features']),
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
         avg_abs_worst_days_test_NN_median, run_id, verbose)
 

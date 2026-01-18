@@ -38,27 +38,25 @@ from   lightgbm                import LGBMRegressor
 # CREATE BASELINES (LINEAR REGRESSION, RANDOM FOREST, GRADIENT BOOSTING)
 # ============================================================
 
-def create_baselines(df            : pd.DataFrame,
-                     cols_y_nation : str,
-                     cols_Y_regions: List[str],
-                     cols_features : List[str],
-                     dates_df      : pd.DataFrame,
-                     baseline_cfg  : Dict[str, Dict[str, Any]],
-                     train_split   : float,
-                     n_valid       : int,
-                     cache_dir     : str = "cache",
+def create_baselines(df              : pd.DataFrame,
+                     names_cols      : Dict[str, List[str]],
+                     dates_df        : pd.DataFrame,
+                     baseline_cfg    : Dict[str, Dict[str, Any]],
+                     train_split     : float,
+                     n_valid         : int,
+                     cache_dir       : str = "cache",
                      save_cache_baselines: bool=False,
                      force_calculation:bool = False,
-                     verbose       : int = 0) \
-        -> Tuple[pd.DataFrame, str, List[str]]:
+                     verbose         : int = 0) \
+        -> Dict[str, pd.Series]:
 
     t_start = time.perf_counter()
 
     # Dict describing data + RF config (used to build cache key)
     cache_id = {
-        "target":        cols_y_nation,
-        "cols_Y_regions":cols_Y_regions,
-        "cols_features": cols_features,
+        "target":        names_cols['y_nation'],
+        "cols_Y_regions":names_cols['Y_regions'],
+        "cols_features": names_cols['features'],
         'train_end':     train_split-n_valid,
         'val_end':       train_split,
         # "split": "v1",   # optional: data split identifier
@@ -67,8 +65,8 @@ def create_baselines(df            : pd.DataFrame,
 
     # Extract matrices
     # -------------------------
-    X_GW: np.ndarray = df[cols_features].values.astype(np.float32)
-    y_GW: np.ndarray = df[cols_y_nation].values.astype(np.float32)
+    X_GW: np.ndarray = df[names_cols['features']].values.astype(np.float32)
+    y_GW: np.ndarray = df[names_cols['y_nation']].values.astype(np.float32)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_GW)
@@ -80,12 +78,12 @@ def create_baselines(df            : pd.DataFrame,
     X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
 
 
-    baseline_features_GW, baseline_models = \
+    dict_series_baselines_GW, _ = \
         regression_and_forest(
             X               = X_GW,
             y               = y_GW,
-            cols_y_nation   = cols_y_nation,
-            cols_features   = cols_features,
+            cols_y_nation   = names_cols['y_nation'],
+            cols_features   = names_cols['features'],
             dates           = df.index,
             dates_df        = dates_df,
             train_end       = train_split-n_valid,
@@ -102,24 +100,27 @@ def create_baselines(df            : pd.DataFrame,
     if verbose >= 1:
         print(f"LR + RF took: {time.perf_counter() - t_start:.2f} s")
 
-    # Add features
-    baseline_idx = dict()
-    _dict = dict()
-    for name, series in baseline_features_GW.items():
-        # assert len(series) == _df.shape[0], (len(series), _df.shape)
-        col_name     = f"consumption_{name}"
-        _dict[col_name] = series
-        cols_features.append(col_name)
-        baseline_idx[name] = cols_features.index(col_name)
-    # print(_df['consumption_regression'].head(20))
-    if verbose >= 3:
-        print(f"baseline_idx: {baseline_idx}")
+    # # Add features
+    # # baseline_idx = dict()
+    # _dict = dict()
+    # for name, series in baseline_features_GW.items():
+    #     # assert len(series) == _df.shape[0], (len(series), _df.shape)
+    #     col_name     = f"consumption_{name}"
+    #     _dict[col_name] = series
+    #     cols_features.append(col_name)
+    #     # baseline_idx[name] = cols_features.index(col_name)
+
+    # # print(_df['consumption_regression'].head(20))
+    # # if verbose >= 3:
+    # #     print(f"baseline_idx: {baseline_idx}")
 
     if verbose >= 2:
-        print(f"Using {len(cols_features)} features: {cols_features}")
-        print("Using target:", cols_y_nation, "and", cols_Y_regions)
+        print(f"Using {len(names_cols['features'])} "
+              f"features: {names_cols['features']}")
+        print("Using target:", names_cols['y_nation'][0],
+              "and", names_cols['Y_regions'])
 
-    return pd.DataFrame(_dict), cols_features
+    return dict_series_baselines_GW
 
 
 
@@ -138,7 +139,7 @@ def regression_and_forest(
     cache_id_dict:   dict,
     force_calculation:bool = False,
     verbose:         int = 0
-) -> Tuple[Dict[str, pd.Series], object, pd.DataFrame, List[str]]:
+) -> Tuple[Dict[str, pd.Series], Dict[str, object]]:
     """
     Leakage-safe contemporaneous tabular baselines:
         y_t ~ features_t   (NO LAG)
@@ -199,17 +200,14 @@ def regression_and_forest(
     X_valid_scaled_df = pd.DataFrame(X_valid_scaled, columns=cols_features)
     X_test_scaled_df  = pd.DataFrame(X_test_scaled,  columns=cols_features)
 
-    models         = dict()
-    preds_GW       = dict()
-    series_pred_GW = dict()
+    dict_models        = dict()
+    dict_series_pred_GW= dict()
 
     for name, cfg in models_cfg.items():  # name = e.g. 'LR', 'RF'
-        preds_GW          [name] = pd.Series()
-        # losses_quantile_GW[name] = dict()
 
         if name == 'oracle':
             warnings.warn("Using the oracle!")
-            models[name] = None # meaningless
+            dict_models[name] = None # meaningless
             pred_train_GW = y_train_GW
             pred_valid_GW = y[valid_idx]
             pred_test_GW  = y[ test_idx]
@@ -244,12 +242,12 @@ def regression_and_forest(
                     print(f"Training {name} (calculation forced)...")
                 else:
                     print(f"Training {name} (no cache found)...")
-            models[name] = _build_model_from_cfg(cfg)
-            models[name].fit(X_train_scaled_df, y_train_GW)
+            dict_models[name] = _build_model_from_cfg(cfg)
+            dict_models[name].fit(X_train_scaled_df, y_train_GW)
 
-            pred_train_GW = models[name].predict(X_train_scaled_df)
-            pred_valid_GW = models[name].predict(X_valid_scaled_df)
-            pred_test_GW  = models[name].predict(X_test_scaled_df )
+            pred_train_GW = dict_models[name].predict(X_train_scaled_df)
+            pred_valid_GW = dict_models[name].predict(X_valid_scaled_df)
+            pred_test_GW  = dict_models[name].predict(X_test_scaled_df )
 
             # Save
             if name != 'LR' and save_cache_baselines:
@@ -259,18 +257,18 @@ def regression_and_forest(
                 if verbose > 0:
                     print(f"Saved {name} predictions to: {cache_path}")
 
-        series_pred_GW[name] = pd.Series(
+        dict_series_pred_GW[name] = pd.Series(
             np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
                             index = dates)
         # print(series_pred_GW[name])
 
 
     # most relevant features
-    if verbose >= 3 and {'LR', 'RF'} <= models.keys():
-        most_relevant_features(models['LR'], models['RF'], cols_features)
+    if verbose >= 3 and {'LR', 'RF'} <= dict_models.keys():
+        most_relevant_features(dict_models['LR'], dict_models['RF'], cols_features)
 
 
-    return series_pred_GW, models
+    return dict_series_pred_GW, dict_models
 
 
 

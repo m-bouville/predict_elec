@@ -372,12 +372,12 @@ def train_meta_model(
 
 
 def metamodel_NN(data_train,
-                 data_valid : Optional,
-                 data_test  : Optional,
+                 data_valid   : Optional,
+                 data_test    : Optional,
                  cols_features: List[str],
-                 valid_length: int,
+                 valid_length : int,
                  metamodel_nn_parameters: Dict[str, Any],
-                 verbose     : int = 0) \
+                 verbose      : int = 0) \
         -> Tuple[pd.Series, Optional[pd.Series], Optional[pd.Series],
                  list, Optional[pd.Series]]:
 

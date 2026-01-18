@@ -24,7 +24,7 @@ class DataSplit:
     idx:              pd.Index | range
 
     # Core data
-    X:                np.ndarray  # torch.Tensor
+    X:                np.ndarray
     y_nation:         np.ndarray
     Y_regions:        np.ndarray
 
@@ -34,23 +34,30 @@ class DataSplit:
     true_nation_GW:   Optional[np.ndarray]
     X_columns:        Optional[List[str]]     = None
 
-    # Scaled versions
-    # X_scaled_dev:     Optional[torch.Tensor]  = None
-    # y_nation_scaled_dev:Optional[torch.Tensor]= None
-    # Y_regions:    Optional[torch.Tensor]  = None
-
     # Torch plumbing
     dataset_scaled:   Optional[torch.utils.data.Dataset   ] = None
     loader:           Optional[torch.utils.data.DataLoader] = None
 
     # input to metamodels
     input_metamodel_LR:Optional[Dict[str, pd.DataFrame]] = None
-    y_metamodel_LR:    Optional[Dict[str, pd.Series   ]] = None
+    y_metamodel_LR:   Optional[Dict[str, pd.Series    ]] = None
 
     # predictions (column: name/type of model) -- added later
-    dict_preds_ML:   Optional[Dict[str, pd.Series]] = field(default_factory=dict)
-    dict_preds_NNTQ: Optional[Dict[str, pd.Series]] = field(default_factory=dict)
-    dict_preds_meta: Optional[Dict[str, pd.Series]] = field(default_factory=dict)
+    dict_preds_ML:    Optional[Dict[str, pd.Series]] = field(default_factory=dict)
+    dict_preds_NNTQ:  Optional[Dict[str, pd.Series]] = field(default_factory=dict)
+    dict_preds_meta:  Optional[Dict[str, pd.Series]] = field(default_factory=dict)
+
+
+    def __post_init__(self):
+        len_index = [self.X.shape[0], self.y_nation.shape[0], self.Y_regions.shape[0], \
+             self.dates.shape[0], self.Tavg_degC.shape[0]]
+        if self.X_columns is not None:
+            len_index.append(self.dict_preds_ML.shape[0])
+        assert min(len_index) == max(len_index), len_index
+
+        if self.X_columns is not None:
+            len_cols = [self.X.shape[1], len(self.X_columns)]
+            assert min(len_cols) == max(len_cols), len_cols
 
 
     def __len__(self) -> int:
@@ -66,9 +73,9 @@ class DataSplit:
         return self.dates[-1]
 
 
+    @torch.no_grad()
     def prediction_day_ahead(self, model, scaler_y_nation,
-            cols_features: List[str], device,
-            input_length: int, pred_length: int, valid_length: int,
+            device, input_length: int, pred_length: int, valid_length: int,
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
 
         # print(self.name)
@@ -76,13 +83,109 @@ class DataSplit:
             self.true_nation_GW = pd.Series(self.y_nation, index=self.dates)
             return
 
-        # train, valid, test: predict day ahead
-        self.true_nation_GW, self.dict_preds_NNTQ, self.dict_preds_ML, self.origin_times = \
-            utils.subset_predictions_day_ahead(self.X, self.loader,
-                model, scaler_y_nation, cols_features, device,
-                input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
-    # print(pd.concat([self.true_nation_GW, pd.Series(self.y_nation,index=self.dates)],axis=1))
+
+        # print(f"self.X.shape = {self.X.shape}")
+
+        model.eval()
+
+        offset_steps = pred_length - valid_length + 1
+        # print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
+
+        records = []  # one record per (origin, horizon)
+        min_origin_time =  np.inf
+        max_origin_time = -np.inf
+
+        # Iterate once: no aggregation
+        for (X_scaled, _, y_nation_scaled, T_degC, idx_subset,
+             forecast_origin_int) in self.loader:
+            idx_subset         = idx_subset         .cpu().numpy()   # origin indices
+            forecast_origin_int= forecast_origin_int.cpu().numpy()
+
+            # NN prediction
+
+            X_scaled_dev = X_scaled.to(device)
+
+            # pred_scaled = model(X_scaled_dev).cpu().numpy()  # (B, H, Q)
+            # assert pred_scaled.shape[1] == valid_length
+            # pred_scaled = pred_scaled[:, -valid_length:]     # (B, V, Q)
+            (pred_nation_scaled_dev, _) = model(X_scaled_dev)
+            pred_nation_scaled_cpu = \
+                pred_nation_scaled_dev[:, -valid_length:].cpu().numpy() # (B, V, Q)
+            # pred_regions_scaled_cpu= \
+            #    pred_regions_scaled_dev[:, -valid_length:].cpu().numpy() #(B, V, R)
+
+            B, V, Q = pred_nation_scaled_cpu.shape
+            # print(B, V, Q)
+            assert V == valid_length,   f"{V} != {valid_length}"
+            assert Q == len(quantiles), f"{Q} != {len(quantiles)}"
+            # assert B <= batch_size
+
+            # Inverse-scale ground truth                 # (B, [1..H])
+            y_nation_GW = scaler_y_nation.inverse_transform(
+                y_nation_scaled[:, -valid_length:, 0].cpu().numpy().reshape(-1, 1)
+            ).reshape(B, V)
+
+            # Inverse-scale predictions
+            pred_nation_GW = scaler_y_nation.inverse_transform(
+                pred_nation_scaled_cpu.reshape(-1, Q)
+            ).reshape(B, V, Q)
+
+            # One prediction per target timestamp
+            for sample in range(B):
+                forecast_origin_time = pd.Timestamp(
+                    forecast_origin_int[sample], unit='s', tz='UTC')
+                # print (f"sample:{sample:3n}, {forecast_origin_time}")
+                min_origin_time = min(min_origin_time, forecast_origin_int[sample])
+                max_origin_time = max(max_origin_time, forecast_origin_int[sample])
+
+                for h in range(V):
+                        # /!\ after reference: h == 0 <=> offset_steps after noon
+                    idx_subset_current = idx_subset[sample] + h + offset_steps
+                    if idx_subset_current >= self.X.shape[0]:
+                        continue     # otherwise, would be after end of dataset
+
+                    # target_time = test_dates[target_idx]
+
+                    time_current = forecast_origin_time + \
+                        pd.Timedelta(minutes = minutes_per_step * (h + offset_steps))
+                    # print (f"sample{sample:4n}, h ={h:3n}: "
+                    #        f"idx_subset_current = {idx_subset_current}, "
+                    #        f"time_current = {time_current}")
+
+                    row = {
+                        "time_current": time_current,
+                        "y_true"      : y_nation_GW[sample, h],  # starts at 12:30
+                    }
+
+                    for qi, tau in enumerate(quantiles):
+                        row[f"q{int(100*tau)}"] = pred_nation_GW[sample, h, qi]
+
+                    row['h'] = h
+                    row['idx_subset_current'] = idx_subset_current
+
+                    records.append(row)
+
+        # Build DataFrame
+        df = pd.DataFrame.from_records(records).set_index("time_current").sort_index()
+
+        # print(df.shape, df.columns)
+        # print(df.head(10).astype(np.float32).round(2))
+
+        # Output format
+        self.true_series_GW = df["y_true"]
+        # print(self.name_display, "true_series_GW:", self.true_series_GW.shape)
+
+        self.true_nation_GW = self.true_series_GW
+
+        self.dict_preds_NNTQ = {
+            f"q{int(100*tau)}": df[f"q{int(100*tau)}"]
+            for tau in quantiles
+        }
+
+        self.origin_times = (pd.Timestamp(min_origin_time, unit='s', tz='UTC'), \
+                             pd.Timestamp(max_origin_time, unit='s', tz='UTC'))
+
 
 
     def worst_days_by_loss(self,
@@ -91,6 +194,7 @@ class DataSplit:
                            num_steps_per_day:int,
                            top_n           : int,
                            verbose         : int = 0) -> (pd.DataFrame, float):
+
         return utils.worst_days_by_loss(
             split       = self.name,
             y_true      = self.true_nation_GW,
@@ -138,6 +242,10 @@ class DataSplit:
         # train, valide, test: prepare input
         _y_nation_true = pd.Series(self.y_nation.squeeze(),
                                    name='y_nation', index=self.dates)
+
+        # print("true:", _y_nation_true.name, _y_nation_true.shape)
+        # print("ML:", self.dict_preds_ML.keys(), pd.DataFrame(self.dict_preds_ML).shape)
+        # print("q50:", self.dict_preds_NNTQ['q50'].shape)
 
         _input = pd.concat([_y_nation_true,
                             pd.DataFrame(self.dict_preds_ML),
@@ -217,14 +325,13 @@ class DatasetBundle:
         }.items()
 
     def predictions_day_ahead(self, model, scaler_y,
-            cols_features: List[str], device,
-            input_length: int, pred_length: int, valid_length: int,
+            device, input_length: int, pred_length: int, valid_length: int,
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
         # print("predictions_day_ahead")
         for (_name_split, _data_split) in self.items():
             # print(_name_split)
             _data_split.prediction_day_ahead(
-                model, scaler_y, cols_features, device,
+                model, scaler_y, device,
                 input_length, pred_length, valid_length, minutes_per_step, quantiles)
 
     # Metamodels
@@ -239,6 +346,7 @@ class DatasetBundle:
             _data_split.calculate_input_metamodel_LR(split_active=split_active)
             # print(_split, _data_split.input_metamodel_LR is not None,
             #               _data_split.    y_metamodel_LR is not None)
+
 
         if split_active == 'train':
             (self.weights_meta_LR,
@@ -260,10 +368,10 @@ class DatasetBundle:
 
     def calculate_metamodel_NN(self,
                     cols_features: List[str],
-                    valid_length: int,
-                    split_active: str,
+                    valid_length : int,
+                    split_active : str,
                     metamodel_nn_parameters: Dict[str, Any],
-                    verbose     : int = 0) -> None:
+                    verbose      : int = 0) -> None:
         assert split_active in ['train', 'valid'], split_active
 
         if split_active == 'train':
@@ -291,6 +399,7 @@ class DatasetBundle:
 class NeuralNet:
 
     device           : object
+    use_ML_features  : bool
 
     weights_regions  : Dict[str, float]
 
@@ -491,7 +600,6 @@ class NeuralNet:
     def run(
             self,
             data             : DatasetBundle,
-            cols_features     : List[str],
             temperature_full : pd.Series,  # TODO np?
             holidays_full    : pd.Series,
             minutes_per_step : int,
@@ -527,7 +635,8 @@ class NeuralNet:
                                        partial=False, verbose=verbose)
 
             plots.loss_per_horizon(dict({"total": valid_loss_quantile_h_scaled}, \
-                                   **dict_valid_loss_quantile_h), minutes_per_step,
+                                        **dict_valid_loss_quantile_h),
+                                   minutes_per_step,
                                    "validation loss")
 
 
@@ -541,21 +650,22 @@ class NeuralNet:
                                ).round(2).to_string())
         if verbose > 0:
             plots.loss_per_horizon(dict({"total": test_loss_quantile_h_scaled}, \
-                                         **dict_test_loss_quantile_h), minutes_per_step,
+                                         **dict_test_loss_quantile_h),
+                                   minutes_per_step,
                                    "test loss")
 
 
         t_metamodel_start = time.perf_counter()
 
         data.predictions_day_ahead(
-                self.model, data.scaler_y_nation,
-                cols_features = cols_features,
-                device       = self.device,
-                input_length = self.input_length,
-                pred_length  = self.pred_length,
-                valid_length = self.valid_length,
+                self.model,
+                data.scaler_y_nation,
+                device         = self.device,
+                input_length   = self.input_length,
+                pred_length    = self.pred_length,
+                valid_length   = self.valid_length,
                 minutes_per_step=minutes_per_step,
-                quantiles    = self.quantiles
+                quantiles      = self.quantiles
             )
 
         num_steps_per_day = int(round(24*60/minutes_per_step))

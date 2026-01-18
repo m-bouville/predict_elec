@@ -598,10 +598,10 @@ def normalize_name(s: str) -> str:
     )
 
 SHORT_NAMES_REGIONS: Dict[str, str] = \
-{'auvergne-rhone-alpes': "AuRA", 'bourgogne-franche-comte': "Bourg.",
- 'bretagne': "Bret.", 'centre-val de loire': "Centre", 'corse': 'corse',
- 'grand est': "Gd Est", 'hauts-de-france': "HdF", 'normandie': 'Norm.',
- 'nouvelle-aquitaine': "Aqui.", 'occitanie': "Occi.", 'pays de la loire': "Loire",
+{'auvergne-rhone-alpes': "AuRA", 'bourgogne-franche-comte': "Bourg",
+ 'bretagne': "Bret", 'centre-val de loire': "Centre", 'corse': 'corse',
+ 'grand est': "Gd_Est", 'hauts-de-france': "HdF", 'normandie': 'Norm',
+ 'nouvelle-aquitaine': "Aqui", 'occitanie': "Occi", 'pays de la loire': "Loire",
  "provence-alpes-cote d'azur": "PACA", 'ile-de-france': "IdF"}
 
 CLUSTERS = {
