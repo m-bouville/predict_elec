@@ -352,9 +352,9 @@ def train_meta_model(
                 print(f"Epoch{epoch+1:3n}/{epochs}: "
                       f"losses train{train_loss_avg:5.2f}, "
                       f"valid{valid_loss_avg:5.2f}; "
-                      f"avg w: NN{avg_weights[0]*100:5.1f}%, "
-                      f"LR{avg_weights[1]*100:5.1f}%, RF{avg_weights[2]*100:5.1f}%, "
-                      f"GB{avg_weights[3]*100:5.1f}%")
+                      f"avg w: NNTQ{avg_weights[0]*100:3.0f}%, "
+                      f"LR{avg_weights[1]*100:3.0f}%, RF{avg_weights[2]*100:3.0f}%, "
+                      f"LGBM{avg_weights[3]*100:3.0f}%")
 
         # Save best model
         if df_valid is not None:

@@ -112,34 +112,35 @@ NNTQ_PARAMETERS: dict = {
     'lambda_regions_sum':   0.1,
 }
 
-NNTQ_PARAMETERS['num_patches'] = \
-    (NNTQ_PARAMETERS['input_length'] + NNTQ_PARAMETERS['features_in_future'] * \
-                NNTQ_PARAMETERS['pred_length'] - NNTQ_PARAMETERS['patch_length'])\
-        // NNTQ_PARAMETERS['stride'] + 1
+# NNTQ_PARAMETERS['num_patches'] = \
+#     (NNTQ_PARAMETERS['input_length'] + NNTQ_PARAMETERS['features_in_future'] * \
+#                 NNTQ_PARAMETERS['pred_length'] - NNTQ_PARAMETERS['patch_length'])\
+#         // NNTQ_PARAMETERS['stride'] + 1
 
 
-# # Optional: plug in Bayesian best parameters
+# Optional: plug in parameters averaged over the best 5 Bayesian trials
 NNTQ_PARAMETERS.update(
     {
         'use_ML_features': 0,
-        'epochs': 15,
-        'patch_length': 36, 'stride': 15,
-        'input_length': 576,
-        'batch_size': 64,
-        'learning_rate': 0.0157, 'dropout': 0.136,
-        'lambda_coverage': 0.124,
-        'lambda_cross': 0.0144,
-        'lambda_deriv': 0.0424,
-        'lambda_median': 0.048,
-        'smoothing_cross': 0.056,
-        'threshold_cold_degC': -0.7, 'saturation_cold_degC': -4.7,'lambda_cold':0.13,
-        'lambda_regions': 0.051, 'lambda_regions_sum': 0.41,
-        'model_dim': 525, 'num_heads': 5, 'ffn_size': 4, 'num_layers': 6,  #5.6
-        'num_geo_blocks': 8, 'geo_block_ratio': 1.,
-        'patience': 6, 'min_delta': 0.034,
-        'warmup_steps': 2200,
-    }  # Average parameters from the best 5 runs
-   )
+        'epochs': 18,
+        'patch_length': 48, 'stride': 24,
+        'input_length': 672,
+        'batch_size': 32,
+        'learning_rate': 0.010, 'dropout': 0.2,
+        'lambda_coverage': 0.1, 'lambda_cross': 0.027,
+        'lambda_deriv': 0.0176, 'lambda_median': 0.0, 'smoothing_cross': 0.064,
+        'threshold_cold_degC': 1.5, 'saturation_cold_degC': -2.9, 'lambda_cold': 0.124,
+        'lambda_regions': 0.030,
+        'lambda_regions_sum': 0.48,
+        'model_dim': 576,
+        'num_heads': 6,
+        'ffn_size': 4,  # 4.4
+        'num_layers': 5,
+        'num_geo_blocks': 7,
+        'geo_block_ratio': 1.0,
+        'patience': 6, 'min_delta': 0.037, 'warmup_steps': 2000,
+    }
+)
 
 
 
@@ -225,17 +226,17 @@ BASELINES_PARAMETERS = {
 #     'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
 # } # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
 
-# _new_parameters = {'LR_type': 'ridge', 'LR_alpha': 1.2, 'RF_n_estimators': 500,
-#     'RF_max_depth': 20, 'RF_min_samples_leaf': 10, 'RF_min_samples_split': 15,
-#     'RF_max_features': 'sqrt', 'LGBM_boosting_type': 'gbdt',
-#     'LGBM_num_leaves': 15, 'LGBM_max_depth': 3, 'LGBM_learning_rate': 0.01,
-#     'LGBM_n_estimators': 420, 'LGBM_min_child_samples': 12, 'LGBM_subsample': 1.0,
-#     'LGBM_colsample_bytree': 0.9, 'LGBM_reg_alpha': 0.08, 'LGBM_reg_lambda': 0.09,
-#     'metaNN_epochs': 18, 'metaNN_batch_size': 96, 'metaNN_learning_rate': 0.0035,
-#     'metaNN_weight_decay': 2.2787e-07, 'metaNN_dropout': 0.0,
-#     'metaNN_num_cells_0': 40, 'metaNN_num_cells_1': 16
-# }  # trial 15: avg loss 1.3474 over 5 runs [data -> 11/25]
-#    #   losses [1.3332, 1.3484, 1.3454, 1.3503, 1.3485]
+_new_parameters = {'LR_type': 'ridge', 'LR_alpha': 1.2, 'RF_n_estimators': 500,
+    'RF_max_depth': 20, 'RF_min_samples_leaf': 10, 'RF_min_samples_split': 15,
+    'RF_max_features': 'sqrt', 'LGBM_boosting_type': 'gbdt',
+    'LGBM_num_leaves': 15, 'LGBM_max_depth': 3, 'LGBM_learning_rate': 0.01,
+    'LGBM_n_estimators': 420, 'LGBM_min_child_samples': 12, 'LGBM_subsample': 1.0,
+    'LGBM_colsample_bytree': 0.9, 'LGBM_reg_alpha': 0.08, 'LGBM_reg_lambda': 0.09,
+    'metaNN_epochs': 18, 'metaNN_batch_size': 96, 'metaNN_learning_rate': 0.0035,
+    'metaNN_weight_decay': 2.2787e-07, 'metaNN_dropout': 0.0,
+    'metaNN_num_cells_0': 40, 'metaNN_num_cells_1': 16
+}  # trial 15: avg loss 1.3474 over 5 runs [data -> 11/25]
+   #   losses [1.3332, 1.3484, 1.3454, 1.3503, 1.3485]
 
 # for _model in ['LR', 'RF', 'LGBM']:
 #     BASELINES_PARAMETERS[_model].update(
@@ -277,7 +278,7 @@ def fast_parameters(nntq_parameters        : Dict[str, Any],
                     metamodel_nn_parameters: Dict[str, Any]
                 ) -> [Dict[str, Dict[str, Any]], Dict[str, Any],  Dict[str, Any]]:
     nntq_parameters     ['epochs'        ] =  2
-    nntq_parameters     ['model_dim'     ] = 20
+    nntq_parameters     ['model_dim'     ] = 50
     nntq_parameters     ['num_layers'    ] =  1
     nntq_parameters     ['num_heads'     ] =  2
     nntq_parameters     ['ffn_size'      ] =  2

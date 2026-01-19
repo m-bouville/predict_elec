@@ -278,6 +278,7 @@ class DataSplit:
         # print(self.true_nation_GW.shape, self.true_nation_GW)
         # print(self.dict_preds_NNTQ ['q50'].shape, self.dict_preds_NNTQ ['q50'])
         # print(self.dict_preds_meta['LR'].shape, self.dict_preds_meta['LR'])
+        # print("temperature_full:", temperature_full)
 
         plots.diagnostics(self.name_display,
             self.true_nation_GW, {q: self.dict_preds_NNTQ[q] for q in quantiles},
@@ -589,7 +590,8 @@ class NeuralNet:
             # Check for early stopping
             if self.early_stopping(valid_loss_quantile_h_scaled.mean()):
                 if verbose > 0:
-                    print(f"Early stopping triggered at epoch {epoch+1}.")
+                    print(f"Early stopping triggered at epoch {epoch+1} "
+                          f"(patience {self.patience}, min_delta {self.min_delta}).")
                 break
 
         # torch.cuda.empty_cache()

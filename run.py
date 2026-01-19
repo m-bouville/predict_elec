@@ -40,7 +40,7 @@ from   constants import Stage, Split
 def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
                        cache_fname        : str,
                        pred_length        : int,
-                       num_steps_per_day  :int,
+                       num_steps_per_day  : int,
                        minutes_per_step   : int,
                        verbose            : int  = 0) \
         -> Tuple[pd.DataFrame, Dict[str, List[str]],
@@ -49,7 +49,6 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     df, dates_df, weights_regions = utils.df_features(
             dict_input_csv_fnames, cache_fname, pred_length,
             num_steps_per_day, minutes_per_step, verbose)
-
 
     # ---- Identify columns ----
     col_y_nation = "consumption_GW"
@@ -306,6 +305,7 @@ def run_model_once(
         load_and_create_df(
             dict_input_csv_fnames, None, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
+    # print("Tavg_full:", Tavg_full)
 
     # print(f"num cols: cols_Y_regions {len(cols_Y_regions)}, "
     #       f"cols_features {len(cols_features)}, df.shape {df.shape}")
@@ -744,7 +744,7 @@ def loss_NNTQ(
 
          # constants:
          scale                  : float = 100.,   # multiplies everything
-         weights_coverage       : list  = [4, 3, 2, 1, 0, 0, 0],  # from max to min
+         weights_coverage       : list  = [7, 6, 5, 4, 3, 2, 1],  # from max to min
          weight_worst_days      : float = 0.02,
 
          quantile_weights       : Dict[str, float] = \

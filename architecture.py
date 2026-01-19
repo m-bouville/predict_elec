@@ -476,8 +476,10 @@ class TimeSeriesTransformer(nn.Module):
             self.num_patches  = ((input_length+self.features_in_future*pred_length) \
                                  - patch_length) // stride + 1
 
-            total_covered= ((input_length-patch_length)//stride) * stride + patch_length
-            self.pad_length  = input_length - total_covered
+            remainder       = (input_length - patch_length) % stride
+            self.pad_length = (stride - remainder) % stride
+            # total_covered= ((input_length-patch_length)//stride) * stride + patch_length
+            # self.pad_length  = input_length - total_covered
 
             self.patch_embed= PatchEmbedding(patch_length,stride,num_features,dim_model)
             self.layers = nn.ModuleList([

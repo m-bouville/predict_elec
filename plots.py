@@ -415,6 +415,7 @@ def diagnostics(name:                str,
 
     # as a function of temperature
     if Tavg is not None:
+        # print("Tavg:", Tavg)
         Tavg_winter = Tavg[(Tavg.index.month <= 5) | (Tavg.index.month >= 9)]
         scatter(true_series, {'q50': dict_pred_series['q50']},
                 dict_baseline_series, dict_meta_series,

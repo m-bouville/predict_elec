@@ -58,30 +58,30 @@ DISTRIBUTIONS_NNTQ = {
 
     # number of steps
     'patch_length':IntDistribution(low=12, high=48, step=6),
-    'stride':      IntDistribution(low= 6, high=18, step=3),
-    'input_length':IntDistribution(low=10*48,high=16*48,step=2*48),
+    'stride':      IntDistribution(low= 6, high=24, step=3),
+    'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
-    'epochs':      IntDistribution(low=10, high=45, step=1),
+    'epochs':      IntDistribution(low=10, high=25, step=1),
     'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.003,high=0.017, step=0.0004),
+    'learning_rate':FloatDistribution(low=0.002,high=0.018, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.25, step=0.01),
 
     # quantile loss
     'lambda_cross':   FloatDistribution(low=0., high=0.1, step=0.004),
-    'lambda_coverage':FloatDistribution(low=0.1,high=0.4, step=0.02),
+    'lambda_coverage':FloatDistribution(low=0.06,high=0.4, step=0.02),
     'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.004),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
-    'smoothing_cross':FloatDistribution(low=0.005, high=0.061, step=0.001),
+    'smoothing_cross':FloatDistribution(low=0.004, high=0.072, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
     'threshold_cold_degC': FloatDistribution(low=-1., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
-    'lambda_cold':    FloatDistribution(low=0.05,high=0.21, step=0.02),
+    'lambda_cold':    FloatDistribution(low=0.04,high=0.2, step=0.02),
         # régional consumption
     'lambda_regions': FloatDistribution(low=0.,   high=0.1, step=0.002),
-    'lambda_regions_sum':FloatDistribution(low=0.,high=0.5, step=0.02),
+    'lambda_regions_sum':FloatDistribution(low=0.,high=0.52, step=0.02),
 
-    'model_dim':    IntDistribution(low=90, high=610, step=1),
+    'model_dim':    IntDistribution(low=100, high=600, step=1),
     'ffn_size':     IntDistribution(low=2, high=7, step=1),
     'num_heads':    IntDistribution(low=3, high=9, step=1),
     'num_layers':   IntDistribution(low=1, high=7, step=1),
@@ -89,7 +89,7 @@ DISTRIBUTIONS_NNTQ = {
     'num_geo_blocks': IntDistribution(low=2, high=10, step=1),
 
     'warmup_steps': IntDistribution(low=1000, high=4000, step=500),
-    'patience':     IntDistribution(low=3, high=7, step=1),  # TODO revert to 6
+    'patience':     IntDistribution(low=3, high=6, step=1),
     'min_delta':    FloatDistribution(low=0.020, high=0.040, step=0.002),
 }
 
@@ -191,35 +191,37 @@ def sample_NNTQ_parameters(
         p['use_ML_features']=trial.suggest_int('use_ML_features', 0, 0, step=1)
 
     # number of steps
-    if 'patch_length' in p:
-        p['patch_length' ] = trial.suggest_int  ('patch_length', 24, 48, step=12)
     if 'stride' in p:
-        p['stride'       ] = trial.suggest_int  ('stride',        6, 18, step= 3)
+        p['stride'       ] = trial.suggest_int  ('stride',       12, 24, step=12)
+    if 'patch_length' in p:  # safer if a multiple of stride
+        _s = p['stride']
+        p['patch_length' ] = trial.suggest_int  (
+                                'patch_length', (24//_s+1)*_s, (48//_s)*_s, step=_s)
     if 'input_length' in p:
-        p['input_length' ] = trial.suggest_int  ('input_length',12*48,16*48,step=2*48)
+        p['input_length' ] = trial.suggest_int  ('input_length',14*48,14*48,step=2*48)
 
     if 'epochs' in p:
-        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 25, step=5)
+        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 24, step=2)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.003,0.017,step=0.0004)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',0.002,0.018,step=0.0004)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
-        p['dropout'       ] = trial.suggest_float('dropout', 0.02, 0.25, step=0.01)
+        p['dropout'       ] = trial.suggest_float('dropout', 0.0, 0.24, step=0.02)
 
     # quantile loss weights
     if 'lambda_cross' in p:
-        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0., 0.096, step=0.008)
+        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0., 0.08, step=0.008)
     if 'lambda_coverage' in p:
-        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.1,0.4, step=0.02)
+        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.06,0.20, step=0.02)
     if 'lambda_deriv' in p:
-        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.096, step=0.004)
+        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.096, step=0.008)
     if 'lambda_median' in p:
-        p['lambda_median' ] = trial.suggest_float('lambda_median',  0., 0.096, step=0.008)
+        p['lambda_median' ] = trial.suggest_float('lambda_median',  0., 0., step=0.008)
     if 'smoothing_cross' in p:
-        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.005,0.059,step=0.002)
+        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.02,0.072,step=0.002)
 
         # temperature-dependence (pinball loss, coverage penalty)
     if 'threshold_cold_degC' in p:
@@ -228,26 +230,28 @@ def sample_NNTQ_parameters(
         p['saturation_cold_degC']=trial.suggest_float('saturation_cold_degC',
                                                      -8., -2., step=0.1)
     if 'lambda_cold' in p:
-        p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.05, 0.21,step=0.02)
+        p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.04, 0.2,step=0.02)
 
         # régional consumption
     if 'lambda_regions' in p:
-        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.07,step=0.002)
+        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.072,step=0.008)
     if 'lambda_regions_sum' in p:
-        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.3,0.5,step=0.02)
+        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.32,0.52,step=0.04)
 
     # Architecture
-    if 'model_dim' in p:
-        p['model_dim'  ] = trial.suggest_int('model_dim', 100, 600, step=25)
     if 'ffn_size' in p:
         p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 6)
     if 'num_heads' in p:
-        p['num_heads'  ] = trial.suggest_int('num_heads', 4, 8)
+        p['num_heads'  ] = trial.suggest_int('num_heads', 4, 7)
+    if 'model_dim' in p:  # must be a multiiple of num_heads
+        _step = 4 * p['num_heads']
+        p['model_dim'  ] = trial.suggest_int(
+                 'model_dim', (300//_step+1)*_step, (600//_step)*_step, step=_step)
     if 'num_layers' in p:
-        p['num_layers' ] = trial.suggest_int('num_layers',1, 6)
+        p['num_layers' ] = trial.suggest_int('num_layers',3, 7)
 
     if 'num_geo_blocks' in p:
-        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 4, 10)
+        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 5, 10)
 
     # Early stopping
     if 'warmup_steps' in p:
@@ -255,7 +259,7 @@ def sample_NNTQ_parameters(
     if 'patience' in p:
         p['patience'    ] = trial.suggest_int  ('patience', 3, 6)
     if 'min_delta' in p:
-        p['min_delta'   ] = trial.suggest_float('min_delta', 0.030, 0.040, step=0.002)
+        p['min_delta'   ] = trial.suggest_float('min_delta', 0.028, 0.040, step=0.004)
 
 
     # derived
@@ -265,16 +269,16 @@ def sample_NNTQ_parameters(
         # if _old != p['model_dim']:
         #     print(f"model_dim: {_old} -> {p['model_dim']}")
 
-    if 'input_length' in p and 'features_in_future' in p and 'pred_length' in p and \
-                'patch_length' in p and 'stride' in p:
-        p['num_patches'] = (
-            p['input_length']
-            + int(p['features_in_future']) * p['pred_length']
-            - p['patch_length']
-        ) // p['stride'] + 1
-        # print(f"num_patches: {p['num_patches']} = ({p['input_length']} "
-        #       f"+ {int(p['features_in_future']) * p['pred_length']} "
-        #       f"- {p['patch_length']}) // {p['stride']} + 1")
+    # if 'input_length' in p and 'features_in_future' in p and 'pred_length' in p and \
+    #             'patch_length' in p and 'stride' in p:
+    #     p['num_patches'] = (
+    #         p['input_length']
+    #         + int(p['features_in_future']) * p['pred_length']
+    #         - p['patch_length']
+    #     ) // p['stride'] + 1
+    #     print(f"num_patches: {p['num_patches']} = ({p['input_length']} "
+    #           f"+ {int(p['features_in_future']) * p['pred_length']} "
+    #           f"- {p['patch_length']}) // {p['stride']} + 1")
 
     return p
 
@@ -339,8 +343,8 @@ def run_Bayes_search(
 
             # multi-run for best candidtes (robustness)
             num_runs            : Dict[Stage, int]  ={Stage.NNTQ:7,  Stage.meta:5},
-            min_num_trials      : int  = 10,
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:3., Stage.meta:0.007},
+            min_num_trials      : int  = 20,
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:4., Stage.meta:0.007},
 
             verbose             : int  = 0
         ):
@@ -361,7 +365,7 @@ def run_Bayes_search(
 
 
     def objective(trial: optuna.Trial) -> float:
-        # print(f"Starting run {run_id} out of {num_runs}")
+        # print(f"** Starting run {trial.number} out of {num_runs}")
 
         baseline_parameters = copy.deepcopy(base_baseline_params)
 
@@ -450,6 +454,10 @@ def run_Bayes_search(
                     print(f"{num_runs} runs: losses "
                           f"{_list_losses_NNTQ if stage == Stage.NNTQ else _list_losses_meta} "
                           f"-> avg {dict_row[f'loss_{stage.value}']}")
+
+            if trial.number <= min_num_trials:
+                break
+
 
         df_row = pd.DataFrame([dict_row])
         # /_\ with multiple runs, the metrics other than losses are just the last run
@@ -642,9 +650,9 @@ def cols_not_paras() -> List[str]:
         ['RF_type', 'RF_random_state', 'RF_n_jobs'] + \
         ['LGBM_type', 'LGBM_objective'] + \
         ['LGBM_random_state','LGBM_n_jobs',	'LGBM_verbose'] + \
-        ['pred_length', 'valid_length', 'num_patches'] + \
+        ['pred_length', 'valid_length'] + \
         ['device', 'metaNN_device', 'features_in_future']
-        # ,'GB_boosting_type', 'input_length',
+        # ,'GB_boosting_type', 'input_length', 'num_patches',
 
     # output
     cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage

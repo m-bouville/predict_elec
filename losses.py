@@ -85,7 +85,7 @@ def quantile_with_crossing_torch(
             w    = torch.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_coverage_h += lambda_coverage * alpha * w * err**2
+            loss_coverage_h += lambda_coverage * alpha * w * err.abs()
 
     # Crossing penalty
     if lambda_cross > 0.:
@@ -167,7 +167,7 @@ def quantile_with_crossing_numpy(
             w    = np.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_coverage_h += lambda_coverage * alpha * w * err**2     # (V,)
+            loss_coverage_h += lambda_coverage * alpha * w * np.abs(err)     # (V,)
 
     # Crossing penalty
     if lambda_cross > 0.:
@@ -351,7 +351,7 @@ def quantile_torch(
 
     if lambda_median > 0.:
         q50_pred = y_nation_pred[..., len(quantiles)//2]
-        loss_median_h = lambda_median * (q50_pred - y_nation_true).mean(dim=0)**2
+        loss_median_h = lambda_median * (q50_pred - y_nation_true).mean(dim=0).abs()
     else:
         loss_median_h = torch.zeros_like(loss_quantile_with_crossing_h)
 
@@ -410,7 +410,7 @@ def quantile_numpy(
 
     if lambda_median > 0.:
         q50_pred = y_nation_pred[..., len(quantiles)//2]
-        loss_median_h = lambda_median * ((q50_pred - y_nation_true).mean(axis=0)**2)
+        loss_median_h = lambda_median * np.abs((q50_pred - y_nation_true).mean(axis=0))
     else:
         loss_median_h = np.zeros_like(loss_quantile_with_crossing_h)
 
