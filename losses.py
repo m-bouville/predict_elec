@@ -39,6 +39,8 @@ def penalty_nation_cold_torch(
 def quantile_with_crossing_torch(
     y_nation_pred   :  torch.Tensor,     # (B, V, Q)
     y_nation_true   :  torch.Tensor,     # (B, V) or (B, V, 1)
+
+    # constants
     quantiles       :  Tuple[float, ...],
     lambda_cross    :  float,
     lambda_coverage : float,
@@ -118,6 +120,8 @@ def penalty_nation_cold_numpy(
 def quantile_with_crossing_numpy(
         y_nation_pred   : np.ndarray,     # (B, V, Q)
         y_nation_true   : np.ndarray,     # (B, V)
+
+        # constants
         quantiles       : Tuple[float, ...],
         lambda_cross    : float,
         lambda_coverage : float,
@@ -306,6 +310,8 @@ def derivative_numpy(
 def quantile_torch(
         y_nation_pred   : torch.Tensor,   # (B, V, Q)
         y_nation_true   : torch.Tensor,   # (B, V) or (B, V, 1)
+
+        # constants
         quantiles       : Tuple[float, ...],
         lambda_cross    : float,
         lambda_coverage : float,
@@ -366,6 +372,8 @@ def quantile_torch(
 def quantile_numpy(
         y_nation_pred   : np.ndarray,     # (B, V, Q)
         y_nation_true   : np.ndarray,     # (B, V)
+
+        # constants
         quantiles       : Tuple[float, ...],
         lambda_cross    : float,
         lambda_coverage : float,

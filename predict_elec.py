@@ -19,10 +19,9 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'Bayes_NNTQ'
+    MODE = 'Bayes_meta'
         # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
 
-    NUM_TRIALS: int = 30
     VERBOSE:    int =  1
     FORCE_CALC_BASELINES = False
 
@@ -34,8 +33,14 @@ if __name__ == "__main__":
         if RUN_FAST:
             (BASELINE_PARAMS_FAST, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
                 constants.fast_parameters(NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS)
-    else:
-        VERBOSE = 0
+
+    elif MODE in ['Bayes_NNTQ']:
+        NUM_TRIALS = 25
+        VERBOSE    = 0
+
+    elif MODE in ['Bayes_meta']:
+        NUM_TRIALS = 10
+        VERBOSE    = 0
 
     # if 'Bayes' in MODE:
     #     assert not RUN_FAST, "fast parameters are outside Bayesian distributions"

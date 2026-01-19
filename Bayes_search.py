@@ -35,7 +35,7 @@ DISTRIBUTIONS_BASELINES = {
 
     # random forest
     'RF_n_estimators': IntDistribution(low=200, high=700, step=10),
-    'RF_max_depth':    IntDistribution(low=15, high=25, step=1),
+    'RF_max_depth':    IntDistribution(low=15, high=28, step=1),
     'RF_min_samples_leaf': IntDistribution(low= 8, high=20, step=1),
     'RF_min_samples_split':IntDistribution(low=12, high=25, step=1),
     'RF_max_features': CategoricalDistribution(choices=['sqrt', '0.4','0.5','0.6']),
@@ -43,8 +43,8 @@ DISTRIBUTIONS_BASELINES = {
     # gradient boosting (LGBM)
     'LGBM_boosting_type':CategoricalDistribution(choices=['gbdt']),
     'LGBM_num_leaves':   CategoricalDistribution(choices=[8-1, 16-1, 32-1, 64-1]),
-    'LGBM_max_depth':    IntDistribution  (low=2,  high=10, step=1),
-    'LGBM_learning_rate':FloatDistribution(low=0.001, high=0.15,step=0.001),
+    'LGBM_max_depth':    IntDistribution  (low=1,  high=10, step=1),
+    'LGBM_learning_rate':FloatDistribution(low=0.001, high=0.17,step=0.001),
     'LGBM_n_estimators': IntDistribution  (low=300,  high=850, step=10),
     'LGBM_min_child_samples':IntDistribution(low= 6, high=25,  step=1),
     'LGBM_subsample':    FloatDistribution(low=0.6,  high=1.0, step=0.02),
@@ -90,7 +90,7 @@ DISTRIBUTIONS_NNTQ = {
 
     'warmup_steps': IntDistribution(low=1000, high=4000, step=500),
     'patience':     IntDistribution(low=3, high=6, step=1),
-    'min_delta':    FloatDistribution(low=0.020, high=0.040, step=0.002),
+    'min_delta':    FloatDistribution(low=0.020, high=0.040, step=0.001),
 }
 
 DISTRIBUTIONS_METAMODEL_NN = {
@@ -100,8 +100,8 @@ DISTRIBUTIONS_METAMODEL_NN = {
     'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0050, step=0.0001),
     'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4,step=0.001),
-    'metaNN_num_cells_0': IntDistribution  (low=24, high=64, step=8),
-    'metaNN_num_cells_1': IntDistribution  (low= 8, high=32, step=4),
+    'metaNN_num_cells_0': IntDistribution  (low=24, high=72, step=8),
+    'metaNN_num_cells_1': IntDistribution  (low= 4, high=32, step=4),
     'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
     'metaNN_factor':      FloatDistribution(low=0.6, high=0.85, step=0.01),
 }
@@ -144,7 +144,7 @@ def sample_baseline_parameters(
             if 'n_estimators' in p:  # number of trees in the Random Forest
                 p['n_estimators'] = trial.suggest_int('RF_n_estimators', 200, 600, step=10)
             if 'max_depth' in p:     # maximum depth of the trees
-                p['max_depth'] = trial.suggest_int('RF_max_depth', 15, 25, step=1)
+                p['max_depth'] = trial.suggest_int('RF_max_depth', 15, 28, step=1)
             if 'min_samples_leaf' in p:   # minimum number of samples required a leaf node
                 p['min_samples_leaf']= trial.suggest_int('RF_min_samples_leaf',  8, 18,step=1)
             if 'min_samples_split' in p:   # min number of samples to split an internal node
@@ -161,9 +161,9 @@ def sample_baseline_parameters(
             if 'num_leaves' in p:
                 p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves',[8-1,16-1,32-1,64-1])
             if 'max_depth' in p:
-                p['max_depth'] = trial.suggest_int('LGBM_max_depth', 2, 10)
+                p['max_depth'] = trial.suggest_int('LGBM_max_depth', 1, 10)
             if 'learning_rate' in p:
-                p['learning_rate']=trial.suggest_float('LGBM_learning_rate',0.001,0.15,step=0.001)
+                p['learning_rate']=trial.suggest_float('LGBM_learning_rate',0.001,0.17,step=0.001)
             if 'n_estimators' in p:
                 p['n_estimators'] = trial.suggest_int('LGBM_n_estimators', 300, 850, step=10)
             if 'min_child_samples' in p:
@@ -301,11 +301,11 @@ def sample_metamodel_NN_parameters(
     if 'weight_decay' in p:    # BUG: 0 in csv at start
         p['weight_decay']= trial.suggest_float('metaNN_weight_decay',5e-9,10e-5,log=True)
     if 'dropout' in p:
-        p['dropout']     = trial.suggest_float('metaNN_dropout', 0.0, 0.2, step=0.001)
+        p['dropout']     = trial.suggest_float('metaNN_dropout', 0.0, 0.2, step=0.01)
 
     if 'num_cells' in p:
-        p['num_cells']= [trial.suggest_int('metaNN_num_cells_0', 24, 64, step=8),
-                         trial.suggest_int('metaNN_num_cells_1',  8, 32, step=4)]
+        p['num_cells']= [trial.suggest_int('metaNN_num_cells_0', 40, 72, step=8),
+                         trial.suggest_int('metaNN_num_cells_1',  4, 32, step=4)]
 
     # Early stopping
     if 'metaNN_patience' in p:
@@ -344,7 +344,7 @@ def run_Bayes_search(
             # multi-run for best candidtes (robustness)
             num_runs            : Dict[Stage, int]  ={Stage.NNTQ:7,  Stage.meta:5},
             min_num_trials      : int  = 20,
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:4., Stage.meta:0.007},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:4., Stage.meta:0.01},
 
             verbose             : int  = 0
         ):
@@ -446,7 +446,7 @@ def run_Bayes_search(
 
                     # average after excluding min and max
                     dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
-                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 4)
+                    dict_row['loss_meta'] = round(clean_avg(_list_losses_meta), 5)
 
                     _loss_NNTQ = dict_row['loss_NNTQ']
                     _loss_meta = dict_row['loss_meta']
@@ -634,7 +634,7 @@ def plot_optuna(study,
     ######################
     df  = study.trials_dataframe()
     top = df.nsmallest(num_best_runs_hist, "value")
-    top[['params_' + e for e in list_parameters_hist]].hist()
+    top[['params_' + e for e in list_parameters_hist]].hist(figsize=(10,8))
 
 
 
@@ -656,7 +656,7 @@ def cols_not_paras() -> List[str]:
 
     # output
     cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
-    for _model in ['NNTQ', 'LR', 'RF', 'LGBM']:
+    for _model in ['NNTQ_q50', 'NNTQ_inter', 'LR', 'RF', 'LGBM']:
         cols_not_paras.append(f'avg_weight_meta_NN_{_model}')
     for _model in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']:
         for _metric in ['bias', 'RMSE', 'MAE']:

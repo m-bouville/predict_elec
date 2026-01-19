@@ -569,8 +569,7 @@ class TimeSeriesTransformer(nn.Module):
 
         h_weighted = self.block_weighting(h_blocks)    # (B, D)
 
-        # h_final = h_weighted                              # (B, 2D)
-        h_final = torch.cat([h_last, h_weighted], dim=-1)   # (B,  D)
+        h_final = torch.cat([h_last, h_weighted], dim=-1)   # (B, 2D)
 
         expected_in = self.fc_out[0].in_features   # first Linear in your Sequential
         assert h_final.shape[1] == expected_in, (
@@ -584,9 +583,17 @@ class TimeSeriesTransformer(nn.Module):
 
 
 
-def lr_warmup_cosine(step, warmup_steps, epochs, num_steps):
+def lr_warmup_cosine(step, warmup_steps, epochs, num_steps) -> float:
+    # No warmup: pure cosine decay
+    if warmup_steps is None or warmup_steps == 0:
+        progress = step / max(1, epochs * num_steps)
+        return 0.5 * (1 + np.cos(np.pi * progress))
+
+    # Warmup phase
     if step < warmup_steps:
         return step / warmup_steps
+
+    # Cosine decay after warmup
     progress = (step - warmup_steps) / max(1, (epochs * num_steps - warmup_steps))
     return 0.5 * (1 + np.cos(np.pi * progress))
 
@@ -748,10 +755,10 @@ def subset_evolution_torch(
     # for batch_idx, (x_scaled, y_scaled, origins) in enumerate(train_loader):
     for (X_scaled, Y_regions_scaled, y_nation_scaled,
          T_degC, _, origin_unix) in subset_loader:
-        X_scaled_dev        = X_scaled.to(device)   # (B, L, F)
+        X_scaled_dev        = X_scaled        .to(device)   # (B, L, F)
         Y_regions_scaled_dev= Y_regions_scaled.to(device)   # (B, H, R)
         y_nation_scaled_dev = y_nation_scaled .to(device)   # (B, H, 1)
-        T_degC_dev          = T_degC  .to(device)   # (B, H, R+1)
+        T_degC_dev          = T_degC          .to(device)   # (B, H, 1)
 
         # print("X_scaled_dev", X_scaled_dev.shape)
 
@@ -775,7 +782,7 @@ def subset_evolution_torch(
                 **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
                      'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
                      'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
-                Tavg_current=T_degC_dev[:, -valid_length:, :])
+                Tavg_current=T_degC_dev[:, -valid_length:, 0])
 
             if model_NN.lambda_regions > 0:
                 loss_region_scaled_h_batch = losses.regions_torch(

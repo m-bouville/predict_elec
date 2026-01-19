@@ -155,13 +155,26 @@ def prepare_meta_data(
     Returns DataFrame with aligned predictions, features, and targets.
     """
     # Combine all predictions and features
+
+
+    # inter-quantile
+    if ('q25' in dict_pred_GW.keys() and 'q75' in dict_pred_GW.keys()):
+        _NNTQ_inter = dict_pred_GW['q75'] - dict_pred_GW['q25']
+    elif ('q10' in dict_pred_GW.keys() and 'q90' in dict_pred_GW.keys()):
+        _NNTQ_inter = dict_pred_GW['q90'] - dict_pred_GW['q10']
+    else:
+        _NNTQ_inter = np.nan
+    #     print("No inter-quantile used")
+
     df = pd.DataFrame({
-        'y_true':y_true_GW.squeeze(),
-        'NNTQ':  dict_pred_GW['q50'],
-        'LR':    dict_baseline_GW.get('LR',  np.nan),
-        'RF':    dict_baseline_GW.get('RF',  np.nan),
-        'LGBM':  dict_baseline_GW.get('LGBM',np.nan),
+        'y_true':    y_true_GW.squeeze(),
+        'NNTQ_q50':  dict_pred_GW['q50'],
+        'NNTQ_inter':_NNTQ_inter,
+        'LR':        dict_baseline_GW.get('LR',  np.nan),
+        'RF':        dict_baseline_GW.get('RF',  np.nan),
+        'LGBM':      dict_baseline_GW.get('LGBM',np.nan),
     }, index=dates)
+
 
     # Add context features
     df_features = pd.DataFrame(X_features_GW, index=dates, columns=cols_features)
@@ -186,7 +199,7 @@ def to_tensors(df: pd.DataFrame, cols_features: List[str]):
 
     # Predictions
     preds = torch.tensor(
-        df[['NNTQ', 'LR', 'RF', 'LGBM']].values,
+        df[['NNTQ_q50', 'NNTQ_inter', 'LR', 'RF', 'LGBM']].values,
         dtype=torch.float32
     )
 
@@ -243,7 +256,7 @@ def train_meta_model(
 
     for h in range(48):
         net_h = MetaNet(context_dim=len(context_cols)+1, # including `horizon`
-                        num_predictors=4, dropout=dropout,
+                        num_predictors=5, dropout=dropout,
                         num_cells=num_cells
                        ).to(device)
         opt_h = torch.optim.Adam(net_h.parameters(), lr=learning_rate,
@@ -296,7 +309,7 @@ def train_meta_model(
 
                 # Forward pass
                 y_meta, weights = net_h(context_b.to(device),
-                                        preds_b.to(device))
+                                        preds_b  .to(device))
                 # Loss
                 loss_train = criterion(y_meta, y_b.to(device))
 
@@ -500,7 +513,7 @@ def metamodel_NN(data_train,
 
         # Analyze learned weights
         df_weights_test  = pd.DataFrame(
-                weights_test_h, columns=["NNTQ", "LR", "RF", "LGBM"])
+                weights_test_h, columns=['NNTQ_q50', 'NNTQ_inter', "LR", "RF", "LGBM"])
 
         if verbose > 0:
             plots.data(df_weights_test * 100, xlabel="horizon",
@@ -510,10 +523,10 @@ def metamodel_NN(data_train,
         if verbose > 0:
             print(f"\nTest RMSE: {rmse_test.item():.2f} GW")
             print(f"Average test weights: "
-                  f"NNTQ{avg_weights_test['NNTQ']*100:5.1f}%, "
-                    f"LR{avg_weights_test['LR'  ]*100:5.1f}%, "
-                    f"RF{avg_weights_test['RF'  ]*100:5.1f}%, "
-                  f"LGBM{avg_weights_test['LGBM']*100:5.1f}%")
+                  f"NNTQ{avg_weights_test['NNTQ_q50']*100:5.1f}%, "
+                    f"LR{avg_weights_test['LR'    ] * 100:5.1f}%, "
+                    f"RF{avg_weights_test['RF'    ] * 100:5.1f}%, "
+                  f"LGBM{avg_weights_test['LGBM'  ] * 100:5.1f}%")
     else:
         avg_weights_test = None
 

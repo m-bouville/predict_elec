@@ -223,7 +223,7 @@ def postprocess(baseline_parameters   : Dict[str, Any],
 
     _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
                            verbose=verbose), 2)
-    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 4)
+    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 5)
 
     # BUG: this does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then

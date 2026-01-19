@@ -55,14 +55,13 @@ The main file is `predict_elec.py`.
 **Input**
 - exogenous features (temperature, school holidays);
 - week-ends plus Fourier-like sine waves at different scales (day, year);
-- moving averages of recent consumption (but not so recent as to cause leaks);
-- predictions from baseline models --**linear regression (LR)**, **random forest, (RF)** and **gradient boosting (LGBM)**-- used as features, *not* ensembled directly (yet).
+- moving averages of recent consumption (but not so recent as to cause leaks).
 
 **Output**
-- Multiple conditional quantiles (e.g. `q10`, `q50`, `q90`)
+- Multiple conditional quantiles (e.g. `q10`, `q25`, `q50`, `q75` and `q90`)
 
 **Training**
-- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q50` <= `q90`) and sharpness (derivatives)
+- Pinball (quantile) loss with sequential crossing constraints (so that `q10` <= `q25` <= `q50`) and sharpness (derivatives)
   - Since extreme cold does not change the demand as much as it increases uncertainty and tail risk, pinball and coverage losses have a different penalty in the cold.
 - Direct multi-horizon prediction
 
@@ -77,8 +76,8 @@ This stage is self-contained and remains unchanged by the downstream metamodel.
 ### Stage 2 — Mean-Based Meta-Model
 
 **Input**
-- LR, RF and LGBM predictions
-- Median (`q50`) output from stage 1
+- Predictions from baseline models -- linear regression (LR), random forest, (RF) and gradient boosting (LGBM)
+- Median (`q50`) and inter-quartile outputs from stage 1
 - features similar to those used in stage 1.
 
 **Output**
@@ -100,23 +99,3 @@ Two Bayesian searches are available: for NNTQ and for metamodels. In each case, 
 Bayesian searches for NNTQ can yield overspecialized parameter sets. This problem is similar to apparently good training results not generalizing to testing; but here the parameters are specifically good not just for the time range used but also specific random numbers. 
 
 When a set of parameters seems an improvement, more runs (with different random seeds) can be carried out: the average loss is used in order to improve robustness. This is particularly useful for configurations prone to overfitting (e.g. deep networks), which would otherwise have to be excluded.
-
-
-  
----
-
-## To do
-
-### Issues
-**Systematic bias in predictions**
-- Bias is visible in LR, RF, LGBM and NN in validation and testing (but not training).
-- The situation improved with parameters obtained from the Bayesian search.
-
-**Empirical coverage of predicted quantiles**
-- While `q10` and `q25` aim at approximating the first decile and quartile, this is not explicitly enforced; consequently there is a difference.
-- This also improved (but to a lower extent) with Bayesian parameters.
- 
-
-### Plans  
-**Miscellaneous**
-- `q75` minus `q25` (uncertainty proxy) could be used as a feature in the NN metamodel.
