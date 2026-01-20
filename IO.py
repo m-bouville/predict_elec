@@ -8,6 +8,8 @@
 import os, sys
 from   typing import List, Tuple, Dict, Optional
 
+import json
+import hashlib
 import pickle
 
 import numpy  as np
@@ -99,15 +101,24 @@ def load_consumption(
 #    January 13, 2026
 
 def load_consumption_by_region(
-        path   : str =  'data/consommation-quotidienne-brute-regionale.csv',
-        cache_path:str='cache/consommation-quotidienne-brute-regionale.pkl',
+        path   : str = 'data/consommation-quotidienne-brute-regionale.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute-regionale/exports/'
                        'csv?lang=en&timezone=timezone=Europe%2FParis&'
                        'use_labels=true&delimiter=%3B',
+        cache_dir:str= 'cache',
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
     # This input csv is an order of magnitude larger than all others combined
+    #   so if only one csv is to be cached, this is the one
+
+
+    # identify csv file by size and date
+    _dict_csv  = {"file_size"        : os.path.getsize (path),
+                  "modification_time": os.path.getmtime(path)}
+    key_str    = json.dumps(_dict_csv, sort_keys=True)
+    cache_key  = hashlib.md5(key_str.encode()).hexdigest()
+    cache_path = os.path.join(cache_dir, f"conso_region_{cache_key}.pkl")
 
     # either load...
     if os.path.exists(cache_path):
