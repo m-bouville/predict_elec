@@ -754,24 +754,40 @@ def loss_NNTQ(
                  # TODO quantiles are currently hard-coded
          verbose                : int  = 0
     ) -> float:
-    _quantile_delta_coverage = quantile_delta_coverage.copy()
+    _dict_coverage = quantile_delta_coverage.copy()
         # dict of quantiles: for each, measured - theoretical (e.g. 53% - 50% = 3%)
 
+
     # add spread: q90 - q10 (again, measured - theoretical)
-    _quantile_delta_coverage['spread'] = max(0, _quantile_delta_coverage['q90'] - \
-                                                _quantile_delta_coverage['q10'])
+    if ('q10' in _dict_coverage.keys() and 'q90' in _dict_coverage.keys()):
+        _spread = _dict_coverage['q90'] - _dict_coverage['q10']
+    elif ('q25' in _dict_coverage.keys() and 'q75' in _dict_coverage.keys()):
+        _spread = _dict_coverage['q75'] - _dict_coverage['q25']
+    else:
+        _spread = 0.5  # a.k.a. a lot
+
+    _dict_coverage['spread'] = (
+        max(0, -_spread) * 1.  +
+        max(0,  _spread) * 0.25
+    )  # asymmetrically penalizing narrow distributions (most common problem)
+    # print(f"_spread = {_spread*100:.2f}% => "
+    #       f"_dict_coverage['spread'] [%]: {_dict_coverage['spread']*100:.2f}")
+
 
     # add bias, i.e. signed error
-    _bias_mean = np.mean(list(_quantile_delta_coverage.values()))
-    _bias_penalty = (  # asymmetrically penalizing 'everything above the truth'
+    _bias_mean = np.mean(list(_dict_coverage.values()))
+    # _dict_pc = {k : round(100*v, 2) for (k, v) in _dict_coverage.items()}
+    # print(f"_bias_mean [%] = {_bias_mean*100:.2f} = mean({_dict_pc})")
+    _dict_coverage['bias'] = float (
         max(0,  _bias_mean) * 1.  +
-        max(0, -_bias_mean) * 0.1
-    )
-    _quantile_delta_coverage['bias']= float(_bias_penalty)
+        max(0, -_bias_mean) * 0.25
+    )  # asymmetrically penalizing upward drift (most common problem)
+    # print(f"_dict_coverage['bias'] [%]: {_dict_coverage['bias']*100:.2f}")
+
 
     # two layers of weights
     _list_weighted_loss_coverage = [abs(gap) * quantile_weights[q]
-                for q, gap in _quantile_delta_coverage.items()]
+                for q, gap in _dict_coverage.items()]
 
     _sum_weights_coverage   = sum(weights_coverage)
     _sorted_list = sorted(_list_weighted_loss_coverage, reverse=True)
