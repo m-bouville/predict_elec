@@ -360,9 +360,10 @@ def train_meta_model(
         valid_loss_avg = valid_loss_total / len_valid_dataset \
                     if df_valid is not None else None
 
+        all_w = torch.cat(epoch_weights, dim=0)
+
         # Logging
         if ((epoch + 1) % 2 == 0 or epoch == 0) and len(epoch_weights) > 0:
-            all_w = torch.cat(epoch_weights, dim=0)
             avg_weights = all_w.mean(dim=0).numpy()
             if verbose > 0:
                 print(f"Epoch{epoch+1:3n}/{epochs}: "
@@ -382,9 +383,11 @@ def train_meta_model(
                                 } for h in range(valid_length)]
                 best_weights = all_w.detach().cpu().clone()
                 if verbose >= 2:
-                    print("best model saved")
+                    print(f"best metamodel saved at epoch {epoch}")
         elif train_loss_avg < best_train_loss:
                 best_train_loss = train_loss_avg
+    # end of loop over epochs
+
 
     # Load best model
     if best_state is not None:
@@ -393,7 +396,8 @@ def train_meta_model(
         all_w = best_weights
 
         if verbose >= 2:
-            print("best model saved")
+            print("best metamodel restored")
+
 
     return meta_nets, all_w.numpy()
 

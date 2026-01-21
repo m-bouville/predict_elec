@@ -175,7 +175,8 @@ class DataSplit:
 
         # Output format
         self.true_series_GW = df["y_true"]
-        # print(self.name_display, "true_series_GW:", self.true_series_GW.shape)
+        # print(self.name_display, "true_series_GW:",
+        #  self.true_series_GW.name, self.true_series_GW.shape)
 
         self.true_nation_GW = self.true_series_GW
 
@@ -456,6 +457,10 @@ class NeuralNet:
     lambda_regions   : Optional[float] = None
     lambda_regions_sum:Optional[float] = None
 
+    # save best model
+    best_loss        : float  = float("inf")
+    best_state       : Optional[nn.Module] = None
+    best_epoch       : int    = None
 
 
     # will be created in __post_init__
@@ -514,10 +519,11 @@ class NeuralNet:
         # print("Initial LR:", scheduler.get_last_lr())
 
 
-        # Example usage in your training loop:
         # Initialize early stopping
         self.early_stopping = architecture.EarlyStopping(
             patience=self.patience, min_delta=self.min_delta)
+
+        self.save_best_model= architecture.BestModelSaver(self.model)
 
         self.amp_scaler     = torch.amp.GradScaler(device=self.device)
 
@@ -534,7 +540,7 @@ class NeuralNet:
 
         t_epoch_loop_start = time.perf_counter()
 
-        list_of_min_losses= (9.999, 9.999, 9.999)
+        list_of_min_losses= (9.999, 9.999, 9.999)   # pseudo np.inf
         list_of_lists     = ([], [], [], [])
 
         # first_step = True
@@ -587,14 +593,20 @@ class NeuralNet:
                                   list_of_lists[2], list_of_lists[3],
                                   partial=True, verbose=verbose)
 
+            # save best model
+            self.save_best_model(valid_loss_quantile_h_scaled.mean(),
+                                 self.model, epoch, verbose)
+
             # Check for early stopping
             if self.early_stopping(valid_loss_quantile_h_scaled.mean()):
                 if verbose > 0:
                     print(f"Early stopping triggered at epoch {epoch+1} "
                           f"(patience {self.patience}, min_delta {self.min_delta}).")
                 break
+        # end of loop over epochs
 
-        # torch.cuda.empty_cache()
+        # restore best model
+        self.save_best_model.restore(self.model, verbose)
 
         return (list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
                 dict_valid_loss_quantile_h)
@@ -710,3 +722,5 @@ class NeuralNet:
 
 
         return (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median)
+
+

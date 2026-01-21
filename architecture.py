@@ -598,25 +598,81 @@ def lr_warmup_cosine(step, warmup_steps, epochs, num_steps) -> float:
     return 0.5 * (1 + np.cos(np.pi * progress))
 
 
-
-# Define early stopping class
 class EarlyStopping:
     def __init__(self, patience, min_delta):
-        self.patience = patience
+        self.patience  = patience
         self.min_delta = min_delta
-        self.counter = 0
+        self.counter   = 0
         self.min_validation_loss = float('inf')
 
     def __call__(self, validation_loss):
         if validation_loss < self.min_validation_loss - self.min_delta:
             self.min_validation_loss = validation_loss
             self.counter = 0
+            return False     # signal to keep going
         else:
             self.counter += 1
             if self.counter >= self.patience:
                 return True  # Signal to stop training
-        return False
 
+
+class BestModelSaver:
+    def __init__(self, model: torch.nn.Module):
+        self.best_loss  = float("inf")
+        self.best_state = model
+        self.best_epoch = None
+
+    def __call__(self, validation_loss, model, epoch: int=None, verbose: int=0
+                 ) -> None:
+        """
+        Parameters
+        ----------
+        validation_loss : float
+            Current validation loss.
+        model : torch.nn.Module
+            Model to snapshot if validation improves.
+        epoch : int, optional
+            Epoch index (for logging / diagnostics).
+
+        Returns
+        -------
+        bool
+            True if a new best model was saved, False otherwise.
+        """
+        if validation_loss >= self.best_loss:
+            return
+            if verbose >= 3:
+                print(f"current NNTQ model at epoch {epoch} not saved")
+
+        self.best_loss  = validation_loss
+        self.best_epoch = epoch
+        self.best_state = {
+            k: v.detach().cpu().clone()
+            for k, v in model.state_dict().items()
+        }
+        if verbose >= 2:
+            print(f"best NNTQ model saved at epoch {epoch}")
+
+    def restore(self, model, verbose: int=0) -> None:
+        """
+        Restore the best saved parameters into `model`.
+        """
+        if self.best_state is None:
+            raise RuntimeError("No best model has been saved.")
+        model.load_state_dict(self.best_state)
+
+        if verbose >= 1:
+            if self.best_epoch is not None:
+                print(f"best NNTQ model restored from epoch {self.best_epoch}")
+            else:
+                print( "best NNTQ model restored")
+
+
+
+
+# ----------------------------------------------------------------------
+# blocks
+# ----------------------------------------------------------------------
 
 def constant_block_sizes(num_tokens: int, num_blocks: int) -> List[float]:
     # print("constant", num_tokens, num_blocks)
@@ -786,13 +842,14 @@ def subset_evolution_torch(
 
             if model_NN.lambda_regions > 0:
                 loss_region_scaled_h_batch = losses.regions_torch(
-                        pred_regions_scaled_dev[:, -valid_length:, :],     # (B, V, R)
-                        Y_regions_scaled_dev   [:, -valid_length:, :],     # (B, V, R)
+                        pred_regions_scaled_dev[:, -valid_length:, :],   # (B, V, R)
+                        Y_regions_scaled_dev   [:, -valid_length:, :],   # (B, V, R)
                         model_NN.lambda_regions, model_NN.lambda_regions_sum
                     )
-                loss_scaled_h_batch= loss_quantile_scaled_h_batch+loss_region_scaled_h_batch
+                loss_scaled_h_batch = loss_quantile_scaled_h_batch + \
+                                      loss_region_scaled_h_batch
             else:
-                loss_scaled_h_batch= loss_quantile_scaled_h_batch
+                loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
         amp_scaler.scale(loss_scaled_h_batch.mean()).backward()# full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)

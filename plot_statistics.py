@@ -505,7 +505,7 @@ def thermosensitivity_per_temperature(
             if data_split.name != Split.complete else None,
         None,  #{_col: sensitivity_df[_col] for _col in ['LR', 'RF', 'LGBM']},
         {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
-            if data_split.name == 'test' else None,
+            if data_split.name == Split.test else None,
          xlabel="threshold T_avg [°C]",
          ylabel="thermosensitivity [GW/K]",
          title=f"{data_split.name_display}",
