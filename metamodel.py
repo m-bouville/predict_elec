@@ -100,7 +100,8 @@ def weights_LR_metamodel(X_input   : pd.DataFrame,
 
 class MetaNet(nn.Module):
     """
-    Meta-model that learns to combine NN, LR, RF predictions.
+    Meta-model that learns to combine:
+        NNTQ (median + inter-quantile), LR, RF, LGBM predictions.
 
     Takes context features and outputs weights for each predictor.
     """
@@ -121,7 +122,7 @@ class MetaNet(nn.Module):
         """
         Args:
             context: (B, F) - contextual features (temp, time, etc.)
-            preds:   (B, 4) - predictions from [nn, lr, rf, gb]
+            preds:   (B, 4) - predictions from [nntq-q50, lr, rf, lgbm]
 
         Returns:
             y_meta:  (B,)   - weighted combination
@@ -157,7 +158,7 @@ def prepare_meta_data(
     # Combine all predictions and features
 
 
-    # inter-quantile
+    # inter-quantile (measure of uncertainty)
     if ('q25' in dict_pred_GW.keys() and 'q75' in dict_pred_GW.keys()):
         _NNTQ_inter = dict_pred_GW['q75'] - dict_pred_GW['q25']
     elif ('q10' in dict_pred_GW.keys() and 'q90' in dict_pred_GW.keys()):
@@ -169,7 +170,6 @@ def prepare_meta_data(
     df = pd.DataFrame({
         'y_true':    y_true_GW.squeeze(),
         'NNTQ_q50':  dict_pred_GW['q50'],
-        'NNTQ_inter':_NNTQ_inter,
         'LR':        dict_baseline_GW.get('LR',  np.nan),
         'RF':        dict_baseline_GW.get('RF',  np.nan),
         'LGBM':      dict_baseline_GW.get('LGBM',np.nan),
@@ -178,6 +178,8 @@ def prepare_meta_data(
 
     # Add context features
     df_features = pd.DataFrame(X_features_GW, index=dates, columns=cols_features)
+    df_features['NNTQ_inter']=_NNTQ_inter
+
     if 'horizon' not in df_features.columns:
         df_features['horizon']=(df_features.index.hour*2 + \
                                 df_features.index.minute/30).round().astype(np.int16)
@@ -199,7 +201,7 @@ def to_tensors(df: pd.DataFrame, cols_features: List[str]):
 
     # Predictions
     preds = torch.tensor(
-        df[['NNTQ_q50', 'NNTQ_inter', 'LR', 'RF', 'LGBM']].values,
+        df[['NNTQ_q50', 'LR', 'RF', 'LGBM']].values,
         dtype=torch.float32
     )
 
@@ -210,7 +212,7 @@ def to_tensors(df: pd.DataFrame, cols_features: List[str]):
             (df.index.hour*2 + df.index.minute/30).round().astype(np.int16)
             # (df.index.hour + df.index.minute/60) / 24
 
-    context_cols = [c for c in cols_features
+    context_cols = [c for c in cols_features + ['NNTQ_inter']
         if c not in ['consumption_nn', 'consumption_lr',
                      'consumption_rf', 'consumption_gb']]
     context = torch.tensor(
@@ -254,9 +256,10 @@ def train_meta_model(
     optimizers = []
     schedulers = []
 
-    for h in range(48):
-        net_h = MetaNet(context_dim=len(context_cols)+1, # including `horizon`
-                        num_predictors=5, dropout=dropout,
+    for h in range(valid_length):
+        net_h = MetaNet(context_dim=len(context_cols)+2,
+                            # including `horizon` and intr-quartile
+                        num_predictors=4, dropout=dropout,
                         num_cells=num_cells
                        ).to(device)
         opt_h = torch.optim.Adam(net_h.parameters(), lr=learning_rate,
@@ -373,12 +376,24 @@ def train_meta_model(
         if df_valid is not None:
             if valid_loss_avg < best_valid_loss:
                 best_valid_loss = valid_loss_avg
-                # torch.save(net.state_dict(), 'cache/best_metamodel.pth')
+                best_state = [ {
+                                    k: v.detach().cpu().clone()
+                                    for k, v in meta_nets[h].state_dict().items()
+                                } for h in range(valid_length)]
+                best_weights = all_w.detach().cpu().clone()
+                if verbose >= 2:
+                    print("best model saved")
         elif train_loss_avg < best_train_loss:
                 best_train_loss = train_loss_avg
 
     # Load best model
-    # load_state_dict(torch.load('cache/best_metamodel.pth', weights_only=True))
+    if best_state is not None:
+        for h in range(valid_length):
+            meta_nets[h].load_state_dict(best_state[h])
+        all_w = best_weights
+
+        if verbose >= 2:
+            print("best model saved")
 
     return meta_nets, all_w.numpy()
 
@@ -513,7 +528,7 @@ def metamodel_NN(data_train,
 
         # Analyze learned weights
         df_weights_test  = pd.DataFrame(
-                weights_test_h, columns=['NNTQ_q50', 'NNTQ_inter', "LR", "RF", "LGBM"])
+                weights_test_h, columns=['NNTQ_q50', "LR", "RF", "LGBM"])
 
         if verbose > 0:
             plots.data(df_weights_test * 100, xlabel="horizon",

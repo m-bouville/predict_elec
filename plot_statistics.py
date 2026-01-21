@@ -304,11 +304,21 @@ def create_df(
     dates               : pd.DatetimeIndex,
     threshold_degC      : Optional[Tuple[str, float]]) -> pd.DataFrame:
 
-    df = pd.concat([true_series] + list(dict_pred_series.values()) + \
-                   list(dict_baseline_series.values()) + \
-                   list(dict_meta_series.values()) + \
-                   [pd.Series(T_degC,index=dates, name='T_degC')],
-                   axis=1, join='inner').dropna()
+    # print("true_series:", true_series.shape)
+    # print(pd.DataFrame(dict_pred_series    ).shape)
+    # print(pd.DataFrame(dict_baseline_series).shape)
+    # print(pd.DataFrame(dict_meta_series    ).shape)
+    # print(T_degC.shape)
+    # print(dates.shape)
+
+    df = pd.concat([true_series,
+                   pd.DataFrame(dict_pred_series),
+                   pd.DataFrame(dict_baseline_series),
+                   pd.DataFrame(dict_meta_series),
+                   pd.Series(T_degC, index=dates, name='T_degC')],
+                   axis=1).dropna()
+
+    df.index = pd.to_datetime(df.index)
     columns_preds = ['true'] + ["NNTQ " + e for e in dict_pred_series.keys()] + \
                    list(dict_baseline_series.keys()) + \
                    ["meta " + e for e in dict_meta_series.keys()]
@@ -316,6 +326,7 @@ def create_df(
 
     if threshold_degC is not None:
         df = apply_threshold(df, threshold_degC[1], threshold_degC[0])
+    # print(df)
 
     return (df, columns_preds)
 
@@ -396,7 +407,7 @@ def thermosensitivity_per_time_of_day(
         sensitivity_df, sensitivity_GW_per_K, num_days = \
             time_of_day_temp_sensitivity(
                 data_split.true_nation_GW, data_split.dict_preds_NNTQ,
-                data_split.dict_preds_ML, data_split.dict_preds_meta,
+                data_split.dict_preds_ML,  data_split.dict_preds_meta,
                 data_split.Tavg_degC.round(1), data_split.dates,
                 threshold_degC=_threshold_degC,
                 num_steps_per_day=num_steps_per_day)
@@ -491,7 +502,7 @@ def thermosensitivity_per_temperature(
     plots.curves(
          sensitivity_df['true'],
         {_col: sensitivity_df['NNTQ '+_col] for _col in ['q10', 'q50', 'q90']} \
-            if data_split.name != 'complete' else None,
+            if data_split.name != Split.complete else None,
         None,  #{_col: sensitivity_df[_col] for _col in ['LR', 'RF', 'LGBM']},
         {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
             if data_split.name == 'test' else None,

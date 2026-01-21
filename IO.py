@@ -912,7 +912,7 @@ def print_model_summary(
     warmup_steps: int,
     patience: int,  min_delta,
     model_dim: int,  num_layers: int,  num_heads: int, ffn_size: int,
-    patch_length: int,  stride: int,  num_patches: int,
+    patch_length: int,  stride: int,  # num_patches: int,
     num_geo_blocks: int, geo_block_ratio: float,
     # quantile loss
     quantiles,
@@ -934,6 +934,10 @@ def print_model_summary(
 
     # steps per epoch (optimizer updates)
     steps_per_epoch = np.ceil(num_samples / batch_size) if batch_size > 0 else 0
+
+    num_patches = (input_length + features_in_future * pred_length - patch_length)\
+            // stride + 1
+
 
     print("\n===== DATA =====")
     print(f"{'MINUTES_PER_STEP':17s} ={minutes_per_step:5n}")
