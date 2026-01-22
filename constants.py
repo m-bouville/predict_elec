@@ -122,23 +122,19 @@ NNTQ_PARAMETERS: dict = {
 NNTQ_PARAMETERS.update(
     {
         'use_ML_features': 0,
-        'epochs': 18,
-        'batch_size': 32,
-        'input_length': 672, 'patch_length': 48, 'stride': 24,
-        'dropout': 0.26, 'learning_rate': 0.0080,
-        'lambda_coverage': 0.04, 'lambda_cross': 0.04,
-        'lambda_deriv': 0.056,   'lambda_median': 0.0, 'smoothing_cross': 0.066,
-        'threshold_cold_degC':1.7, 'saturation_cold_degC':-2.7, 'lambda_cold':0.16,
-        'lambda_regions': 0.042,  'lambda_regions_sum': 0.54,
-        'model_dim': 625,  'ffn_size': 6,
-        'num_geo_blocks': 7,  # 7.2
-        'geo_block_ratio': 1.0,
-        'num_heads': 5,  # 5.4
-        'num_layers': 6,  # 5.8
-        'patience': 6, 'min_delta': 0.036, 'warmup_steps': 2000,
+        'batch_size': 128,
+        'epochs': 30,
+        'input_length': 672, 'patch_length': 42, 'stride': 21,
+        'dropout': 0.38, 'learning_rate': 0.0044,
+        'lambda_coverage': 0.06, 'lambda_cross': 0.03,
+        'lambda_deriv': 0.04, 'lambda_median': 0.0, 'smoothing_cross': 0.064,
+        'saturation_cold_degC': -7.6,'threshold_cold_degC':-0.4, 'lambda_cold':0.18,
+        'lambda_regions': 0.04,  'lambda_regions_sum': 0.32,
+        'model_dim': 525, 'num_heads': 5, 'num_layers': 5, 'ffn_size': 6,
+        'num_geo_blocks': 5, 'geo_block_ratio': 1.0,
+        'patience': 5,  'min_delta': 0.036, 'warmup_steps': 1900,
     }
 )
-
 
 
 VALIDATE_EVERY=  1
@@ -170,7 +166,7 @@ METAMODEL_NN_PARAMETERS: dict = {
 
 
 DICT_INPUT_CSV_FNAMES = {
-    "consumption":          "data/consommation-quotidienne-brute.csv",
+    "consumption":          'data/consommation-quotidienne-brute.csv',
     "consumption_by_region":'data/consommation-quotidienne-brute-regionale.csv',
     "temperature":          'data/temperature-quotidienne-regionale.csv',
     # "solar":     'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
@@ -211,76 +207,44 @@ BASELINES_PARAMETERS = {
 
 
 
-# # # Optional: plug in Bayesian best parameters
-# # _new_parameters = {
-# #     'LR_type': 'ridge', 'LR_alpha':1.45, 'RF_n_estimators':490, 'RF_max_depth':23,
-# #     'RF_min_samples_leaf': 11, 'RF_min_samples_split':12, 'RF_max_features':'sqrt',
-# #     'LGBM_boosting_type': 'gbdt', 'LGBM_num_leaves': 15, 'LGBM_max_depth': 2,
-# #     'LGBM_learning_rate':0.07, 'LGBM_n_estimators':630, 'LGBM_min_child_samples':13,
-# #     'LGBM_subsample': 0.72, 'LGBM_colsample_bytree': 0.98, 'LGBM_reg_alpha': 0.06,
-# #     'LGBM_reg_lambda': 0.08, 'metaNN_epochs': 20, 'metaNN_batch_size': 96,
-# #     'metaNN_learning_rate': 0.0025, 'metaNN_weight_decay': 3.054e-08,
-# #     'metaNN_dropout': 0.11, 'metaNN_num_cells_0': 64, 'metaNN_num_cells_1': 32
-# # } # trial 51: 1.207 (Bayes) -> 1.23 (one-off)
-
-# _new_parameters = {'LR_type': 'ridge', 'LR_alpha': 1.2, 'RF_n_estimators': 500,
-#     'RF_max_depth': 20, 'RF_min_samples_leaf': 10, 'RF_min_samples_split': 15,
-#     'RF_max_features': 'sqrt', 'LGBM_boosting_type': 'gbdt',
-#     'LGBM_num_leaves': 15, 'LGBM_max_depth': 3, 'LGBM_learning_rate': 0.01,
-#     'LGBM_n_estimators': 420, 'LGBM_min_child_samples': 12, 'LGBM_subsample': 1.0,
-#     'LGBM_colsample_bytree': 0.9, 'LGBM_reg_alpha': 0.08, 'LGBM_reg_lambda': 0.09,
-#     'metaNN_epochs': 18, 'metaNN_batch_size': 96, 'metaNN_learning_rate': 0.0035,
-#     'metaNN_weight_decay': 2.2787e-07, 'metaNN_dropout': 0.0,
-#     'metaNN_num_cells_0': 40, 'metaNN_num_cells_1': 16
-# }  # trial 15: avg loss 1.3474 over 5 runs [data -> 11/25]
-#    #   losses [1.3332, 1.3484, 1.3454, 1.3503, 1.3485]
-
-# # for _model in ['LR', 'RF', 'LGBM']:
-# #     BASELINES_PARAMETERS[_model].update(
-# #         {k.removeprefix(_model+'_'): v
-# #                         for (k, v) in _new_parameters.items() if _model in k})
-
-# # METAMODEL_NN_PARAMETERS.update({k.removeprefix('metaNN_'): v
-# #                         for (k, v) in _new_parameters.items() if 'metaNN' in k})
-
-# _new_parameters = {
-#     "LR": {
-#         "alpha": 0.9,
-#         "max_iter": 2000,
-#     },
-#     "RF": {
-#         "max_depth": 23,
-#         "min_samples_leaf": 14,
-#         "min_samples_split": 16,
-#         "n_estimators": 500,
-#     },
-#     "LGBM": {
-#         "colsample_bytree": 0.84,
-#         "learning_rate": 0.115,
-#         "max_depth": 2,  # 2.4
-#         "min_child_samples": 10,
-#         "n_estimators": 550,
-#         "num_leaves": 16-1,
-#         "reg_alpha": 0.10,
-#         "reg_lambda": 0.03, # 0.028
-#         "subsample": 0.86,
-#     },
-#     "metaNN": {
-#         "batch_size": 192,
-#         "dropout": 0.085,
-#         "epochs": 15,
-#         "factor": 0.7,
-#         "learning_rate": 0.0028,
-#         "num_cells_0": 56,
-#         "num_cells_1": 12,
-#         "patience": 4,
-#         "weight_decay": 8e-6,
-#     }
-# }
-
-# for _model in ['LR', 'RF', 'LGBM']:
-#     BASELINES_PARAMETERS[_model].update(_new_parameters[_model])
-# METAMODEL_NN_PARAMETERS.update(_new_parameters['metaNN'])
+# Optional: plug in Bayesian best parameters
+_new_parameters = {
+    "LR": {
+        "alpha": 1.28,
+        "max_iter": 2000,
+    },
+    "RF": {
+        "max_depth": 25,
+        "min_samples_leaf": 15,
+        "min_samples_split": 22,
+        "n_estimators": 504,
+    },
+    "LGBM": {
+        "colsample_bytree": 0.92,
+        "learning_rate": 0.152,
+        "max_depth": 8,
+        "min_child_samples": 17,
+        "n_estimators": 356,
+        "num_leaves": 32-1,
+        "reg_alpha": 0.086,
+        "reg_lambda": 0.093,
+        "subsample": 0.86,
+    },
+    "metaNN": {
+        "batch_size": 512,
+        "dropout": 0.078,
+        "epochs": 12,
+        "factor": 0.7,
+        "learning_rate": 0.004,
+        "num_cells_0": 56,
+        "num_cells_1": 30,
+        "patience": 4,
+        "weight_decay": 3.15e-7,
+    }
+}
+for _model in ['LR', 'RF', 'LGBM']:
+    BASELINES_PARAMETERS[_model].update(_new_parameters[_model])
+METAMODEL_NN_PARAMETERS.update(_new_parameters['metaNN'])
 
 
 

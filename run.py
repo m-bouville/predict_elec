@@ -277,11 +277,12 @@ def run_model_once(
         plot_conv_every       : int,
         run_id                : int,
 
-        cache_dir             : str  = "cache",
-        # trials_csv_path       : str  = 'parameter_search.csv',
-        num_worst_days        : int  = 20,
-        verbose               : int  = 0
-    ) -> Tuple[Dict[str, Any], pd.DataFrame, \
+        cache_dir             : str   = "cache",
+        # trials_csv_path       : str   = 'parameter_search.csv',
+        num_worst_days        : int   = 20,
+        split_diagnostics     : Split = Split.test,
+        verbose               : int   = 0
+    ) -> Tuple[containers.DatasetBundle, Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
 
     np.   random.seed(seed)
@@ -386,12 +387,15 @@ def run_model_once(
         os.makedirs(cache_dir, exist_ok=True)
 
         key_str    = json.dumps( {
+            "train_split_fraction": train_split_fraction,
+            "test_steps"   : test_steps,
+            "forecast_hour": forecast_hour,
             "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'},
                 sort_keys=True)
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
-        cache_path = os.path.join(cache_dir, f"nntq_preds_{cache_key}.pkl")
+        cache_path = os.path.join(cache_dir, f"NNTQ_preds_{cache_key}.pkl")
 
 
 
@@ -427,7 +431,7 @@ def run_model_once(
 
         # # for NNTQ: features may include ML preds
         # _num_features = data.num_features + \
-        #     NNTQ_parameters['use_ML_features'] * len(dict_series_baselines_GW.keys())
+        #    NNTQ_parameters['use_ML_features']*len(dict_series_baselines_GW.keys())
 
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
                                           len_train_data= len(data.train),
@@ -489,12 +493,14 @@ def run_model_once(
     if verbose >= 3:
         data.train.plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day,
+            # temperature_full=Tavg_full,
+            num_steps_per_day=num_steps_per_day,
             quantiles=_plot_quantiles)
     if verbose > 0:
-        data.test.plots_diagnostics(
+        data[split_diagnostics].plots_diagnostics(
             names_baseline = names_baseline, names_meta = names_meta,
-            temperature_full=Tavg_full, num_steps_per_day=num_steps_per_day,
+            # temperature_full=Tavg_full,
+            num_steps_per_day=num_steps_per_day,
             quantiles=_plot_quantiles)
 
         # plots.quantiles(
@@ -533,14 +539,6 @@ def run_model_once(
 
 
 
-
-    # final cleanup to free pinned memory and intermediate arrays
-    try:
-        del data
-    except NameError:
-        pass
-
-
     dict_row, (_loss_NNTQ, _loss_meta) = postprocess(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
         len(names_cols['features']),
@@ -553,7 +551,7 @@ def run_model_once(
         torch.cuda.empty_cache()
         # torch.cuda.synchronize()
 
-    return dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+    return data, dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
         (num_worst_days, avg_abs_worst_days_test_NN_median), (_loss_NNTQ, _loss_meta)
 
 
@@ -594,11 +592,17 @@ def run_model(
     ) -> Tuple[Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float]:
 
-    if mode == 'once':  # single run
+    if mode == 'once' or 'stat' in mode:  # single run
         if num_trials in locals() and num_trials > 1:
             warnings.warn(f"num_runs ({num_trials}) will not be used")
 
-        dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+        if 'stat' in mode:    # works for `stats` and `statistics
+            _split_diagnostics   = Split.complete
+        else:
+            _split_diagnostics   = Split.test
+
+
+        data, dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
             (num_worst_days, avg_abs_worst_days_test_NN_median), \
             (_loss_NNTQ, _loss_meta) = \
                 run_model_once(
@@ -628,6 +632,7 @@ def run_model(
                 run_id            = 0,
 
                 cache_dir         = cache_dir,
+                split_diagnostics = _split_diagnostics,
                 verbose           = verbose
             )
 
@@ -643,6 +648,42 @@ def run_model(
         if verbose > 0:
             print(f"loss_NNTQ = {_loss_NNTQ:.2f}, loss_meta = {_loss_meta:.2f}")
 
+        num_steps_per_day = int(round(24*60/minutes_per_step))
+
+        if 'stat' in mode:
+
+            # names_baseline= {}  # if you like it crowded: {'LGBM', 'LR', 'RF'}
+            # names_meta    = {'LR', 'NN'}
+            # _plot_quantiles = ['q25', 'q50', 'q75']
+
+            # # entire length of the data
+            # data.complete.plots_diagnostics(
+            #     names_baseline = names_baseline, names_meta = names_meta,
+            #     # temperature_full=Tavg_full,
+            #     num_steps_per_day=num_steps_per_day,
+            #     quantiles=_plot_quantiles)
+
+            plot_statistics.thermosensitivity_per_time_of_day(
+                 data_split = data.train,
+                 thresholds_degC = [('<=', 10), ('<=', 2), ('>=', 23)],
+                 ylim = [0, 3.],
+                 num_steps_per_day=num_steps_per_day
+            )
+
+            plot_statistics.thermosensitivity_per_temperature(
+                 data_split = data.train,
+                 thresholds_degC= np.arange(-1., 26.5, step=0.1),
+                 # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
+                 num_steps_per_day=num_steps_per_day
+            )
+            # plot_statistics.drift_with_time(
+            #      dfs['consumption']['consumption_GW'],
+            #      dfs['temperature']["Tavg_degC"],
+            #      num_steps_per_day=num_steps_per_day
+            # )
+
+
+
     else:   # search for hyperparameters
         # no display => some arguments are not used
         if validate_every in locals() and validate_every > 0:
@@ -653,6 +694,7 @@ def run_model(
             warnings.warn(f"plot_conv_every ({plot_conv_every}) will not nbe used")
 
         if mode in ['random', 'Monte Carlo', 'MC']:
+            # /!\ no longer maintained
             parameter_search_function = MC_search.run_Monte_Carlo_search
             stage = Stage.all  # the only one implemented
 
@@ -759,17 +801,21 @@ def loss_NNTQ(
 
 
     # add spread: q90 - q10 (again, measured - theoretical)
-    if ('q10' in _dict_coverage.keys() and 'q90' in _dict_coverage.keys()):
-        _spread = _dict_coverage['q90'] - _dict_coverage['q10']
-    elif ('q25' in _dict_coverage.keys() and 'q75' in _dict_coverage.keys()):
-        _spread = _dict_coverage['q75'] - _dict_coverage['q25']
-    else:
-        _spread = 0.5  # a.k.a. a lot
+    _spread = (_dict_coverage['q90'] - _dict_coverage['q10'] + \
+               _dict_coverage['q75'] - _dict_coverage['q25']) / 2
 
-    _dict_coverage['spread'] = (
-        max(0, -_spread) * 1.  +
-        max(0,  _spread) * 0.25
-    )  # asymmetrically penalizing narrow distributions (most common problem)
+    # if ('q10' in _dict_coverage.keys() and 'q90' in _dict_coverage.keys()):
+    #     _spread = _dict_coverage['q90'] - _dict_coverage['q10']
+    # elif ('q25' in _dict_coverage.keys() and 'q75' in _dict_coverage.keys()):
+    #     _spread = _dict_coverage['q75'] - _dict_coverage['q25']
+    # else:
+    #     _spread = 0.5  # a.k.a. a lot
+
+    _dict_coverage['spread'] = abs(_spread)
+    # _dict_coverage['spread'] = (
+    #     max(0, -_spread) * 1.  +
+    #     max(0,  _spread) * 0.25
+    # )  # asymmetrically penalizing narrow distributions (most common problem)
     # print(f"_spread = {_spread*100:.2f}% => "
     #       f"_dict_coverage['spread'] [%]: {_dict_coverage['spread']*100:.2f}")
 
@@ -778,10 +824,12 @@ def loss_NNTQ(
     _bias_mean = np.mean(list(_dict_coverage.values()))
     # _dict_pc = {k : round(100*v, 2) for (k, v) in _dict_coverage.items()}
     # print(f"_bias_mean [%] = {_bias_mean*100:.2f} = mean({_dict_pc})")
-    _dict_coverage['bias'] = float (
-        max(0,  _bias_mean) * 1.  +
-        max(0, -_bias_mean) * 0.25
-    )  # asymmetrically penalizing upward drift (most common problem)
+
+    _dict_coverage['bias'] = float( _bias_mean)
+    # _dict_coverage['bias'] = float (
+    #     max(0,  _bias_mean) * 1.  +
+    #     max(0, -_bias_mean) * 0.25
+    # )  # asymmetrically penalizing upward drift (most common problem)
     # print(f"_dict_coverage['bias'] [%]: {_dict_coverage['bias']*100:.2f}")
 
 

@@ -6,6 +6,8 @@
 
 
 import os, sys
+import requests
+
 from   typing import List, Tuple, Dict, Optional
 
 import json
@@ -104,14 +106,25 @@ def load_consumption_by_region(
         path   : str = 'data/consommation-quotidienne-brute-regionale.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute-regionale/exports/'
-                       'csv?lang=en&timezone=timezone=Europe%2FParis&'
-                       'use_labels=true&delimiter=%3B',
+                       'csv?lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
         cache_dir:str= 'cache',
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
     # This input csv is an order of magnitude larger than all others combined
     #   so if only one csv is to be cached, this is the one
 
+
+    # download csv if it does not exist locally
+    if not os.path.exists(path):
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an error for bad status codes
+
+        with open(path, 'wb') as f:
+            f.write(response.content)
+
+        # df = pd.read_csv(url, sep=';')
+        # df.to_csv(path, sep=';')
+    # now, we are sure to have the csv locally
 
     # identify csv file by size and date
     _dict_csv  = {"file_size"        : os.path.getsize (path),
@@ -120,7 +133,8 @@ def load_consumption_by_region(
     cache_key  = hashlib.md5(key_str.encode()).hexdigest()
     cache_path = os.path.join(cache_dir, f"conso_region_{cache_key}.pkl")
 
-    # either load...
+
+    # either load pickle...
     if os.path.exists(cache_path):
         if verbose > 0:
             print(f"Loading consumption by region from: {cache_path}...")
@@ -502,7 +516,7 @@ def load_temperature(
 #     if verbose >= 2:
 #         print(df.head())
 
-    return df
+#     return df
 
 
 
@@ -557,8 +571,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("Tmax_regions", Tmax_regions)
 
     if verbose >= 3:
-        plot_statistics.thermosensitivity_regions(
-            dfs['consumption_by_region'], Tavg_regions)
+        # plot_statistics.thermosensitivity_regions(
+        #     dfs['consumption_by_region'], dfs['temperature'])
 
         plot_statistics.drift_with_time(
              dfs['consumption']['consumption_GW'],

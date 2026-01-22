@@ -79,10 +79,10 @@ class DataSplit:
             device, input_length: int, pred_length: int, valid_length: int,
             minutes_per_step: int, quantiles: Tuple[float, ...]) -> None:
 
-        # print(self.name)
-        if self.name == Split.complete:
-            self.true_nation_GW = pd.Series(self.y_nation, index=self.dates)
-            return
+        # # print(self.name)
+        # if self.name == Split.complete:
+        #     self.true_nation_GW = pd.Series(self.y_nation, index=self.dates)
+        #     return
 
 
 
@@ -236,18 +236,19 @@ class DataSplit:
 
     # Metamodel LR
     def calculate_input_metamodel_LR(self, split_active: Split) -> None:
-        if self.name == Split.complete:
-            self.input_metamodel_LR= None
-            self.y_metamodel_LR    = None
-            return
+        # if self.name == Split.complete:
+        #     self.input_metamodel_LR= None
+        #     self.y_metamodel_LR    = None
+        #     return
 
-        # train, valide, test: prepare input
+        # train, valid, test: prepare input
         _y_nation_true = pd.Series(self.y_nation.squeeze(),
                                    name='y_nation', index=self.dates)
 
         # print("true:", _y_nation_true.name, _y_nation_true.shape)
         # print("ML:", self.dict_preds_ML.keys(), pd.DataFrame(self.dict_preds_ML).shape)
         # print("q50:", self.dict_preds_NNTQ['q50'].shape)
+        # print(self.name, self.dict_preds_NNTQ.keys())
 
         _input = pd.concat([_y_nation_true,
                             pd.DataFrame(self.dict_preds_ML),
@@ -257,13 +258,13 @@ class DataSplit:
         self.input_metamodel_LR = _input.drop(columns=['y_nation'])
 
         if self.name == split_active:
-            self.y_metamodel_LR = _input[['y_nation']].squeeze()  #.to_numpy()
+            self.y_metamodel_LR = _input[['y_nation']].squeeze()
 
     # compare models
     def compare_models(self, unit: str = "GW", verbose: int = 0) -> pd.DataFrame:
         if verbose > 0:
             print(f"\n{self.name_display:10s} metrics [{unit}]:")
-        return utils.compare_models( self.true_nation_GW,self.dict_preds_NNTQ,
+        return utils.compare_models( self.true_nation_GW, self.dict_preds_NNTQ,
                             self.dict_preds_ML, self.dict_preds_meta,
                             subset=self.name_display, unit=unit, verbose=verbose)
 
@@ -272,7 +273,7 @@ class DataSplit:
     def plots_diagnostics(self,
                           names_baseline:    str,
                           names_meta:        str,
-                          temperature_full:  pd.Series,
+                          # temperature_full:  pd.Series,
                           num_steps_per_day: int,
                           quantiles:         List[str]):
         # print(self.name)
@@ -284,7 +285,8 @@ class DataSplit:
         plots.diagnostics(self.name_display,
             self.true_nation_GW, {q: self.dict_preds_NNTQ[q] for q in quantiles},
             self.dict_preds_ML, self.dict_preds_meta,
-            names_baseline, names_meta, temperature_full.iloc[self.idx],
+            names_baseline, names_meta, pd.Series(self.Tavg_degC, index=self.dates),
+                # temperature_full.iloc[self.idx],
             num_steps_per_day)
 
 
@@ -326,6 +328,14 @@ class DatasetBundle:
             Split.test:    self.test,
             Split.complete:self.complete
         }.items()
+
+    def __getitem__(self, split: Split) -> DataSplit:
+        return {
+            Split.train:   self.train,
+            Split.valid:   self.valid,
+            Split.test:    self.test,
+            Split.complete:self.complete
+        }[split]
 
     def predictions_day_ahead(self, model, scaler_y,
             device, input_length: int, pred_length: int, valid_length: int,
@@ -574,14 +584,14 @@ class NeuralNet:
 
                 if verbose >= 2:
                     print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
-
+            avg_valid_loss_quantile = valid_loss_quantile_h_scaled.mean()
 
             # display evolution of losses
             (list_of_min_losses, list_of_lists) = \
                 utils.display_evolution(
                     epoch, t_epoch_loop_start,
                     train_loss_quantile_h_scaled.mean(),
-                    valid_loss_quantile_h_scaled.mean(),
+                    avg_valid_loss_quantile,
                     list_of_min_losses, list_of_lists,
                     num_epochs, display_every, plot_conv_every,
                     self.min_delta, verbose)
@@ -594,14 +604,14 @@ class NeuralNet:
                                   partial=True, verbose=verbose)
 
             # save best model
-            self.save_best_model(valid_loss_quantile_h_scaled.mean(),
+            self.save_best_model(avg_valid_loss_quantile,
                                  self.model, epoch, verbose)
 
             # Check for early stopping
-            if self.early_stopping(valid_loss_quantile_h_scaled.mean()):
+            if self.early_stopping(avg_valid_loss_quantile):
                 if verbose > 0:
                     print(f"Early stopping triggered at epoch {epoch+1} "
-                          f"(patience {self.patience}, min_delta {self.min_delta}).")
+                          f"(patience {self.patience}, min_delta {self.min_delta:.4f})")
                 break
         # end of loop over epochs
 

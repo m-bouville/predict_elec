@@ -285,7 +285,7 @@ def make_X_and_y(array           : np.ndarray,
     train_dataset_scaled= build_day_ahead(train_scaled,train_dates,train_Tavg_degC)
     valid_dataset_scaled= build_day_ahead(valid_scaled,valid_dates,valid_Tavg_degC)
     test_dataset_scaled = build_day_ahead(test_scaled, test_dates, test_Tavg_degC)
-    # complete_dataset_scaled=build_day_ahead(df_scaled, dates, temperatures)
+    complete_dataset_scaled=build_day_ahead(df_scaled, dates, temperatures)
 
     # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
     #       len(valid_dataset_scaled[0]), len(test_dataset_scaled[0]))
@@ -312,6 +312,7 @@ def make_X_and_y(array           : np.ndarray,
     train_loader = build_loader(train_dataset_scaled, shuffle=True, drop_last=True )
     valid_loader = build_loader(valid_dataset_scaled, shuffle=False,drop_last=False)
     test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
+    complete_loader=build_loader(complete_dataset_scaled,  shuffle=False,drop_last=False)
 
     # print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
 
@@ -345,10 +346,10 @@ def make_X_and_y(array           : np.ndarray,
             dates,  temperatures, names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML, index=dates,
                                        columns=names_models).to_dict(),
-            loader=None,  dataset_scaled=None)
+            loader=complete_loader,  dataset_scaled=complete_dataset_scaled)
 
     data = containers.DatasetBundle(
-            train, valid, test, complete=complete,
+            train, valid, test, complete,
             scaler_y_nation=scaler_y_nation,
             X=X_GW, y_nation=y_nation_GW, Y_regions=Y_regions_GW,
             minutes_per_step=minutes_per_step,
@@ -640,9 +641,15 @@ class BestModelSaver:
             True if a new best model was saved, False otherwise.
         """
         if validation_loss >= self.best_loss:
-            return
             if verbose >= 3:
-                print(f"current NNTQ model at epoch {epoch} not saved")
+                print(f"current NNTQ model at epoch {epoch} not saved: "
+                      f"{validation_loss:.4f} >= {self.best_loss:.4f}")
+            return
+
+
+        if verbose >= 2:
+            print(f"best NNTQ model saved at epoch {epoch}: "
+                  f"{validation_loss:.4f} < {self.best_loss:.4f}")
 
         self.best_loss  = validation_loss
         self.best_epoch = epoch
@@ -650,8 +657,6 @@ class BestModelSaver:
             k: v.detach().cpu().clone()
             for k, v in model.state_dict().items()
         }
-        if verbose >= 2:
-            print(f"best NNTQ model saved at epoch {epoch}")
 
     def restore(self, model, verbose: int=0) -> None:
         """

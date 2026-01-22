@@ -80,8 +80,8 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     # people go on holiday
     df['is_August'  ] = ((df.index.month    == 8) \
                     & (df.index.day >= 5) & (df.index.day <= 25)).astype(np.int16)
-    # df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
-    #                  ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
+    df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
+                     ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
             # redundent with school holiday
 
     # covid lockdown periods

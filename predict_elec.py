@@ -20,19 +20,40 @@ if __name__ == "__main__":
 
 
     MODE = 'Bayes_meta'
-        # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all']
+        # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', 'stats']
 
     VERBOSE:    int =  1
+        # 0: no display, 1: normal, 2: more info, 3+: debugging
+
     FORCE_CALC_BASELINES = False
 
+    RUN_FAST   = False    # True: smaller system => runs faster, for debugging
+        # one-off only
 
-    if MODE in ['once']:
+
+
+    if MODE in ['once'] or 'stat' in MODE:
         NUM_TRIALS = 1
 
-        RUN_FAST   = False    # True: smaller system => runs faster, for debugging
+        # METAMODEL_NN_PARAMETERS['epochs'] =  2
+
         if RUN_FAST:
             (BASELINE_PARAMS_FAST, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
                 constants.fast_parameters(NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS)
+
+        if 'stat' in MODE:    # works for `stats` and `statistics
+        # we will plot on the training (nearly complete) data set
+            train_split_fraction = 0.99
+            valid_ratio          = 0.01
+            # # print("NNTQ_parameters['min_delta']", NNTQ_parameters['min_delta'])
+            # # NNTQ_parameters['min_delta'] = -100
+            # print("NNTQ_PARAMETERS['patience']", NNTQ_PARAMETERS['patience'])
+            # NNTQ_PARAMETERS['patience'] = 20
+            # print("METAMODEL_NN_PARAMETERS['patience']",
+            #        METAMODEL_NN_PARAMETERS['patience'])
+            # METAMODEL_NN_PARAMETERS['patience'] = 10
+            # # in effect no validation early stop (no validation dataset anyway)
+
 
     elif MODE in ['Bayes_NNTQ']:
         NUM_TRIALS = 25

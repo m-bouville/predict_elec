@@ -219,7 +219,10 @@ def regression_and_forest(
         os.makedirs(cache_dir, exist_ok=True)
 
         _dict_key = cache_id_dict | cfg | \
-            {"cols_features": cols_features,
+            {
+             "train_end"    : train_end,
+             "val_end"      : val_end,
+             "cols_features": cols_features,
              "dates_df"     : dates_df.to_json(orient='index')}
         key_str    = json.dumps(_dict_key, sort_keys=True)
 

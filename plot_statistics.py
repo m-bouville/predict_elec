@@ -17,7 +17,7 @@ from   constants   import Split
 
 
 # -------------------------------------------------------
-# thermosensitivity by time of day or by T°
+# drift over time
 # -------------------------------------------------------
 
 def drift_with_time(
@@ -41,6 +41,34 @@ def drift_with_time(
     # _temperature  = (temperature.rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
+
+
+
+    # model w/o T°
+    _consumption = _consumption.dropna()
+    _year = pd.Series(_consumption.index.year - 2020 + _consumption.index.dayofyear/365,
+                      index = _consumption.index, name="year")  # for long-term drift
+
+
+    # linear regression to quantify thermosensitivity in winter
+    model_no_T = LinearRegression()
+    model_no_T.fit(_year.to_frame(), _consumption)
+    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+    _formula_model_no_T = f"{model_no_T.intercept_:.1f} GW  " \
+                     f"{model_no_T.coef_[0]:.2f} * (year - 2020)"
+    print(_formula_model_no_T)
+
+    conso_model_no_T = _year * model_no_T.coef_[0] + model_no_T.intercept_
+
+    # _consumption  = (consumption.resample('D').mean()
+    #                  .rolling(moving_average, center=True) \
+    #                  .mean()).loc[start_date:end_date]
+
+    _conso_model_no_T  = (conso_model_no_T.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+
+
+
     # thermosensitive model
     common_indices = _consumption.dropna().index.intersection(
         _temperature_sat.dropna().index)
@@ -51,23 +79,23 @@ def drift_with_time(
 
 
     # linear regression to quantify thermosensitivity in winter
-    model_LR = LinearRegression()
-    model_LR.fit(pd.concat([_temperature_common, _year], axis=1),
+    model_with_T = LinearRegression()
+    model_with_T.fit(pd.concat([_temperature_common, _year], axis=1),
                  _consumption_common)
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
-    _formula_model = f"{model_LR.intercept_:.1f} GW  " \
-                     f"{model_LR.coef_[0]:.2f} * min(T, 15 °C)  " \
-                     f"{model_LR.coef_[1]:.2f} * (year - 2020)"
-    print(_formula_model)
+    _formula_model_with_T = f"{model_with_T.intercept_:.1f} GW  " \
+                     f"{model_with_T.coef_[1]:.2f} * (year - 2020) " \
+                     f"{model_with_T.coef_[0]:.2f} * min(T, 15 °C)"
+    print(_formula_model_with_T)
 
-    conso_model =  _temperature_common * model_LR.coef_[0] + \
-                    _year * model_LR.coef_[1] + model_LR.intercept_
+    conso_model_with_T =  _temperature_common * model_with_T.coef_[0] + \
+                    _year * model_with_T.coef_[1] + model_with_T.intercept_
 
     _consumption  = (consumption.resample('D').mean()
                      .rolling(moving_average, center=True) \
                      .mean()).loc[start_date:end_date]
 
-    _conso_model  = (conso_model.rolling(moving_average, center=True) \
+    _conso_model_with_T  = (conso_model_with_T.rolling(moving_average, center=True) \
                      .mean()).loc[start_date:end_date]
     # _temperature_sat = ((temperature.clip(upper=15) - 15). \
     #                     rolling(moving_average, center=True) \
@@ -78,9 +106,11 @@ def drift_with_time(
     plt.figure(figsize=(10,6))
     # print("_consumption:", _consumption)
     plt.plot(_consumption.index, _consumption.values,
-             label="real", color="red")
-    plt.plot(_conso_model.index, _conso_model.values,
-             label=f"model: {_formula_model}", color="blue")
+             label="real", color="black")
+    plt.plot(_conso_model_no_T.index, _conso_model_no_T.values,
+             label=f"model: {_formula_model_no_T}", color="green")
+    plt.plot(_conso_model_with_T.index, _conso_model_with_T.values,
+             label=f"model: {_formula_model_with_T}", color="red")
     plt.ylabel("consumption [GW], annual moving average")
 
     # ax2 = plt.twinx()
@@ -105,7 +135,6 @@ def drift_with_time(
     # print(_temperature.index.has_duplicates)
 
 
-
     # plt.figure(figsize=(10,6))
     # plt.scatter(_temperature_common, _consumption_common, s=300, alpha=0.3)
     # plt.scatter(_temperature_common, conso_model, s=300, alpha=0.3)
@@ -114,20 +143,18 @@ def drift_with_time(
     # plt.show()
 
 
-
-
-
     plt.figure(figsize=(10,6))
     # print("_consumption:", _consumption)
-    plt.plot(_consumption.index, (_consumption - _conso_model).values, color="blue")
-    plt.hlines(0, common_indices[0], common_indices[-1], color="black")
+    plt.plot(_consumption.index, (_conso_model_no_T   - _consumption).values,
+             label=f"model: {_formula_model_no_T}",  color="green")
+    plt.plot(_consumption.index, (_conso_model_with_T - _consumption).values,
+             label=f"model: {_formula_model_with_T}",color="red")
+    plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
     plt.xlabel("date")
     plt.ylabel("consumption residual [GW], annual moving average")
+    plt.legend()
     plt.show()
 
-
-
-    sys.exit()
 
 
 
@@ -415,14 +442,18 @@ def thermosensitivity_per_time_of_day(
         # print(f"{num_days:5.1f} test days with {threshold_str}")
               # f"{sensitivity_GW_per_K} GW/K")
 
+
+        # /!\ quantiles are meaningless
+        #   they are slopes of quantiles, not quantiles of slopes
+
         _sign = (-1) ** (_threshold_degC[0] == '<=')
         plots.curves(
              sensitivity_df['true'] * _sign,
-            {_col: sensitivity_df['NNTQ '+_col]*_sign for _col in ['q10', 'q50', 'q90']} \
-                if data_split.name != Split.complete else None,
+            {_col: sensitivity_df['NNTQ '+_col]*_sign for _col in ['q50']},
+                # if data_split.name != Split.complete else None,
             None,  # {_col: sensitivity_df[        _col]*_sign for _col in ['LR', 'RF', 'LGBM']},
             {_col: sensitivity_df['meta '+_col]*_sign for _col in ['LR', 'NN']} \
-                if data_split.name == Split.test else None,
+                if data_split.name in [Split.test, Split.complete] else None,
              xlabel="time of day [UTC]", ylabel="thermosensitivity [GW/K]",
              title=f"{data_split.name_display}, {round(num_days):n} days with {threshold_str}",
              ylim=ylim, date_range=None, moving_average=None, groupby=None)
@@ -501,11 +532,11 @@ def thermosensitivity_per_temperature(
 
     plots.curves(
          sensitivity_df['true'],
-        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q10', 'q50', 'q90']} \
-            if data_split.name != Split.complete else None,
+        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q10', 'q50', 'q90']},
+            # if data_split.name != Split.complete else None,
         None,  #{_col: sensitivity_df[_col] for _col in ['LR', 'RF', 'LGBM']},
         {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
-            if data_split.name == Split.test else None,
+            if data_split.name in [Split.test, Split.complete] else None,
          xlabel="threshold T_avg [°C]",
          ylabel="thermosensitivity [GW/K]",
          title=f"{data_split.name_display}",

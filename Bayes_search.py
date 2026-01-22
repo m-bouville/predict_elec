@@ -61,36 +61,36 @@ DISTRIBUTIONS_NNTQ = {
     'stride':      IntDistribution(low= 6, high=24, step=3),
     'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
-    'epochs':      IntDistribution(low=10, high=25, step=1),
+    'epochs':      IntDistribution(low=10, high=30, step=1),
     'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.002,high=0.018, step=0.0004),
+    'learning_rate':FloatDistribution(low=0.0004,high=0.018, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
-    'dropout':     FloatDistribution(low=0,     high=0.25, step=0.01),
+    'dropout':     FloatDistribution(low=0,     high=0.4, step=0.01),
 
     # quantile loss
-    'lambda_cross':   FloatDistribution(low=0., high=0.1, step=0.004),
-    'lambda_coverage':FloatDistribution(low=0.06,high=0.4, step=0.02),
+    'lambda_cross':   FloatDistribution(low=0., high=0.1, step=0.002),
+    'lambda_coverage':FloatDistribution(low=0., high=0.4, step=0.004),
     'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.004),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
     'smoothing_cross':FloatDistribution(low=0.004, high=0.072, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
     'threshold_cold_degC': FloatDistribution(low=-1., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
-    'lambda_cold':    FloatDistribution(low=0.04,high=0.2, step=0.02),
+    'lambda_cold':    FloatDistribution(low=0.04,high=0.22, step=0.01),
         # régional consumption
     'lambda_regions': FloatDistribution(low=0.,   high=0.1, step=0.002),
-    'lambda_regions_sum':FloatDistribution(low=0.,high=0.52, step=0.02),
+    'lambda_regions_sum':FloatDistribution(low=0.,high=0.6, step=0.02),
 
-    'model_dim':    IntDistribution(low=100, high=600, step=1),
+    'model_dim':    IntDistribution(low=100, high=700, step=1),
     'ffn_size':     IntDistribution(low=2, high=7, step=1),
     'num_heads':    IntDistribution(low=3, high=9, step=1),
     'num_layers':   IntDistribution(low=1, high=7, step=1),
     'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
-    'num_geo_blocks': IntDistribution(low=2, high=10, step=1),
+    'num_geo_blocks': IntDistribution(low=2, high=12, step=1),
 
-    'warmup_steps': IntDistribution(low=1000, high=4000, step=500),
+    'warmup_steps': IntDistribution(low=1000, high=4000, step=100),
     'patience':     IntDistribution(low=3, high=6, step=1),
-    'min_delta':    FloatDistribution(low=0.020, high=0.040, step=0.001),
+    'min_delta':    FloatDistribution(low=0.020, high=0.048, step=0.001),
 }
 
 DISTRIBUTIONS_METAMODEL_NN = {
@@ -203,21 +203,21 @@ def sample_NNTQ_parameters(
     if 'epochs' in p:
         p['epochs'        ] = trial.suggest_int  ('epochs', 10, 24, step=2)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96])
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.002,0.018,step=0.0004)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.018,step=0.0004)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
-        p['dropout'       ] = trial.suggest_float('dropout', 0.0, 0.24, step=0.02)
+        p['dropout'       ] = trial.suggest_float('dropout', 0.0, 0.4, step=0.02)
 
     # quantile loss weights
     if 'lambda_cross' in p:
-        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0., 0.08, step=0.008)
+        p['lambda_cross'  ] = trial.suggest_float('lambda_cross',   0., 0.08, step=0.002)
     if 'lambda_coverage' in p:
-        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.06,0.20, step=0.02)
+        p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.0,0.10, step=0.004)
     if 'lambda_deriv' in p:
-        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.096, step=0.008)
+        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.096, step=0.004)
     if 'lambda_median' in p:
         p['lambda_median' ] = trial.suggest_float('lambda_median',  0., 0., step=0.008)
     if 'smoothing_cross' in p:
@@ -230,36 +230,36 @@ def sample_NNTQ_parameters(
         p['saturation_cold_degC']=trial.suggest_float('saturation_cold_degC',
                                                      -8., -2., step=0.1)
     if 'lambda_cold' in p:
-        p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.04, 0.2,step=0.02)
+        p['lambda_cold'        ]= trial.suggest_float('lambda_cold', 0.04, 0.22,step=0.01)
 
         # régional consumption
     if 'lambda_regions' in p:
         p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.072,step=0.008)
     if 'lambda_regions_sum' in p:
-        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.32,0.52,step=0.04)
+        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.32,0.6,step=0.04)
 
     # Architecture
     if 'ffn_size' in p:
-        p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 6)
+        p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 7)
     if 'num_heads' in p:
         p['num_heads'  ] = trial.suggest_int('num_heads', 4, 7)
     if 'model_dim' in p:  # must be a multiiple of num_heads
         _step = 4 * p['num_heads']
         p['model_dim'  ] = trial.suggest_int(
-                 'model_dim', (300//_step+1)*_step, (600//_step)*_step, step=_step)
+                 'model_dim', (300//_step+1)*_step, (700//_step)*_step, step=_step)
     if 'num_layers' in p:
         p['num_layers' ] = trial.suggest_int('num_layers',3, 7)
 
     if 'num_geo_blocks' in p:
-        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 5, 10)
+        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 5, 12)
 
     # Early stopping
     if 'warmup_steps' in p:
-        p['warmup_steps'] = trial.suggest_int  ('warmup_steps', 1500,4000,step=500)
+        p['warmup_steps'] = trial.suggest_int  ('warmup_steps', 1500,4000,step=100)
     if 'patience' in p:
         p['patience'    ] = trial.suggest_int  ('patience', 3, 6)
     if 'min_delta' in p:
-        p['min_delta'   ] = trial.suggest_float('min_delta', 0.028, 0.040, step=0.004)
+        p['min_delta'   ] = trial.suggest_float('min_delta', 0.028, 0.048, step=0.002)
 
 
     # derived
@@ -342,9 +342,9 @@ def run_Bayes_search(
             cache_dir           : Optional[str] = None,
 
             # multi-run for best candidtes (robustness)
-            num_runs            : Dict[Stage, int]  ={Stage.NNTQ:7,  Stage.meta:5},
-            min_num_trials      : int  = 20,
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:4., Stage.meta:0.01},
+            num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 7, Stage.meta:5},
+            min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:20, Stage.meta:10},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:3.5,Stage.meta:0.03},
 
             verbose             : int  = 0
         ):
@@ -390,7 +390,7 @@ def run_Bayes_search(
         # print(stage, trial.number, num_runs)
 
         for i in range(num_runs):
-            dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+            _, dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
                 (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
                     run.run_model_once(
                       # configuration bundles
@@ -412,7 +412,7 @@ def run_Bayes_search(
                       save_cache_NNTQ     = stage == Stage.meta,  # NNTQ      not sampled
 
                       # XXX_EVERY (in epochs)
-                      validate_every    = 999,
+                      validate_every    =   1,
                       display_every     = 999,  # dummy
                       plot_conv_every   = 999,  # dummy
 
@@ -425,7 +425,7 @@ def run_Bayes_search(
 
             _loss_1run = _loss_NNTQ if stage == Stage.NNTQ else _loss_meta
 
-            if num_runs > 1 and trial.number > min_num_trials:
+            if num_runs > 1 and trial.number > min_num_trials[stage]:
                 if i == 0: # we must decide whether to run more
                     if _loss_1run <= trial.study.best_trial.value + wiggle_value:
                         _list_losses_NNTQ = [_loss_NNTQ]
@@ -452,10 +452,10 @@ def run_Bayes_search(
                     _loss_meta = dict_row['loss_meta']
 
                     print(f"{num_runs} runs: losses "
-                          f"{_list_losses_NNTQ if stage == Stage.NNTQ else _list_losses_meta} "
+                          f"{_list_losses_NNTQ if stage==Stage.NNTQ else _list_losses_meta} "
                           f"-> avg {dict_row[f'loss_{stage.value}']}")
 
-            if trial.number <= min_num_trials:
+            if trial.number <= min_num_trials[stage]:
                 break
 
 
@@ -568,11 +568,12 @@ def plot_optuna(study,
     ######################
     df = study.trials_dataframe()
     df = df.sort_values("number")
+    df["moving_median"]  = df["value"].rolling(10, min_periods=8).median()
     df["best_so_far"] = df["value"].cummin()
 
     import matplotlib.pyplot as plt
     plt.figure()
-    df.plot(x="number", y=["value", "best_so_far"])
+    df.plot(x="number", y=["value", "moving_median", "best_so_far"])
     plt.xlabel("trial number")
     plt.ylabel(f"{stage.value} loss")
     plt.yscale('log')
@@ -613,11 +614,13 @@ def plot_optuna(study,
     # best parameters (more robust than just the very best)
     ######################
     print(f"shape: {df.shape} -> {df[numeric_cols + ['value']].shape}")
-    # print(df[numeric_cols + ['value']])
+
     # Get the best N trials based on the objective value
     best_trials_df = df[numeric_cols + ['value']].\
         sort_values(by='value', ascending=True).head(num_best_runs_params)
-    avg_value = float(best_trials_df[['value']].mean().iloc[0])
+
+    avg_value   = float(best_trials_df[['value']].mean().iloc[0])
+    list_values = best_trials_df['value'].round(4).tolist()
 
     # Extract parameters from these trials
     params_df = best_trials_df[numeric_cols]
@@ -626,7 +629,7 @@ def plot_optuna(study,
     avg_params = params_df.mean()  # .drop(['number', 'best_so_far'])
 
     print(f"\nAverage parameters from the best {num_best_runs_params} runs "
-          f"(avg value: {avg_value:.4f}):")
+          f"(mean of {list_values} = {avg_value:.4f}):")
     print(avg_params)
 
 
@@ -656,7 +659,7 @@ def cols_not_paras() -> List[str]:
 
     # output
     cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
-    for _model in ['NNTQ_q50', 'NNTQ_inter', 'LR', 'RF', 'LGBM']:
+    for _model in ['NNTQ_q50', 'LR', 'RF', 'LGBM']:
         cols_not_paras.append(f'avg_weight_meta_NN_{_model}')
     for _model in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']:
         for _metric in ['bias', 'RMSE', 'MAE']:

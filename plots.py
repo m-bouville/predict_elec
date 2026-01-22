@@ -379,6 +379,25 @@ def diagnostics(name:                str,
     _title             = name
 
 
+    # plot consumption by date, SMA 1 year
+    if len(true_series) > num_steps_per_day * 365 * 5:
+        curves(true_series, {'q50': dict_pred_series['q50']},
+               dict_baseline_series, dict_meta_series,
+               xlabel="date", ylabel=_ylabel_consumption,
+               title="1-year moving average",
+               ylim=[ylim[0][0]+5.9, ylim[0][1]],
+               date_range=[true_series.index[0] + pd.DateOffset(months=7),
+                           true_series.index[-1]- pd.DateOffset(months=7)],
+               moving_average=num_steps_per_day*365, groupby=None)
+        curves(residual_true_series, {'q50': dict_residual_pred_series['q50']},
+               dict_residual_baseline_series, dict_residual_meta_series,
+               xlabel="date", ylabel=_ylabel_residual,
+               title="1-year moving average",
+               ylim=[ylim[1][0]+0.5, ylim[1][1]-1.25],
+               date_range=[true_series.index[0] + pd.DateOffset(months=7),
+                           true_series.index[-1]- pd.DateOffset(months=7)],
+               moving_average=num_steps_per_day*365, groupby=None)
+
     # plot seasonal consumption by date, SMA 1 week
     curves(true_series, dict_pred_series, dict_baseline_series, dict_meta_series,
          xlabel="date of year", ylabel=_ylabel_consumption, title=_title,

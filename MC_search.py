@@ -258,7 +258,7 @@ def run_Monte_Carlo_search(
         NNTQ_parameters     = sample_NNTQ_parameters        (base_NNTQ_params)
         metamodel_parameters= sample_metamodel_NN_parameters(base_meta_NN_params)
 
-        dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+        _, dict_row, df_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
             (num_worst_days, worst_days_test), (_loss_NNTQ, _loss_meta) = \
                 run.run_model_once(
                   # configuration bundles
