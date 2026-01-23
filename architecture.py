@@ -618,9 +618,9 @@ class EarlyStopping:
 
 
 class BestModelSaver:
-    def __init__(self, model: torch.nn.Module):
+    def __init__(self, models: List[torch.nn.Module]):
         self.best_loss  = float("inf")
-        self.best_state = model
+        self.best_state = models
         self.best_epoch = None
 
     def __call__(self, validation_loss, model, epoch: int=None, verbose: int=0
@@ -856,7 +856,7 @@ def subset_evolution_torch(
             else:
                 loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
-        amp_scaler.scale(loss_scaled_h_batch.mean()).backward()# full precision
+        amp_scaler.scale(loss_scaled_h_batch.mean()).backward()  # full precision
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(model_NN.optimizer)
         amp_scaler.update()
@@ -958,8 +958,8 @@ def subset_evolution_numpy(
         # print("running total:\n", loss_quantile_scaled_h.round(2))
         # print("running total:\n", pd.DataFrame(dict_losses_h).round(2).head())
 
-    loss_quantile_scaled_h /= len(subset_loader)
-    dict_losses_h = {key: value / len(subset_loader)
+    loss_quantile_scaled_h      /= len(subset_loader)
+    dict_losses_h = {key: value /  len(subset_loader)
                      for (key, value) in dict_losses_h.items()}
 
     # print("after norm:\n", pd.DataFrame(dict_losses_h).round(2).head())

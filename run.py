@@ -863,7 +863,7 @@ def loss_meta(
 
          model_weights  : Dict[str, float] = \
              {'NNTQ': 0., 'LR': 1., 'RF': 1., 'LGBM': 1.,
-              'meta_LR': 2., 'meta_NN': 4.},
+              'meta_LR': 1.5, 'meta_NN': 2.},
             # LR, RF and LGBM are just underlying models to the metamodels;
             #      improving them intrinsically is good, but secondary
 

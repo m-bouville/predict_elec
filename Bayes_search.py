@@ -291,7 +291,7 @@ def sample_metamodel_NN_parameters(
     p = base_params.copy()
 
     if 'epochs' in p:
-        p['epochs']      = trial.suggest_int('metaNN_epochs', 12, 20)
+        p['epochs']      = trial.suggest_int('metaNN_epochs', 10, 20)
     if 'batch_size' in p:
         p['batch_size']  = trial.suggest_categorical(
             'metaNN_batch_size', [16, 32, 64, 96, 128, 192, 256, 384, 512, 640])
@@ -343,8 +343,8 @@ def run_Bayes_search(
 
             # multi-run for best candidtes (robustness)
             num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 7, Stage.meta:5},
-            min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:20, Stage.meta:10},
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:3.5,Stage.meta:0.03},
+            min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:40, Stage.meta:20},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.03},
 
             verbose             : int  = 0
         ):
@@ -568,8 +568,8 @@ def plot_optuna(study,
     ######################
     df = study.trials_dataframe()
     df = df.sort_values("number")
-    df["moving_median"]  = df["value"].rolling(10, min_periods=8).median()
-    df["best_so_far"] = df["value"].cummin()
+    df["moving_median"]= df["value"].rolling(20, min_periods=15, center=True).median()
+    df["best_so_far"]  = df["value"].cummin()
 
     import matplotlib.pyplot as plt
     plt.figure()

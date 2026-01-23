@@ -403,7 +403,7 @@ def diagnostics(name:                str,
          xlabel="date of year", ylabel=_ylabel_consumption, title=_title,
          ylim=[ylim[0][0]-3, ylim[0][1]+18], date_range=None,
          moving_average=num_steps_per_day*7, groupby='dateofyear')
-    curves(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, {'q50': dict_residual_pred_series['q50']},
          dict_residual_baseline_series, dict_residual_meta_series,
          xlabel="date of year", ylabel=_ylabel_residual, title=_title,
          ylim=ylim[1], date_range=None, # [zoom_start, zoom_end]
@@ -414,7 +414,7 @@ def diagnostics(name:                str,
     curves(true_series, dict_pred_series, dict_baseline_series, dict_meta_series,
          xlabel="time of day", ylabel=_ylabel_consumption, title=_title,
          ylim=ylim[0], date_range=None, groupby='timeofday')
-    curves(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, {'q50': dict_residual_pred_series['q50']},
          dict_residual_baseline_series, dict_residual_meta_series,
          xlabel="time of day", ylabel=_ylabel_residual, title=_title,
          ylim=ylim[1], date_range=None, groupby='timeofday')
@@ -425,7 +425,7 @@ def diagnostics(name:                str,
          xlabel="day of week (0 is Monday)",ylabel=_ylabel_consumption,title=_title,
          ylim=ylim[0], date_range=None, groupby='dayofweek',
          moving_average=num_steps_per_day//2)
-    curves(residual_true_series, dict_residual_pred_series,
+    curves(residual_true_series, {'q50': dict_residual_pred_series['q50']},
          dict_residual_baseline_series, dict_residual_meta_series,
          xlabel="day of week (0 is Monday)", ylabel=_ylabel_residual, title=_title,
          ylim=ylim[1], date_range=None, groupby='dayofweek',

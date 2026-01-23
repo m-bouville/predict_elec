@@ -85,7 +85,7 @@ def drift_with_time(
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_with_T = f"{model_with_T.intercept_:.1f} GW  " \
                      f"{model_with_T.coef_[1]:.2f} * (year - 2020) " \
-                     f"{model_with_T.coef_[0]:.2f} * min(T, 15 °C)"
+                     f"{model_with_T.coef_[0]:.2f} * min(T-15 °C, 0)"
     print(_formula_model_with_T)
 
     conso_model_with_T =  _temperature_common * model_with_T.coef_[0] + \
@@ -223,7 +223,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
 
     # per région, winter
-    _slopes_winter_pc = pd.Series()
+    _slopes_winter_pc = pd.Series(dtype=float)
 
     for _col in list(df_consumption.columns):
         _avg_conso = df_consumption[_col].mean()
@@ -251,7 +251,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
 
     # per région, summer
-    _slopes_summer_pc = pd.Series()
+    _slopes_summer_pc = pd.Series(dtype=float)
 
     for _col in list(df_consumption.columns):
         _avg_conso = df_consumption[_col].mean()
@@ -368,7 +368,7 @@ def time_of_day_temp_sensitivity(
     dates               : pd.DatetimeIndex,
     threshold_degC      : Optional[Tuple[str, float]],
     num_steps_per_day   : int
-) -> [pd.Series, float, float]:
+) -> Tuple[pd.DataFrame, Dict[str, float], float]:
     """
     Time-of-day–dependent temperature sensitivity:
     d E[y_pred | T, hod] / dT
@@ -400,9 +400,11 @@ def time_of_day_temp_sensitivity(
     sensitivity_GW_per_K = dict()
 
     for _col in columns_preds:
-        cov = np.cov(df["T_degC"], df[_col], bias=True)[0, 1]
-        var = df["T_degC"].var()
-        sensitivity_GW_per_K[_col] = round(float(cov / var), 3)
+        sensitivity_GW_per_K[_col] = \
+            round(LinearRegression().fit(df[["T_degC"]], df[_col]).coef_[0], 3)
+        # cov = np.cov(df["T_degC"], df[_col], bias=True)[0, 1]
+        # var = df["T_degC"].var()
+        # sensitivity_GW_per_K[_col] = round(float(cov / var), 3)
 
         slopes = []
         for h in range(num_steps_per_day):
@@ -413,9 +415,11 @@ def time_of_day_temp_sensitivity(
                 slopes.append(np.nan)
                 continue
 
-            cov = np.cov(sub["T_degC"], sub[_col], bias=True)[0, 1]
-            var = sub["T_degC"].var()
-            slopes.append(round(float(cov / var), 3))
+            slopes.append(round(LinearRegression().fit(
+                sub[["T_degC"]], sub[_col]).coef_[0], 3))
+            # cov = np.cov(sub["T_degC"], sub[_col], bias=True)[0, 1]
+            # var = sub["T_degC"].var()
+            # slopes.append(round(float(cov / var), 3))
 
         rows[_col] = slopes
 
@@ -425,7 +429,7 @@ def time_of_day_temp_sensitivity(
 
 def thermosensitivity_per_time_of_day(
      data_split,  # : containers.DataSplit,
-     thresholds_degC  : List[Tuple[str, float]],  # eg [('<=', 10), ('<=', 4), ('>=', 23)]
+     thresholds_degC  : List[Tuple[str, float]],  # eg [('<=', 10), ('>=', 23)]
      num_steps_per_day: int,
      ylim             : [float, float] = [0, 3]
 )   -> None:
@@ -446,16 +450,19 @@ def thermosensitivity_per_time_of_day(
         # /!\ quantiles are meaningless
         #   they are slopes of quantiles, not quantiles of slopes
 
+        print(list(sensitivity_df.columns))
         _sign = (-1) ** (_threshold_degC[0] == '<=')
         plots.curves(
              sensitivity_df['true'] * _sign,
             {_col: sensitivity_df['NNTQ '+_col]*_sign for _col in ['q50']},
                 # if data_split.name != Split.complete else None,
-            None,  # {_col: sensitivity_df[        _col]*_sign for _col in ['LR', 'RF', 'LGBM']},
+            {_col: sensitivity_df[        _col]*_sign for _col in ['RF', 'LGBM']} \
+                if data_split.name in [Split.train, Split.complete] else None,
             {_col: sensitivity_df['meta '+_col]*_sign for _col in ['LR', 'NN']} \
-                if data_split.name in [Split.test, Split.complete] else None,
+                if data_split.name in [Split.valid, Split.test] else None,
              xlabel="time of day [UTC]", ylabel="thermosensitivity [GW/K]",
-             title=f"{data_split.name_display}, {round(num_days):n} days with {threshold_str}",
+             title=f"{data_split.name_display}, {round(num_days):n} days "
+                   f"with {threshold_str}",
              ylim=ylim, date_range=None, moving_average=None, groupby=None)
 
 
@@ -507,9 +514,12 @@ def threshold_temp_sensitivity(
 
         slopes = []
         for _col in columns_preds:
-            cov = np.cov(_df["T_degC"], _df[_col], bias=True)[0, 1]
-            var = _df["T_degC"].var()
-            slopes.append(round(float(cov / var), 3))
+            slopes.append(round(LinearRegression().fit(
+                _df[["T_degC"]], _df[_col]).coef_[0], 3))
+
+            # cov = np.cov(_df["T_degC"], _df[_col], bias=True)[0, 1]
+            # var = _df["T_degC"].var()
+            # slopes.append(round(float(cov / var), 3))
         rows[_T] = slopes
 
     _df = pd.DataFrame(rows).T
@@ -521,22 +531,26 @@ def thermosensitivity_per_temperature(
      data_split,  # : containers.DataSplit,
      thresholds_degC  : Sequence[float],
      num_steps_per_day: int,
-     ylim             : [float, float] = [-3, 3]
+     ylim             : [float, float] = [-3.5, 1.5]
      )   -> None:
     sensitivity_df = threshold_temp_sensitivity(
             data_split.true_nation_GW, data_split.dict_preds_NNTQ,
             data_split.dict_preds_ML, data_split.dict_preds_meta,
             data_split.Tavg_degC.round(1), data_split.dates,
-            thresholds_degC=thresholds_degC, direction='==',   # _direction
+            thresholds_degC=thresholds_degC, direction='==',
             num_steps_per_day=num_steps_per_day)
+
+    # /!\ quantiles are meaningless
+    #   they are slopes of quantiles, not quantiles of slopes
 
     plots.curves(
          sensitivity_df['true'],
-        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q10', 'q50', 'q90']},
+        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q50']},
             # if data_split.name != Split.complete else None,
-        None,  #{_col: sensitivity_df[_col] for _col in ['LR', 'RF', 'LGBM']},
+        {_col: sensitivity_df[_col] for _col in ['RF', 'LGBM']} \
+            if data_split.name in [Split.train, Split.complete] else None,
         {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
-            if data_split.name in [Split.test, Split.complete] else None,
+            if data_split.name in [Split.valid, Split.test] else None,
          xlabel="threshold T_avg [°C]",
          ylabel="thermosensitivity [GW/K]",
          title=f"{data_split.name_display}",

@@ -96,6 +96,6 @@ This stage is self-contained and remains unchanged by the downstream metamodel.
 Two Bayesian searches are available: for NNTQ and for metamodels. In each case, one chooses intervals of possible values for each hyperparameter and the algorithm (Optuna) seeks the best value combination.
 
 #### Robustness
-Bayesian searches for NNTQ can yield overspecialized parameter sets. This problem is similar to apparently good training results not generalizing to testing; but here the parameters are specifically good not just for the time range used but also specific random numbers. 
+Bayesian searches can yield overspecialized parameter sets. This problem is similar to training results that appear good but do not generalize well. Here the parameters are specific not just for the time range used but also specific random numbers. 
 
 When a set of parameters seems an improvement, more runs (with different random seeds) can be carried out: the average loss is used in order to improve robustness. This is particularly useful for configurations prone to overfitting (e.g. deep networks), which would otherwise have to be excluded.

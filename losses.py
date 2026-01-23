@@ -23,7 +23,8 @@ import numpy  as np
 def penalty_nation_cold_torch(
         saturation_cold_degC: float,
         threshold_cold_degC : float,
-        Tavg_current        : torch.Tensor,  # /!\ assumes a single one (correct for a single day)
+        Tavg_current        : torch.Tensor,
+            # /!\ assumes a single one (correct for a single day)
     ) -> torch.Tensor:  # returns shape (B,)
 
     # linear ramp
@@ -81,7 +82,7 @@ def quantile_with_crossing_torch(
             z = -diff / tau_smooth   # broadcast over B
             z = torch.clamp(z, -20., 20.)  # preventing overflow
             soft_ind   = torch.sigmoid(z)         # (B, V)
-            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(dim=0)     # (V,)
+            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(dim=0) # (V,)
 
             err  = coverage_h - tau
             w    = torch.where(err > 0,  tau,  1 - tau)
@@ -103,7 +104,8 @@ def quantile_with_crossing_torch(
 def penalty_nation_cold_numpy(
         saturation_cold_degC: float,
         threshold_cold_degC : float,
-        Tavg_current        : np.ndarray,  # /!\ assumes a single one (correct for a single day)
+        Tavg_current        : np.ndarray,
+            # /!\ assumes a single one (correct for a single day)
     ) -> np.ndarray:  # returns shape (B,)
 
     # linear ramp
@@ -130,7 +132,8 @@ def quantile_with_crossing_numpy(
         saturation_cold_degC:float,
         threshold_cold_degC: float,
         lambda_cold     : float,
-        Tavg_current    : np.ndarray,  # /!\ assumes a single one (correct for a single day)
+        Tavg_current    : np.ndarray,
+                # /!\ assumes a single one (correct for a single day)
 
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
 
@@ -146,42 +149,42 @@ def quantile_with_crossing_numpy(
     def sigmoid(x: float) -> float:
         return 1. / (1. + np.exp(-x))
 
-    # print(f"[quantile_loss_with_crossing_numpy] y_nation_pred.shape = {y_nation_pred.shape}")
-    # print(f"[quantile_loss_with_crossing_numpy] y_nation_true.shape = {y_nation_true.shape}")
+    # print(f"[loss w/ crossing np] y_nation_pred.shape = {y_nation_pred.shape}")
+    # print(f"[loss w/ crossing np] y_nation_true.shape = {y_nation_true.shape}")
 
     for i, tau in enumerate(quantiles):
         diff = y_nation_true - y_nation_pred[..., i]      # (B, V)
         # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}"
 
         pin = np.maximum(tau * diff, -(1 - tau) * diff)
-        loss_pinball_h += ((1 + _penalty_nation_cold) * pin).mean(axis=0)   # (V,)
+        loss_pinball_h += ((1 + _penalty_nation_cold) * pin).mean(axis=0)     # (V,)
 
         # Coverage penalty
         if lambda_coverage > 0.:
             # scale per horizon using target variability
-            scale_h    = np.std(y_nation_true, axis=0, correction=0)      # (V,)
-            tau_smooth = smoothing * np.clip(scale_h, 1e-3, None)  # (V,)
+            scale_h    = np.std(y_nation_true, axis=0, correction=0)          # (V,)
+            tau_smooth = smoothing * np.clip(scale_h, 1e-3, None)             # (V,)
 
             z = -diff / tau_smooth                # (B, V)
             z = np.clip(z, -20., 20.)  # preventing overflow
             soft_ind   = sigmoid(z)              # (B, V)
-            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(axis=0)   # (V,)
+            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(axis=0) # (V,)
 
             err  = coverage_h - tau              # (V,)
             w    = np.where(err > 0,  tau,  1 - tau)
             alpha = 1. / (tau * (1-tau))   # emphasizes tails
 
-            loss_coverage_h += lambda_coverage * alpha * w * np.abs(err)     # (V,)
+            loss_coverage_h += lambda_coverage * alpha * w * np.abs(err)      # (V,)
 
     # Crossing penalty
     if lambda_cross > 0.:
-        penalty = np.maximum(0., y_nation_pred[..., :-1] - y_nation_pred[..., 1:])  # (B, V, Q-1)
+        penalty = np.maximum(0., y_nation_pred[..., :-1] - \
+                                 y_nation_pred[..., 1:])                  # (B, V, Q-1)
         loss_crossing_h += lambda_cross * np.sum(penalty, axis=-1).mean(axis=0) # (V,)
 
     loss_h = loss_pinball_h + loss_coverage_h + loss_crossing_h
     # print(pd.DataFrame({'quantile_with_crossing': loss_h, 'pinball': loss_pinball_h,
     #        'coverage': loss_coverage_h, 'crossing': loss_crossing_h}).round(2))
-
 
     return loss_h, {'pinball':  loss_pinball_h,
                     'coverage': loss_coverage_h, 'crossing': loss_crossing_h}
@@ -222,7 +225,7 @@ def derivative_torch(
     B, V, Q = y_nation_pred.shape
     device  = y_nation_pred.device
 
-    # No horizon → no derivative loss
+    # No horizon => no derivative loss
     if V < 2:
         return torch.zeros(V, device=device)
 
@@ -230,16 +233,17 @@ def derivative_torch(
 
 
     # Temporal finite differences (within each sample)
-    dy_nation_pred = y_nation_pred[:, 1:, :] - y_nation_pred[:, :-1, :]   # (B, V-1, Q)
-    dy_nation_true = y_nation_true[:, 1:]    - y_nation_true[:, :-1]      # (B, V-1)
+    dy_nation_pred = y_nation_pred[:, 1:, :] - y_nation_pred[:, :-1, :] # (B, V-1, Q)
+    dy_nation_true = y_nation_true[:, 1:]    - y_nation_true[:, :-1]    # (B, V-1)
 
     # Broadcast true derivatives over quantiles
-    dy_nation_true = dy_nation_true.unsqueeze(-1)                  # (B, V-1, 1)
+    dy_nation_true = dy_nation_true.unsqueeze(-1)                       # (B, V-1, 1)
 
-    # print(f"(dy_nation_pred - dy_nation_true) ** 2: {((dy_nation_pred - dy_nation_true) ** 2).shape}")
+    # print(f"(dy_nation_pred - dy_nation_true) ** 2: "
+    #       f"{((dy_nation_pred - dy_nation_true) ** 2).shape}")
 
     # average over quantiles
-    deriv_err = ((dy_nation_pred - dy_nation_true) ** 2).mean(dim=-1)    # (B, V-1)
+    deriv_err = ((dy_nation_pred - dy_nation_true) ** 2).mean(dim=-1)   # (B, V-1)
 
     # average over batch
     deriv_h = deriv_err.mean(dim=0)                  # (V-1,)
@@ -308,22 +312,22 @@ def derivative_numpy(
 # ----------------------------------------------------------------------
 
 def quantile_torch(
-        y_nation_pred   : torch.Tensor,   # (B, V, Q)
-        y_nation_true   : torch.Tensor,   # (B, V) or (B, V, 1)
+        y_nation_pred     : torch.Tensor,   # (B, V, Q)
+        y_nation_true     : torch.Tensor,   # (B, V) or (B, V, 1)
 
         # constants
-        quantiles       : Tuple[float, ...],
-        lambda_cross    : float,
-        lambda_coverage : float,
-        lambda_deriv    : float,
-        lambda_median   : float,
-        smoothing_cross : float,
+        quantiles         : Tuple[float, ...],
+        lambda_cross      : float,
+        lambda_coverage   : float,
+        lambda_deriv      : float,
+        lambda_median     : float,
+        smoothing_cross   : float,
 
-        # temperature-dependence (pinball loss, coverage penalty)
+            # temperature-dependence (pinball loss, coverage penalty)
         saturation_cold_degC:float,
-        threshold_cold_degC: float,
-        lambda_cold     : float,
-        Tavg_current    : torch.Tensor,   # (B, V, 1)
+        threshold_cold_degC:float,
+        lambda_cold       : float,
+        Tavg_current      : torch.Tensor,   # (B, V, 1)
             # /!\ assumes a single one (correct for a single day)
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
@@ -339,10 +343,13 @@ def quantile_torch(
         quantile_with_crossing_torch(
             y_nation_pred    = y_nation_pred,
             y_nation_true    = y_nation_true,
+
+            # constants
             quantiles        = quantiles,
             lambda_cross     = lambda_cross,
             lambda_coverage  = lambda_coverage,
             smoothing        = smoothing_cross,
+                # temperature-dependence (pinball loss, coverage penalty)
             saturation_cold_degC=saturation_cold_degC,
             threshold_cold_degC=threshold_cold_degC,
             lambda_cold      = lambda_cold,
@@ -370,22 +377,22 @@ def quantile_torch(
 
 
 def quantile_numpy(
-        y_nation_pred   : np.ndarray,     # (B, V, Q)
-        y_nation_true   : np.ndarray,     # (B, V)
+        y_nation_pred     : np.ndarray,     # (B, V, Q)
+        y_nation_true     : np.ndarray,     # (B, V)
 
         # constants
-        quantiles       : Tuple[float, ...],
-        lambda_cross    : float,
-        lambda_coverage : float,
-        lambda_deriv    : float,
-        lambda_median   : float,
-        smoothing_cross : float,
+        quantiles         : Tuple[float, ...],
+        lambda_cross      : float,
+        lambda_coverage   : float,
+        lambda_deriv      : float,
+        lambda_median     : float,
+        smoothing_cross   : float,
 
-        # temperature-dependence (pinball loss, coverage penalty)
+            # temperature-dependence (pinball loss, coverage penalty)
         saturation_cold_degC:float,
-        threshold_cold_degC: float,
-        lambda_cold     : float,
-        Tavg_current    : np.ndarray,     # (B, V)
+        threshold_cold_degC:float,
+        lambda_cold       : float,
+        Tavg_current      : np.ndarray,     # (B, V)
                 # /!\ assumes a single one (correct for a single day)
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
@@ -399,12 +406,15 @@ def quantile_numpy(
 
     loss_quantile_with_crossing_h, dict_loss_quantile_with_crossing_h = \
         quantile_with_crossing_numpy(
-            y_nation_pred           = y_nation_pred,
-            y_nation_true           = y_nation_true,
+            y_nation_pred    = y_nation_pred,
+            y_nation_true    = y_nation_true,
+
+            # constants
             quantiles        = quantiles,
             lambda_cross     = lambda_cross,
             lambda_coverage  = lambda_coverage,
             smoothing        = smoothing_cross,
+                # temperature-dependence (pinball loss, coverage penalty)
             saturation_cold_degC=saturation_cold_degC,
             threshold_cold_degC=threshold_cold_degC,
             lambda_cold      = lambda_cold,
@@ -454,12 +464,12 @@ def regions_torch(
         return torch.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
     # MAE region by region
-    abs_err= (Y_regions_pred - Y_regions_true).abs().mean(dim=0)   # (V, R)
-    out    = torch.sum(abs_err, dim=1)                             # (V)
+    abs_err= (Y_regions_pred - Y_regions_true).abs().mean(dim=0)     # (V, R)
+    out    = torch.sum(abs_err, dim=1)                               # (V)
 
     # national total
-    err    = (Y_regions_pred - Y_regions_true)      .mean(dim=0)   # (V, R)
-    out   += torch.sum(err,      dim=1).abs() * lambda_regions_sum # (V)
+    err    = (Y_regions_pred - Y_regions_true)      .mean(dim=0)     # (V, R)
+    out   += torch.sum(err,      dim=1).abs() * lambda_regions_sum   # (V)
 
     return lambda_regions * out
 

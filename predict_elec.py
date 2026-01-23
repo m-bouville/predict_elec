@@ -45,14 +45,6 @@ if __name__ == "__main__":
         # we will plot on the training (nearly complete) data set
             train_split_fraction = 0.99
             valid_ratio          = 0.01
-            # # print("NNTQ_parameters['min_delta']", NNTQ_parameters['min_delta'])
-            # # NNTQ_parameters['min_delta'] = -100
-            # print("NNTQ_PARAMETERS['patience']", NNTQ_PARAMETERS['patience'])
-            # NNTQ_PARAMETERS['patience'] = 20
-            # print("METAMODEL_NN_PARAMETERS['patience']",
-            #        METAMODEL_NN_PARAMETERS['patience'])
-            # METAMODEL_NN_PARAMETERS['patience'] = 10
-            # # in effect no validation early stop (no validation dataset anyway)
 
 
     elif MODE in ['Bayes_NNTQ']:
@@ -60,7 +52,7 @@ if __name__ == "__main__":
         VERBOSE    = 0
 
     elif MODE in ['Bayes_meta']:
-        NUM_TRIALS = 10
+        NUM_TRIALS = 15
         VERBOSE    = 0
 
     # if 'Bayes' in MODE:

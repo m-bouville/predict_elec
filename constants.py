@@ -55,7 +55,7 @@ FORECAST_HOUR:int = 12          # 12: noon
 _patch_length = days_to_steps(0.5)
 
 NNTQ_PARAMETERS: dict = {
-    'use_ML_features'  : 0,
+    'use_ML_features'  : 0,  # Boolean as int for compatibility with Optuna
     'device'           : DEVICE,
 
     'input_length'     : days_to_steps(14),  # How many half-hours the model sees
@@ -64,29 +64,29 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           :  40,                  # Number of training epochs
-    'batch_size'       :  32,                   # Training batch size
+    'epochs'           :  30,                  # Number of training epochs
+    'batch_size'       : 128,                   # Training batch size
 
     # architecture size
-    'model_dim'        :301,                # Transformer embedding dimension
-    'num_layers'        : 2,               # Number of transformer encoder layers
-    'num_heads'         : 7,                # Number of attention heads
-    'ffn_size'          : 3,                # expansion factor
+    'model_dim'        :525,                # Transformer embedding dimension
+    'num_layers'        : 5,               # Number of transformer encoder layers
+    'num_heads'         : 5,                # Number of attention heads
+    'ffn_size'          : 6,                # expansion factor
     'num_geo_blocks'   :  5,
 
     # optimizer
-    'learning_rate'    :  0.011,            # Optimizer learning rate
+    'learning_rate'    :  0.0044,            # Optimizer learning rate
     'weight_decay'     : 11.25e-9,
-    'dropout'          :  0.24,
-    'warmup_steps'     :2500,
+    'dropout'          :  0.38,
+    'warmup_steps'     :1900,
 
     # early stopping
-    'patience'         :  7,
-    'min_delta'        :  0.022,
+    'patience'         :  5,
+    'min_delta'        :  0.036,
 
     # PatchEmbedding
-    'patch_length'     : _patch_length,              # [half-hours]
-    'stride'           : max(int(round(_patch_length/2)), 1), # [half-hours]
+    'patch_length'     : 42,  # _patch_length,              # [half-hours]
+    'stride'           : 21,   # max(int(round(_patch_length/2)), 1), # [half-hours]
 
     # geometric blocks
     'geo_block_ratio'  : 1,
@@ -94,22 +94,22 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.028,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.34,
-    'lambda_deriv'     : 0.064,         # derivative weight in loss function
-    'lambda_median'    : 0.08,
-    'smoothing_cross'  : 0.025,
+    'lambda_cross'     : 0.03,          # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.06,
+    'lambda_deriv'     : 0.04,         # derivative weight in loss function
+    'lambda_median'    : 0.0,
+    'smoothing_cross'  : 0.064,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
         #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
-    'saturation_cold_degC':-6.5,
-    'threshold_cold_degC':  5.,
-    'lambda_cold'      :    0.13,
+    'saturation_cold_degC':-7.5,
+    'threshold_cold_degC': -0.5,
+    'lambda_cold'      :    0.18,
 
-    'lambda_regions'   :    0.05,
-    'lambda_regions_sum':   0.1,
+    'lambda_regions'   :    0.04,
+    'lambda_regions_sum':   0.32,
 }
 
 # NNTQ_PARAMETERS['num_patches'] = \
@@ -118,23 +118,10 @@ NNTQ_PARAMETERS: dict = {
 #         // NNTQ_PARAMETERS['stride'] + 1
 
 
-# Optional: plug in parameters averaged over the best 5 Bayesian trials
-NNTQ_PARAMETERS.update(
-    {
-        'use_ML_features': 0,
-        'batch_size': 128,
-        'epochs': 30,
-        'input_length': 672, 'patch_length': 42, 'stride': 21,
-        'dropout': 0.38, 'learning_rate': 0.0044,
-        'lambda_coverage': 0.06, 'lambda_cross': 0.03,
-        'lambda_deriv': 0.04, 'lambda_median': 0.0, 'smoothing_cross': 0.064,
-        'saturation_cold_degC': -7.6,'threshold_cold_degC':-0.4, 'lambda_cold':0.18,
-        'lambda_regions': 0.04,  'lambda_regions_sum': 0.32,
-        'model_dim': 525, 'num_heads': 5, 'num_layers': 5, 'ffn_size': 6,
-        'num_geo_blocks': 5, 'geo_block_ratio': 1.0,
-        'patience': 5,  'min_delta': 0.036, 'warmup_steps': 1900,
-    }
-)
+# # Optional: plug in parameters averaged over the best 5 Bayesian trials
+# NNTQ_PARAMETERS.update(
+
+# )
 
 
 VALIDATE_EVERY=  1
@@ -146,15 +133,15 @@ PLOT_CONV_EVERY=10
 # NN metamodel
 
 METAMODEL_NN_PARAMETERS: dict = {
-    'batch_size'       :  256,
-    'num_cells'        : [40, 20],
+    'batch_size'       :   96,
+    'num_cells'        : [60, 24],
 
     'epochs'           :   12,
 
     # optimizer
-    'learning_rate'    :  5e-4,
-    'weight_decay'     :  6e-6,
-    'dropout'          :  0.1,
+    'learning_rate'    :  3.6e-3,
+    'weight_decay'     :  1.5e-7,
+    'dropout'          :  0.11,
 
     # early stopping
     'patience'         :   4,
@@ -175,13 +162,14 @@ CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
 
 BASELINES_PARAMETERS = {
-    'LR': {"type": "ridge", "alpha": 0.25, 'max_iter': 2_000},
+    'LR': {"type": "ridge", "alpha": 1.3, 'max_iter': 2_000
+    },
     'RF': {
         "type":            "rf",
-        "n_estimators":    350,
-        "max_depth":        15,
-        "min_samples_leaf": 15,
-        "min_samples_split":20,
+        "n_estimators":    500,
+        "max_depth":        25,
+        "min_samples_leaf": 17,
+        "min_samples_split":12,
         "max_features":   "sqrt",
         "random_state":      0,
         "n_jobs":            4
@@ -190,15 +178,15 @@ BASELINES_PARAMETERS = {
         "type":          "lgbm",
         "objective":     "regression",
         "boosting_type": "gbdt",
-        "num_leaves":       32-1,     # Default number of leaves
-        "max_depth":         5,       # Moderate tree depth
-        "learning_rate":     0.02,    # Lower learning rate for stability
-        "n_estimators":    500,       # More trees for a robust model
-        "min_child_samples":25,       # Minimum samples per leaf
-        "subsample":         0.6,    # Fraction of samples used to train each tree
-        "colsample_bytree":  0.7,    # Fraction of features used for each tree
-        "reg_alpha":         0.1,     # L1 regularization
-        "reg_lambda":        0.1,    # L2 regularization
+        "num_leaves":       16-1,     # Default number of leaves
+        "max_depth":         7,       # Moderate tree depth
+        "learning_rate":     0.16,    # Lower learning rate for stability
+        "n_estimators":    350,       # More trees for a robust model
+        "min_child_samples":12,       # Minimum samples per leaf
+        "subsample":         0.9,    # Fraction of samples used to train each tree
+        "colsample_bytree":  0.62,    # Fraction of features used for each tree
+        "reg_alpha":         0.092,   # L1 regularization
+        "reg_lambda":        0.15,   # L2 regularization
         "random_state":      0,       # Seed for reproducibility
         "n_jobs":            4,       # Number of parallel jobs
         "verbose":          -1        # Suppress output
@@ -207,44 +195,10 @@ BASELINES_PARAMETERS = {
 
 
 
-# Optional: plug in Bayesian best parameters
-_new_parameters = {
-    "LR": {
-        "alpha": 1.28,
-        "max_iter": 2000,
-    },
-    "RF": {
-        "max_depth": 25,
-        "min_samples_leaf": 15,
-        "min_samples_split": 22,
-        "n_estimators": 504,
-    },
-    "LGBM": {
-        "colsample_bytree": 0.92,
-        "learning_rate": 0.152,
-        "max_depth": 8,
-        "min_child_samples": 17,
-        "n_estimators": 356,
-        "num_leaves": 32-1,
-        "reg_alpha": 0.086,
-        "reg_lambda": 0.093,
-        "subsample": 0.86,
-    },
-    "metaNN": {
-        "batch_size": 512,
-        "dropout": 0.078,
-        "epochs": 12,
-        "factor": 0.7,
-        "learning_rate": 0.004,
-        "num_cells_0": 56,
-        "num_cells_1": 30,
-        "patience": 4,
-        "weight_decay": 3.15e-7,
-    }
-}
-for _model in ['LR', 'RF', 'LGBM']:
-    BASELINES_PARAMETERS[_model].update(_new_parameters[_model])
-METAMODEL_NN_PARAMETERS.update(_new_parameters['metaNN'])
+# # Optional: plug in Bayesian best parameters
+# for _model in ['LR', 'RF', 'LGBM']:
+#     BASELINES_PARAMETERS[_model].update(_new_parameters[_model])
+# METAMODEL_NN_PARAMETERS.update(_new_parameters['metaNN'])
 
 
 

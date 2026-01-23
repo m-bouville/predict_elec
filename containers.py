@@ -544,7 +544,8 @@ class NeuralNet:
                       validate_every: int,
                       display_every : int,
                       plot_conv_every:int,
-                      verbose       : int = 0):
+                      verbose       : int = 0
+                      ) -> Tuple[list, list, np.ndarray, Dict[str, np.ndarray]]:
 
         num_epochs: int = self.epochs
 
@@ -561,8 +562,7 @@ class NeuralNet:
             t_train_start = time.perf_counter()
 
             train_loss_quantile_h_scaled, dict_train_loss_quantile_h = \
-                architecture.subset_evolution_torch(
-                    self, train_loader)  #, data.train.Tavg_degC)
+                architecture.subset_evolution_torch(self, train_loader)
 
             train_loss_quantile_h_scaled= \
                 train_loss_quantile_h_scaled.detach().cpu().numpy()
@@ -579,8 +579,7 @@ class NeuralNet:
 
                 t_valid_start     = time.perf_counter()
                 valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                    architecture.subset_evolution_numpy(
-                        self, valid_loader)  #, data.valid.Tavg_degC)
+                    architecture.subset_evolution_numpy(self, valid_loader)
 
                 if verbose >= 2:
                     print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
