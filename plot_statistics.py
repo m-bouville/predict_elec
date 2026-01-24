@@ -5,14 +5,13 @@ from   typing   import Dict, Optional, Tuple, Sequence, List  # , Any,
 import numpy  as np
 import pandas as pd
 
-from   sklearn.linear_model import LinearRegression
+from   sklearn.linear_model import LinearRegression, HuberRegressor
 
 import matplotlib.pyplot as plt
 
 
 import plots  # containers
 from   constants   import Split
-
 
 
 
@@ -29,23 +28,65 @@ def drift_with_time(
     # print("consumption:", consumption)
     # print("temperature:", temperature)
 
-    (start_date, end_date) = [consumption.index[ 0] + pd.DateOffset(months=12), \
-                              consumption.index[-1] - pd.DateOffset(months= 7)]
     moving_average=365
-    print("date_range:", [start_date, end_date])
     print("moving_average:", moving_average, "days")
 
 
-    _consumption  = consumption.resample('D').mean()
+    _consumption = consumption.resample('D').mean().dropna()
+    _temperature = temperature.resample('D').mean().dropna()
+
+
+    # temperature
+    # ------------------
+
+    _year = pd.Series(_temperature.index.year - 2020 + _temperature.index.dayofyear/365,
+                      index = _temperature.index, name="year")  # for long-term drift
+
+    # linear regression to quantify thermosensitivity in winter
+    model_T = HuberRegressor(
+                epsilon=2.,  # outlier threshold, in the range [1, inf), def 1.35
+                alpha  =0.   # no regularization unless needed
+              )
+    model_T.fit(_year.to_frame(), _temperature)
+    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+    _formula_model_T = f"{model_T.intercept_:.2f} °C + " \
+                       f"{model_T.coef_[0]:.2f} * (year - 2020)"
+    print("T =", _formula_model_T)
+
+
+    (start_date, end_date) = [_temperature.index[ 0] + pd.DateOffset(months=6), \
+                              _temperature.index[-1] - pd.DateOffset(months=6)]
+    print("date_range T°:", [start_date, end_date])
+
+    T_model = _year * model_T.coef_[0] + model_T.intercept_
+    T_model  = (T_model.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+
+    _temperature  = (_temperature.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+
+    plt.figure(figsize=(10,6))
+    plt.plot(_temperature.index, _temperature.values,
+             label="real", color="black")
+    plt.plot(T_model.index, T_model.values,
+             label=f"model: {_formula_model_T}", color="red")
+    plt.ylabel("temperature [°C], annual moving average")
+    plt.xlabel("year")
+    plt.legend()
+    plt.show()
+
+
+
+    # consumption
+    # ------------------
+
+
     _temperature_sat = (temperature.clip(upper=15) - 15)
     # _temperature  = (temperature.rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
 
-
-
     # model w/o T°
-    _consumption = _consumption.dropna()
     _year = pd.Series(_consumption.index.year - 2020 + _consumption.index.dayofyear/365,
                       index = _consumption.index, name="year")  # for long-term drift
 
@@ -56,7 +97,7 @@ def drift_with_time(
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_no_T = f"{model_no_T.intercept_:.1f} GW  " \
                      f"{model_no_T.coef_[0]:.2f} * (year - 2020)"
-    print(_formula_model_no_T)
+    print("consumption=", _formula_model_no_T)
 
     conso_model_no_T = _year * model_no_T.coef_[0] + model_no_T.intercept_
 
@@ -64,8 +105,6 @@ def drift_with_time(
     #                  .rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
-    _conso_model_no_T  = (conso_model_no_T.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
 
 
 
@@ -86,15 +125,21 @@ def drift_with_time(
     _formula_model_with_T = f"{model_with_T.intercept_:.1f} GW  " \
                      f"{model_with_T.coef_[1]:.2f} * (year - 2020) " \
                      f"{model_with_T.coef_[0]:.2f} * min(T-15 °C, 0)"
-    print(_formula_model_with_T)
+    print("consumption=", _formula_model_with_T)
 
     conso_model_with_T =  _temperature_common * model_with_T.coef_[0] + \
                     _year * model_with_T.coef_[1] + model_with_T.intercept_
 
-    _consumption  = (consumption.resample('D').mean()
-                     .rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
 
+    # plotting
+    (start_date, end_date) = [_consumption.index[ 0] + pd.DateOffset(months=6), \
+                              _consumption.index[-1] - pd.DateOffset(months=6)]
+    print("date_range consumption:", [start_date, end_date])
+
+    _consumption  = (_consumption.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
+    _conso_model_no_T  = (conso_model_no_T.rolling(moving_average, center=True) \
+                     .mean()).loc[start_date:end_date]
     _conso_model_with_T  = (conso_model_with_T.rolling(moving_average, center=True) \
                      .mean()).loc[start_date:end_date]
     # _temperature_sat = ((temperature.clip(upper=15) - 15). \
@@ -120,7 +165,7 @@ def drift_with_time(
 
 
     # if ylim   is not None:  plt.ylim  (ylim)
-    plt.xlabel("date")
+    plt.xlabel("year")
     plt.legend()
     # if title  is not None:  plt.title (title)
 
@@ -150,7 +195,7 @@ def drift_with_time(
     plt.plot(_consumption.index, (_conso_model_with_T - _consumption).values,
              label=f"model: {_formula_model_with_T}",color="red")
     plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
-    plt.xlabel("date")
+    plt.xlabel("year")
     plt.ylabel("consumption residual [GW], annual moving average")
     plt.legend()
     plt.show()
@@ -307,15 +352,24 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 # -------------------------------------------------------
 
 def apply_threshold(df            : pd.DataFrame,
-                    threshold_degC: float,
-                    direction     : str) -> pd.DataFrame:
-    if threshold_degC is not None:
+                    name_col      : str,
+                    threshold     : float,
+                    direction     : str,
+                    width         : Optional[float]) -> pd.DataFrame:
+    if name_col not in ['index', 'date']:
+        _col = df[name_col]
+    else:
+        _col = df.index
+
+    if threshold is not None:
+        # print("threshold:", threshold)
         if direction == '<=':
-            df = df[df['T_degC'] <= threshold_degC]
+            df = df[_col <= threshold]
         elif direction == '>=':
-            df = df[df['T_degC'] >= threshold_degC]
+            df = df[_col >= threshold]
         elif direction in ['==', '=']:
-            df = df[(df['T_degC'] - threshold_degC).abs() < 2.]
+            df = df[np.abs(_col - threshold) < width]
+
         else:
             raise ValueError(f"`{direction}` not a valid direction")
 
@@ -338,12 +392,32 @@ def create_df(
     # print(T_degC.shape)
     # print(dates.shape)
 
-    df = pd.concat([true_series,
-                   pd.DataFrame(dict_pred_series),
-                   pd.DataFrame(dict_baseline_series),
-                   pd.DataFrame(dict_meta_series),
-                   pd.Series(T_degC, index=dates, name='T_degC')],
-                   axis=1).dropna()
+
+    list_df_to_concat = [true_series]
+
+    # add dicts if not empty
+    if dict_pred_series:
+        list_df_to_concat.append(pd.DataFrame(dict_pred_series))
+    if dict_baseline_series:
+        list_df_to_concat.append(pd.DataFrame(dict_baseline_series))
+    if dict_meta_series:
+        list_df_to_concat.append(pd.DataFrame(dict_meta_series))
+
+    # add T_degC
+    list_df_to_concat.append(pd.Series(T_degC, index=dates, name='T_degC'))
+
+    # Concaténation
+    if len(list_df_to_concat) > 0:
+        df = pd.concat(list_df_to_concat, axis=1).dropna()
+    else:
+        df = pd.DataFrame()
+
+    # df = pd.concat([true_series,
+    #                pd.DataFrame(dict_pred_series),
+    #                pd.DataFrame(dict_baseline_series),
+    #                pd.DataFrame(dict_meta_series),
+    #                pd.Series(T_degC, index=dates, name='T_degC')],
+    #                axis=1).dropna()
 
     df.index = pd.to_datetime(df.index)
     columns_preds = ['true'] + ["NNTQ " + e for e in dict_pred_series.keys()] + \
@@ -352,7 +426,7 @@ def create_df(
     df.columns = columns_preds + ['T_degC']
 
     if threshold_degC is not None:
-        df = apply_threshold(df, threshold_degC[1], threshold_degC[0])
+        df = apply_threshold(df, 'T_degC', threshold_degC[1], threshold_degC[0], 2)
     # print(df)
 
     return (df, columns_preds)
@@ -474,7 +548,8 @@ def threshold_temp_sensitivity(
     dict_meta_series    : Dict[str, pd.Series],
     T_degC              : pd.Series,
     dates               : pd.DatetimeIndex,
-    thresholds_degC     : Sequence[float],
+    name_col            : str,
+    thresholds          : Sequence[float],
     direction           : str,  # '<=', '>=' or '=='
     num_steps_per_day   : int
 ) -> pd.DataFrame:
@@ -502,32 +577,181 @@ def threshold_temp_sensitivity(
 
     # print(columns_preds)
     # print(df.shape)
+    # print(thresholds)
+    # print(df.head())
+
+    width = {'T_degC': 2, 'date': pd.Timedelta(days=6*30)}
 
     rows = dict()
-    for _T in thresholds_degC:
-        _df = apply_threshold(df, _T, direction)
+    for _target in thresholds:
+        _df = apply_threshold(df, name_col, _target, direction, width[name_col])
 
-        # Not enough variation -> undefined slope
-        if len(_df) < 10*num_steps_per_day or _df["T_degC"].var() == 0:
-            rows[_T] = [np.nan] * len(columns_preds)
-            continue
+        # # Not enough variation -> undefined slope
+        # if len(_df) < 10*num_steps_per_day or _df['T_degC'].var() == 0:
+        #     rows[_target] = [np.nan] * len(columns_preds)
+        #     continue
 
         slopes = []
         for _col in columns_preds:
             slopes.append(round(LinearRegression().fit(
-                _df[["T_degC"]], _df[_col]).coef_[0], 3))
+                _df[['T_degC']], _df[_col]).coef_[0], 3))
+            # print(_target, _col, slopes)
 
             # cov = np.cov(_df["T_degC"], _df[_col], bias=True)[0, 1]
             # var = _df["T_degC"].var()
             # slopes.append(round(float(cov / var), 3))
-        rows[_T] = slopes
+        rows[_target] = slopes
 
     _df = pd.DataFrame(rows).T
     _df.columns = columns_preds
 
     return _df
 
+
 def thermosensitivity_per_temperature(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     thresholds_degC  : Sequence[float],
+     num_steps_per_day: int,
+     ylim             : [float, float] = [-3., 0.5]
+     )   -> None:
+    sensitivity_df = threshold_temp_sensitivity(
+            consumption, {}, {}, {},
+            temperature.round(1), consumption.index, name_col='T_degC',
+            thresholds=thresholds_degC, direction='==',
+            num_steps_per_day=num_steps_per_day)
+
+    plots.curves(
+         sensitivity_df['true'], None, None, None,
+         xlabel="threshold T_avg [°C]",
+         ylabel="thermosensitivity [GW/K]",
+         title=None,
+         ylim=ylim, date_range=None, moving_average=7, groupby=None)
+
+
+def thermosensitivity_per_date(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     list_dates       : Sequence[pd.DatetimeIndex],
+     num_steps_per_day: int,
+     ylim             : [float, float] = [-1.65, -1.25],
+     moving_average   = None
+     )   -> None:
+
+    year_ref = 2021
+
+    # _temperature = temperature.resample('D').mean().dropna()
+    _temperature_sat_fit = (temperature.clip(upper=12) - 12).resample('D').mean().dropna()
+    _temperature_sat_plot= (temperature.clip(upper=13.5) - 13.5).resample('D').mean().dropna()
+    _consumption = consumption.resample('D').mean().dropna().reindex(_temperature_sat_fit.index)
+    _year = pd.Series(_temperature_sat_fit.index.year - year_ref + \
+                      _temperature_sat_fit.index.dayofyear/365,
+                      index = _temperature_sat_fit.index, name="year")  # for long-term drift
+
+    sensitivity_df = threshold_temp_sensitivity(
+            _consumption, {}, {}, {},
+            _temperature_sat_fit.round(1), _consumption.index, name_col='date',
+            thresholds=list_dates, direction='==',
+            num_steps_per_day=num_steps_per_day)
+
+    _sensitivity = sensitivity_df['true'] #.resample('D').mean().dropna()
+
+
+    # linear regression to quantify thermosensitivity in winter
+    model = LinearRegression()
+    X_year = pd.DataFrame(_sensitivity.index.year - year_ref + \
+                           _sensitivity.index.dayofyear/365,
+                               index = _sensitivity.index
+                          )
+    model.fit(X_year, _sensitivity)
+    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+    _formula_model = f"{model.intercept_:.2f} GW/K + " \
+                     f"{model.coef_[0]:.3f} * (year - {year_ref})"
+    print(f"thermosensitivity [R² = {model.score(X_year, _sensitivity)*100:.1f}%] = "
+          f"{_formula_model}")
+
+    sensitivity_model = _year * model.coef_[0] + model.intercept_
+
+
+    plt.figure(figsize=(10,6))
+    # print("_consumption:", _consumption)
+    plt.plot(_sensitivity.index, plots._apply_moving_average(_sensitivity, 24).values,
+             label="actual",  color="black")
+    plt.plot(sensitivity_model.index, sensitivity_model.values,
+             label=f"model: {_formula_model}",color="red")
+    # plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
+    plt.xlabel("year")
+    plt.ylabel("thermosensitivity [GW/K], annual moving average")
+    plt.legend()
+    plt.show()
+
+    # I calculate thermsensitivity for T < 12 °C to avoid the bend around 15 °C
+    #   but for the net consumption, I avoid excluding days with (a little) heating
+    _consumption_net = (_consumption - (sensitivity_model * _temperature_sat_plot)).dropna()
+    # print("shapes:", _consumption_net.shape, _year.shape,
+    #       pd.DataFrame(_year.reindex(_consumption_net.index)).shape)
+
+    # linear regression to quantify long-term drift
+    model = LinearRegression()
+    X_year = pd.DataFrame(_year.reindex(_consumption_net.index))
+    model.fit(X_year, _consumption_net)
+    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+    _formula_model = f"{model.intercept_:.1f} GW " \
+                     f"{model.coef_[0]:.2f} * (year - {year_ref})"
+    print(f"non-thermosensitive consumption "
+          f"[R² = {model.score(X_year, _consumption_net)*100:.1f}%] = {_formula_model}")
+
+    consumption_net_model = _year * model.coef_[0] + model.intercept_
+
+
+
+    plt.figure(figsize=(10,6))
+    sma_days = 3*30
+    # print("_consumption:", _consumption)
+    # plt.plot(_consumption.index, plots._apply_moving_average(_consumption, sma_days).values,
+    #          label="total",  color="black")
+    # plt.plot(_consumption.index, plots._apply_moving_average(
+    #     (_consumption - (sensitivity_model.mean() * _temperature_sat)), sma_days).values,
+    #          label="minus avg thermosensitive",  color="green")
+    plt.plot(_consumption_net.index, plots._apply_moving_average(
+        _consumption_net, sma_days).values,
+             label="actual",color="black")
+    plt.plot(consumption_net_model.index, consumption_net_model.values,
+             label=f"trend: {_formula_model}",color="red")
+    plt.ylim(39, 47)
+    plt.xlabel("year")
+    plt.ylabel("non-thermosensitive consumption [GW], trimester moving average")
+    plt.legend(loc='lower left')
+    plt.show()
+
+    # residual
+    # print(_consumption_net)
+    # print(consumption_net_model)
+    # print(_consumption_net - consumption_net_model)
+
+    plt.figure(figsize=(10,6))
+    sma_days = 3*30
+    plt.plot(_consumption_net.index, plots._apply_moving_average(
+        _consumption_net - consumption_net_model.reindex(_consumption_net.index), sma_days).values,
+             label="actual - trend",color="blue")
+    plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
+    plt.ylim(-5, 3)
+    plt.xlabel("year")
+    plt.ylabel("residual non-thermosensitive consumption [GW], trimester moving average")
+    # plt.legend(loc='lower left')
+    plt.show()
+
+
+    # plots.curves(
+    #      sensitivity_df['true'], None, None, None,
+    #      xlabel="year",
+    #      ylabel="thermosensitivity [GW/K]",
+    #      title=None,
+    #      ylim=ylim, date_range=None, moving_average=moving_average, groupby=None)
+
+
+
+def thermosensitivity_per_temperature_model(
      data_split,  # : containers.DataSplit,
      thresholds_degC  : Sequence[float],
      num_steps_per_day: int,
@@ -537,7 +761,7 @@ def thermosensitivity_per_temperature(
             data_split.true_nation_GW, data_split.dict_preds_NNTQ,
             data_split.dict_preds_ML, data_split.dict_preds_meta,
             data_split.Tavg_degC.round(1), data_split.dates,
-            thresholds_degC=thresholds_degC, direction='==',
+            thresholds=thresholds_degC, direction='==',
             num_steps_per_day=num_steps_per_day)
 
     # /!\ quantiles are meaningless
@@ -555,6 +779,7 @@ def thermosensitivity_per_temperature(
          ylabel="thermosensitivity [GW/K]",
          title=f"{data_split.name_display}",
          ylim=ylim, date_range=None, moving_average=7, groupby=None)
+
 
 
 
