@@ -21,7 +21,11 @@ def data(df, xlabel=None, ylabel=None, title=None) -> None:
     if xlabel is not None:  plt.xlabel(xlabel)
     if ylabel is not None:  plt.ylabel(ylabel)
     if title  is not None:  plt.title (title)
-    plt.legend()
+
+    # Display legend only if there is more than one curve
+    if df.shape[1] > 1:
+        plt.legend()
+
     plt.show()
 
 
@@ -78,8 +82,11 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
     valid_items = [(h, l) for h, l in zip(handles, labels) if "valid" in l]
         # Interleave into two columns: left=train, right=valid
     ordered = train_items + valid_items
-    handles2, labels2 = zip(*ordered)
-    plt.legend(handles2, labels2, ncol=2)
+
+    # Display legend only if there is more than one curve
+    if len(ordered) > 1:
+        handles2, labels2 = zip(*ordered)
+        plt.legend(handles2, labels2, ncol=2)
 
     plt.show()
 
@@ -99,7 +106,11 @@ def loss_per_horizon(dict_evolution_loss: Dict[str, np.ndarray],
     plt.ylim(bottom=0.)
     if title is not None:
         plt.title(title)
-    plt.legend()
+
+    # Display legend only if there is more than one curve
+    if len(plt.gca().get_lines()) > 1:
+        plt.legend()
+
     plt.show()
 
 
@@ -135,7 +146,8 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     if col == 'dateofyear':
         dateofyear = series.index.map(lambda d: pd.Timestamp(
             year=2000, month=d.month, day=d.day))
-        return series.groupby(dateofyear).mean()
+        return series[~((series.index.month == 2) & (series.index.day == 29))] \
+                    .groupby(dateofyear).mean()
     raise ValueError(f"Invalid column: {col}.")
 
 
@@ -227,7 +239,10 @@ def curves( true_series        : Optional[pd.Series],
         # Format x-axis to show only day and month (e.g., "01 Jan")
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
 
-    plt.legend()
+    # Display legend only if there is more than one curve
+    if len(plt.gca().get_lines()) > 1:
+        plt.legend()
+
     plt.show()
 
 
@@ -311,7 +326,10 @@ def scatter(true_series        : Optional[pd.Series],
     if ylabel is not None:  plt.ylabel(ylabel)
     if title  is not None:  plt.title (title)
 
-    plt.legend()
+    # Display legend only if there is more than one cloud
+    if len(plt.gca().get_lines()) > 1:
+        plt.legend()
+
     plt.show()
 
 

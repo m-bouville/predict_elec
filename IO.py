@@ -6,7 +6,9 @@
 
 
 import os, sys
+
 import requests
+import zipfile
 
 from   typing import List, Tuple, Dict, Optional
 
@@ -80,7 +82,8 @@ def load_consumption(
     if verbose >= 3:
         print(df.head())
 
-        plots.data(df.drop(columns=['year', 'month', 'timeofday'])\
+        plots.data(df[~((df.index.month == 2) & (df.index.day == 29))]
+                    .drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date", ylabel="consumption (GW)")
@@ -520,6 +523,94 @@ def load_temperature(
 
 
 
+
+
+# -------------------------------------------------------
+# Load prices
+# -------------------------------------------------------
+
+
+# depth of historical data: 2015 to today
+
+def load_price(
+        path_csv:str = 'data/wholesale_electricity_price_hourly.csv',
+        path_zip:str = 'data/european_wholesale_electricity_price_data_hourly.zip',
+        url    : str = 'https://files.ember-energy.org/public-downloads/price/'
+                       'outputs/european_wholesale_electricity_price_data_hourly.zip',
+        verbose: int = 0) -> pd.DataFrame:
+
+    # load local file if it exists, otherwise get it online
+    if not os.path.exists(path_csv):   # we don't have the csv file locally
+        if not os.path.exists(path_zip):  # nor the zip file locally
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an error for bad status codes
+
+            with open(path_zip, 'wb') as f:
+                f.write(response.content)
+        # we have the zip file locally
+
+        with zipfile.ZipFile(path_zip, 'r') as zip_ref:
+            # List all files in the zip archive
+            file_list = zip_ref.namelist()
+            # print("Files in the zip archive:", file_list)
+            assert 'France.csv' in file_list, file_list
+
+            zip_ref.extract('France.csv', StrPath=path_csv)
+    # we have the csv file locally
+
+
+    df = pd.read_csv(path_csv, sep=',')
+    # print(df.columns)
+
+    df['Datetime (UTC)'] = pd.to_datetime(df['Datetime (UTC)'], utc=True)
+    df = df.set_index('Datetime (UTC)').sort_index()
+    # df.index = df.index.tz_convert("UTC")
+    df.index.name = "datetime"
+
+    df = df[['Price (EUR/MWhe)']]
+    df = df.rename(columns={'Price (EUR/MWhe)': 'price_euro_per_MWh'})
+
+    df['year']     = df.index.year
+    df['month']    = df.index.month
+    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+        year=2000, month=d.month, day=d.day))
+    df['timeofday']= df.index.hour + df.index.minute/60
+
+    if verbose >= 3:
+        # by day
+        plots.data(df.drop(columns=['year', 'month', 'timeofday', 'dateofyear'])\
+                    .rolling(91 * 24, center=True).mean(),
+                  xlabel="date", ylabel="price [€/MWh], trimester moving average")
+
+
+        # by day of year
+        rolling_df= df['price_euro_per_MWh'].rolling(window=7*24, center=True).mean()
+        _df = pd.concat([df.drop(columns=['year', 'month', 'timeofday',
+                                'price_euro_per_MWh']), rolling_df], axis=1)
+        plots.data(_df[~((_df.index.month == 2) & (_df.index.day == 29))]\
+                    .groupby('dateofyear').mean().sort_index(),
+                  xlabel="date", ylabel="price [€/MWh], weekly moving average")
+
+
+        # by time of day
+        plots.data(df.drop(columns=['year', 'month', 'dateofyear'])\
+                    .groupby('timeofday').mean().sort_index(),
+                  xlabel="time of day (UTC)", ylabel="price [€/MWh]")
+
+            # seasonal effects
+        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').mean()\
+                  .rename(columns={"price_euro_per_MWh": "winter"})
+        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').mean()\
+                  .rename(columns={"price_euro_per_MWh": "summer"})
+        plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
+                  .drop(columns=['year', 'month', 'dateofyear']),
+                  xlabel="time of day (UTC)", ylabel="price [€/MWh]",
+                  title ="seasonal consumption")
+
+    return df
+
+
+
 # -------------------------------------------------------
 # Load all data
 # -------------------------------------------------------
@@ -557,7 +648,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
                 load_temperature(path, weights_by_region, verbose=verbose)
             if verbose >= 3:
-                analyze_datetime(dfs['temperature'], freq="D",  name="temperature")
+                analyze_datetime(dfs['temperature'], freq="D", name="temperature")
 
         # elif name == 'solar':
             # BUG: The whole of September 2021 is missing
@@ -565,27 +656,32 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             # if verbose >= 3:
             #     analyze_datetime(dfs["solar"],       freq="3H", name="solar")
 
+        elif name == 'price':
+            dfs[name] = load_price(path, verbose=verbose)
+            if verbose >= 3:
+                analyze_datetime(dfs['price'], freq="H", name="price")
+
     # print("dfs['temperature']", dfs['temperature'])
     # print("Tavg_regions", Tavg_regions)
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
     if verbose >= 3:
-        # plot_statistics.thermosensitivity_regions(
-        #     dfs['consumption_by_region'], dfs['temperature'])
+        # # plot_statistics.thermosensitivity_regions(
+        # #     dfs['consumption_by_region'], dfs['temperature'])
 
-        plot_statistics.drift_with_time(
-             dfs['consumption']['consumption_GW'],
-             dfs['temperature']["Tavg_degC"],
-             num_steps_per_day=num_steps_per_day
-        )
+        # plot_statistics.drift_with_time(
+        #      dfs['consumption']['consumption_GW'],
+        #      dfs['temperature']["Tavg_degC"],
+        #      num_steps_per_day=num_steps_per_day
+        # )
 
-        plot_statistics.thermosensitivity_per_temperature(
-             dfs['consumption']['consumption_GW'],
-             dfs['temperature']["Tavg_degC"],
-             thresholds_degC= np.arange(-1., 26.5, step=0.1),
-             num_steps_per_day=num_steps_per_day
-        )
+        # plot_statistics.thermosensitivity_per_temperature(
+        #      dfs['consumption']['consumption_GW'],
+        #      dfs['temperature']["Tavg_degC"],
+        #      thresholds_degC= np.arange(-1., 26.5, step=0.1),
+        #      num_steps_per_day=num_steps_per_day
+        # )
 
         plot_statistics.thermosensitivity_per_date(
              dfs['consumption']['consumption_GW'],
