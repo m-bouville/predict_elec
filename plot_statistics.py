@@ -454,7 +454,7 @@ def threshold_temp_sensitivity(
     T_degC              : pd.Series,
     dates               : pd.DatetimeIndex,
     name_col            : str,
-    thresholds          : Sequence[float],
+    thresholds          : Sequence[float | None],
     direction           : str,  # '<=', '>=' or '=='
     num_steps_per_day   : int
 ) -> pd.DataFrame:
@@ -489,7 +489,10 @@ def threshold_temp_sensitivity(
 
     rows = dict()
     for _target in thresholds:
-        _df = apply_threshold(df, name_col, _target, direction, width[name_col])
+        if _target:
+            _df = apply_threshold(df, name_col, _target, direction, width[name_col])
+        else:
+            _df = df.copy()
 
         # # Not enough variation -> undefined slope
         # if len(_df) < 10*num_steps_per_day or _df['T_degC'].var() == 0:
@@ -569,6 +572,183 @@ def thermosensitivity_per_temperature_model(
 # -------------------------------------------------------
 
 
+def thermosensitivity_per_date_discrete(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     num_steps_per_day: int,
+     ranges_years     : List[List[int]],
+     ylim             : [float, float] = [-1.65, -1.25],
+     moving_average   = None
+     )   -> None:
+
+
+    _consumption = consumption.resample('D').mean().dropna()
+    _temperature = temperature.resample('D').mean().dropna()
+
+    # use common indices
+
+    common_indices = _consumption.index.intersection(_temperature.index)
+    _temperature = _temperature.reindex(common_indices)
+    _consumption = _consumption.reindex(common_indices)
+    _year = pd.Series(common_indices.year - year_ref + common_indices.dayofyear/365,
+                      index = common_indices, name="year")  # for long-term drift
+
+    # statistics consumption and temperature
+    consumption_per_range = [];  temperature_per_range = []
+    DJU_per_range = []
+    for _range in ranges_years:
+        consumption_per_range.append(
+            _consumption[(_consumption.index.year >= _range[0]) & \
+                         (_consumption.index.year <= _range[1])])
+        temperature_per_range.append(
+            _temperature[(_temperature.index.year >= _range[0]) & \
+                         (_temperature.index.year <= _range[1])])
+
+    avg_consumption_per_range = [round(float(_series.mean()), 2)
+                                 for _series in consumption_per_range]
+    avg_temperature_per_range = [round(float(_series.mean()), 2)
+                                 for _series in temperature_per_range]
+
+
+    # _temperature_sat19 = (_temperature.clip(upper=19) - 19)
+
+
+    # thermosensitivity
+    _list_DJU_range1 = [];  _list_DJU_range2 = []
+    _list_sensitivity_range1 = [];  _list_avg_consumption_net_range1 = []
+    _list_sensitivity_range2 = [];  _list_avg_consumption_net_range2 = []
+
+    for threshold_degC in np.arange(15, 15.1, 1):
+        # _temperature = temperature.resample('D').mean().dropna()
+        _temperature_sat = (_temperature.clip(upper=threshold_degC) - threshold_degC)
+
+        _DJU_per_range                = []; _sensitivity_per_range        = []
+        _avg_consumption_net_per_range= []; _std_consumption_net_per_range= []
+        for (i, _range) in enumerate(ranges_years):
+            _temperature_in_range = _temperature_sat[
+                            (_temperature_sat.index.year >= _range[0]) & \
+                            (_temperature_sat.index.year <= _range[1])]
+
+            _DJU_per_range.append(int(- _temperature_in_range.sum() / \
+                                         (_range[1]-_range[0]+1)))
+
+            _index_sat = _temperature_in_range.index[_temperature_in_range < 0]
+
+            sensitivity_df = threshold_temp_sensitivity(
+                consumption_per_range[i], {}, {}, {},
+                _temperature_in_range, _index_sat, name_col='date',
+                thresholds=[None], direction=None,
+                num_steps_per_day=num_steps_per_day)
+
+            _sensitivity_per_range.append(float(sensitivity_df['true'].mean()))
+
+            _consumption_net = (consumption_per_range[i] - \
+                        _sensitivity_per_range[i] * _temperature_sat).dropna()
+            _avg_consumption_net_per_range.append(round(float(_consumption_net.mean()), 3))
+            _std_consumption_net_per_range.append(round(float(_consumption_net.std()), 3))
+
+
+        print(threshold_degC,
+              _DJU_per_range, int(_DJU_per_range[1] - _DJU_per_range[0]),
+              _sensitivity_per_range,
+              round(_sensitivity_per_range[1] - _sensitivity_per_range[0], 3),
+              _avg_consumption_net_per_range, _std_consumption_net_per_range)
+
+        _list_DJU_range1.append(_DJU_per_range[0])
+        _list_DJU_range2.append(_DJU_per_range[1])
+
+        _list_sensitivity_range1.append(-_sensitivity_per_range[0])
+        _list_sensitivity_range2.append(-_sensitivity_per_range[1])
+
+        _list_avg_consumption_net_range1.append(_avg_consumption_net_per_range[0])
+        _list_avg_consumption_net_range2.append(_avg_consumption_net_per_range[1])
+
+
+
+    _delta = round(avg_temperature_per_range[1] - avg_temperature_per_range[0], 2)
+    print("avg_temperature [°C]    ", avg_temperature_per_range, _delta)
+
+    DJU_per_range = [int(np.mean(_list_DJU_range1)),
+                     int(np.mean(_list_DJU_range2))]
+    _delta = round(DJU_per_range[1] - DJU_per_range[0], 0)
+    print("DJU                     ", DJU_per_range,
+          _delta, f"{_delta/DJU_per_range[0] * 100:.1f}%")
+
+    sensitivity_per_range = [round(float(np.mean(_list_sensitivity_range1)), 3),
+                             round(float(np.mean(_list_sensitivity_range2)), 3)]
+    _delta = round(sensitivity_per_range[1] - sensitivity_per_range[0], 3)
+    print("sensitivity [GW/K]      ", sensitivity_per_range,
+          _delta, f"{_delta/sensitivity_per_range[0] * 100:.1f}%")
+
+    _delta = round(avg_consumption_per_range[1] - avg_consumption_per_range[0], 2)
+    print("avg_consumption [GW]    ", avg_consumption_per_range,
+          _delta, f"{_delta/avg_consumption_per_range[0] * 100:.1f}%")
+
+    avg_consumption_net_per_range = [
+        round(float(np.mean(_list_avg_consumption_net_range1)), 2),
+        round(float(np.mean(_list_avg_consumption_net_range2)), 2)]
+    _delta = round(avg_consumption_net_per_range[1] - avg_consumption_net_per_range[0], 2)
+    print("avg net consumption [GW]", avg_consumption_net_per_range,
+          _delta, f"{_delta/avg_consumption_net_per_range[0] * 100:.1f}%")
+
+
+    # plotting ratios
+    ratios = {
+        "consumption, non-T":avg_consumption_net_per_range[1] / avg_consumption_net_per_range[0],
+        "DJU15": DJU_per_range[1] / DJU_per_range[0],
+        "sensitivity": sensitivity_per_range[1] / sensitivity_per_range[0],
+        "consumption, T": (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) / \
+                          (avg_consumption_per_range[0] - avg_consumption_net_per_range[0]),
+
+        "consumption, all":  avg_consumption_per_range[1] / avg_consumption_per_range[0],
+        }
+    ratios = {k: (v - 1) * 100 for (k, v) in ratios.items()}
+
+    plt.figure(figsize=(8, 6))
+    plt.barh(list(ratios.keys()), list(ratios.values()), color='skyblue')
+    plt.title(f"variation [%] between {ranges_years[0][0]}-{ranges_years[0][1]-2000} "
+               f"and {ranges_years[1][0]}-{ranges_years[1][1]-2000}")
+    for i, v in enumerate(ratios.values()):      # display values on bars
+        plt.text(v, i, f" {v:.0f}%", color='black', va='center')
+    plt.show()
+
+
+    # plotting breakdown
+    _consumption_thermo = (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) - \
+                          (avg_consumption_per_range[0] - avg_consumption_net_per_range[0])
+    _factor = _consumption_thermo / (ratios['DJU15'] + ratios['sensitivity'])
+
+    breakdown_GW = {
+        "non-T":avg_consumption_net_per_range[1]-avg_consumption_net_per_range[0],
+        "DJU15":      round(ratios['DJU15']      * _factor, 2),
+        "sensitivity":round(ratios['sensitivity']* _factor, 2)
+        }
+    print("breakdown [GW]:", breakdown_GW)
+
+    breakdown_pc = {k: round(100 * v / (avg_consumption_per_range[1]-avg_consumption_per_range[0]), 1)
+                 for (k, v) in breakdown_GW.items()}
+    print("breakdown [%]:", breakdown_pc)
+
+    # plt.figure(figsize=(8, 6))
+
+    # left = 0
+    # for name, value in breakdown.items():
+    #     plt.barh(0, value, label=name, left=left, height=0.4)
+    #     left += value
+    # plt.ylim(-0.3, 0.3)
+    # plt.legend()
+
+    # plt.title(f"breakdown of the consumption decrease "
+    #           f"between {ranges_years[0][0]}-{ranges_years[0][1]-2000} "
+    #           f"and {ranges_years[1][0]}-{ranges_years[1][1]-2000} [GW]")
+    # # for i, (k, v) in enumerate(breakdown.items()):      # display values on bars
+    # #     plt.text(v, i, f"{k} {v:.1f} GW", color='black', va='center')
+    # plt.show()
+
+
+
+
+
 def thermosensitivity_per_date_continuous(
      consumption      : pd.Series,
      temperature      : pd.Series,
@@ -583,7 +763,7 @@ def thermosensitivity_per_date_continuous(
     _list_coef     = []
     _list_intercept= []
 
-    for threshold_degC in np.arange(13, 16, 0.5):
+    for threshold_degC in np.arange(13, 15.6, 0.5):
         # _temperature = temperature.resample('D').mean().dropna()
         _temperature_sat_fit = (temperature.clip(upper=threshold_degC, )- threshold_degC).\
             resample('D').mean().dropna()
@@ -621,7 +801,7 @@ def thermosensitivity_per_date_continuous(
                                    index = _sensitivity.index
                               )
         model.fit(X_year, _sensitivity)
-        # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+
         # _formula_model = f"{model.intercept_:.2f} GW/K + " \
         #                  f"{model.coef_[0]:.3f} * (year - {year_ref})"
         # print(f"thermosensitivity "
@@ -629,8 +809,8 @@ def thermosensitivity_per_date_continuous(
         #       f"R² ={model.score(X_year, _sensitivity)*100:3.0f}%) = "
         #       f"{_formula_model}")
 
-        _list_coef     = model.coef_[0]
-        _list_intercept= model.intercept_
+        _list_coef     .append(model.coef_[0])
+        _list_intercept.append(model.intercept_)
 
 
     # sensitivity_model = _year_common * np.mean(_list_coef) + np.mean(_list_intercept)
