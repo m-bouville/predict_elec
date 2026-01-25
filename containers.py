@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# containers.py
+# Three classes for: splits and neural networks
+#
+###############################################################################
+
+
 import time
 
 from   dataclasses import dataclass, field, InitVar

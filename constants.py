@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# constants.py
+# Parameters for the two neural networks, regression, random forest, LGBM
+#
+###############################################################################
+
+
 __all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME',
@@ -76,8 +87,8 @@ NNTQ_PARAMETERS: dict = {
 
     # optimizer
     'learning_rate'    :  0.0044,            # Optimizer learning rate
-    'weight_decay'     : 11.25e-9,
-    'dropout'          :  0.38,
+    'weight_decay'     : 11.e-9,
+    'dropout'          :  0.38,              # 0.384
     'warmup_steps'     :1900,
 
     # early stopping
@@ -156,7 +167,8 @@ DICT_INPUT_CSV_FNAMES = {
     "consumption":          'data/consommation-quotidienne-brute.csv',
     "consumption_by_region":'data/consommation-quotidienne-brute-regionale.csv',
     "temperature":          'data/temperature-quotidienne-regionale.csv',
-    # "solar":     'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv'
+    # "solar":     'data/rayonnement-solaire-vitesse-vent-tri-horaires-regionaux.csv',
+    "price":                'data/wholesale_electricity_price_hourly.csv'
 }
 CACHE_FNAME = None  #  "cache/merged_aligned.csv"
 
@@ -185,7 +197,7 @@ BASELINES_PARAMETERS = {
         "min_child_samples":12,       # Minimum samples per leaf
         "subsample":         0.9,    # Fraction of samples used to train each tree
         "colsample_bytree":  0.62,    # Fraction of features used for each tree
-        "reg_alpha":         0.092,   # L1 regularization
+        "reg_alpha":         0.09,   # L1 regularization
         "reg_lambda":        0.15,   # L2 regularization
         "random_state":      0,       # Seed for reproducibility
         "n_jobs":            4,       # Number of parallel jobs

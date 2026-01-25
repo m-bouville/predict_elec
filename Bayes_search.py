@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# Bayes_search.py
+# Bayesian search for hyperparameters with Optuna
+#
+###############################################################################
+
+
 import os
 import copy
 # import warnings
@@ -100,7 +111,7 @@ DISTRIBUTIONS_METAMODEL_NN = {
     'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0050, step=0.0001),
     'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4,step=0.001),
-    'metaNN_num_cells_0': IntDistribution  (low=24, high=72, step=8),
+    'metaNN_num_cells_0': IntDistribution  (low=24, high=72, step=4),
     'metaNN_num_cells_1': IntDistribution  (low= 4, high=32, step=4),
     'metaNN_patience':    CategoricalDistribution(choices=[2, 3, 4, 5, 6]),
     'metaNN_factor':      FloatDistribution(low=0.6, high=0.85, step=0.01),
@@ -304,7 +315,7 @@ def sample_metamodel_NN_parameters(
         p['dropout']     = trial.suggest_float('metaNN_dropout', 0.0, 0.2, step=0.01)
 
     if 'num_cells' in p:
-        p['num_cells']= [trial.suggest_int('metaNN_num_cells_0', 40, 72, step=8),
+        p['num_cells']= [trial.suggest_int('metaNN_num_cells_0', 40, 72, step=4),
                          trial.suggest_int('metaNN_num_cells_1',  4, 32, step=4)]
 
     # Early stopping

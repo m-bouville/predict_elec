@@ -1,3 +1,13 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# architecture.py
+# Architecture of the NNTQ model
+#
+###############################################################################
+
 
 from   typing import Tuple, List, Dict  # Sequence  #, Optional
 # from   collections import defaultdict

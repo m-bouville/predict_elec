@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# metamodel.py
+# Two metamodels: linear regression and dense neural network
+#
+###############################################################################
+
+
 # import sys
 
 from   typing import Dict, Tuple, List, Optional, Any

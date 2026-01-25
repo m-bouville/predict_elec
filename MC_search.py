@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# MC_search.py
+# Monte Carlo (random) search for hyperparameters
+#
+###############################################################################
+
+
 # import os
 import copy
 import warnings

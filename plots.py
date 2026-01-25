@@ -1,8 +1,13 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# plots.py
+# Plotting results
+#
+###############################################################################
 
-
-# --------------------------------------------------------
-# Plots
-# --------------------------------------------------------
 
 from   typing import Dict, Tuple,Sequence, Optional  # List
 

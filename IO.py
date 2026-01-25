@@ -1,8 +1,12 @@
-
-# ----------------------------------------------------------------------
-# Load local CSVs, detect datetime columns (handling Date + Heure, etc.),
-# align on common time range, resample to 30 min, merge.
-# ----------------------------------------------------------------------
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# IO.py
+# Load local (or download) CSV files and preprocess them
+#
+###############################################################################
 
 
 import os, sys
@@ -670,7 +674,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
-    if verbose >= -3:
+    if verbose >= 3:
         # # # plot_statistics.thermosensitivity_regions(
         # # #     dfs['consumption_by_region'], dfs['temperature'])
 
@@ -687,7 +691,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         #      num_steps_per_day=num_steps_per_day
         # )
 
-        plot_statistics.thermosensitivity_per_date(
+        plot_statistics.thermosensitivity_per_date_continuous(
              dfs['consumption']['consumption_GW'],
              dfs['temperature']["Tavg_degC"],
              list_dates = pd.date_range(
@@ -697,7 +701,19 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
              ylim = [-2.45, -2.15], moving_average=24
         )
 
-        sys.exit()
+        # plot_statistics.thermosensitivity_per_date_discrete(
+        #      dfs['consumption']['consumption_GW'],
+        #      dfs['temperature']["Tavg_degC"],
+        #      ranges_years = [[2016, 2019], [2023, 2025]],
+        #      list_dates = pd.date_range(
+        #          start= '2016-07-01 00:00:00+0000',
+        #          end  = '2025-06-01 00:00:00+0000', freq = '1ME'),  # months
+        #      num_steps_per_day=num_steps_per_day,
+        #      ylim = [-2.45, -2.15], moving_average=24
+        # )
+
+
+        # sys.exit()
 
 
 

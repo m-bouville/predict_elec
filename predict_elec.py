@@ -1,7 +1,15 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# conso_elec.py
+# Main file
+#
+###############################################################################
+
+
 # import sys
-
-# import numpy  as np
-
 
 import constants, run
     # containers, architecture, baselines, IO, plots, losses, metamodel,
@@ -19,7 +27,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'Bayes_meta'
+    MODE = 'stats'
         # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', 'stats']
 
     VERBOSE:    int =  1

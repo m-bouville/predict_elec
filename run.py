@@ -1,3 +1,14 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# run.py
+# Running the NNTQ and the metamodels
+#
+###############################################################################
+
+
 import gc
 # import sys
 import inspect
@@ -523,14 +534,14 @@ def run_model_once(
              num_steps_per_day=num_steps_per_day
         )
 
-        plot_statistics.thermosensitivity_per_temperature(
+        plot_statistics.thermosensitivity_per_temperature_model(
              data_split = data.complete,
              thresholds_degC= np.arange(-1., 26.5, step=0.1),
              # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
              num_steps_per_day=num_steps_per_day
         )
 
-        plot_statistics.thermosensitivity_per_temperature(
+        plot_statistics.thermosensitivity_per_temperature_model(
              data_split = data.train,
              thresholds_degC= np.arange(-1., 26.5, step=0.1),
              # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
@@ -670,7 +681,7 @@ def run_model(
                  num_steps_per_day=num_steps_per_day
             )
 
-            plot_statistics.thermosensitivity_per_temperature(
+            plot_statistics.thermosensitivity_per_temperature_model(
                  data_split = data.train,
                  thresholds_degC= np.arange(-1., 26.5, step=0.1),
                  # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],

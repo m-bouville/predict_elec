@@ -1,3 +1,13 @@
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# plot_statistics.py
+# plotting statistics of electricity data (with or without model)
+#
+###############################################################################
+
 import sys
 
 from   typing   import Dict, Optional, Tuple, Sequence, List  # , Any,
@@ -325,89 +335,8 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
 
 # -------------------------------------------------------
-# thermosensitivity by time of day or by T°
+# thermosensitivity by time of day
 # -------------------------------------------------------
-
-def apply_threshold(df            : pd.DataFrame,
-                    name_col      : str,
-                    threshold     : float,
-                    direction     : str,
-                    width         : Optional[float]) -> pd.DataFrame:
-    if name_col not in ['index', 'date']:
-        _col = df[name_col]
-    else:
-        _col = df.index
-
-    if threshold is not None:
-        # print("threshold:", threshold)
-        if direction == '<=':
-            df = df[_col <= threshold]
-        elif direction == '>=':
-            df = df[_col >= threshold]
-        elif direction in ['==', '=']:
-            df = df[np.abs(_col - threshold) < width]
-
-        else:
-            raise ValueError(f"`{direction}` not a valid direction")
-
-    return df
-
-
-def create_df(
-    true_series         : pd.Series,
-    dict_pred_series    : Dict[str, pd.Series],
-    dict_baseline_series: Dict[str, pd.Series],
-    dict_meta_series    : Dict[str, pd.Series],
-    T_degC              : pd.Series,
-    dates               : pd.DatetimeIndex,
-    threshold_degC      : Optional[Tuple[str, float]]) -> pd.DataFrame:
-
-    # print("true_series:", true_series.shape)
-    # print(pd.DataFrame(dict_pred_series    ).shape)
-    # print(pd.DataFrame(dict_baseline_series).shape)
-    # print(pd.DataFrame(dict_meta_series    ).shape)
-    # print(T_degC.shape)
-    # print(dates.shape)
-
-
-    list_df_to_concat = [true_series]
-
-    # add dicts if not empty
-    if dict_pred_series:
-        list_df_to_concat.append(pd.DataFrame(dict_pred_series))
-    if dict_baseline_series:
-        list_df_to_concat.append(pd.DataFrame(dict_baseline_series))
-    if dict_meta_series:
-        list_df_to_concat.append(pd.DataFrame(dict_meta_series))
-
-    # add T_degC
-    list_df_to_concat.append(pd.Series(T_degC, index=dates, name='T_degC'))
-
-    # Concaténation
-    if len(list_df_to_concat) > 0:
-        df = pd.concat(list_df_to_concat, axis=1).dropna()
-    else:
-        df = pd.DataFrame()
-
-    # df = pd.concat([true_series,
-    #                pd.DataFrame(dict_pred_series),
-    #                pd.DataFrame(dict_baseline_series),
-    #                pd.DataFrame(dict_meta_series),
-    #                pd.Series(T_degC, index=dates, name='T_degC')],
-    #                axis=1).dropna()
-
-    df.index = pd.to_datetime(df.index)
-    columns_preds = ['true'] + ["NNTQ " + e for e in dict_pred_series.keys()] + \
-                   list(dict_baseline_series.keys()) + \
-                   ["meta " + e for e in dict_meta_series.keys()]
-    df.columns = columns_preds + ['T_degC']
-
-    if threshold_degC is not None:
-        df = apply_threshold(df, 'T_degC', threshold_degC[1], threshold_degC[0], 2)
-    # print(df)
-
-    return (df, columns_preds)
-
 
 
 def time_of_day_temp_sensitivity(
@@ -512,6 +441,11 @@ def thermosensitivity_per_time_of_day(
 
 
 
+# -------------------------------------------------------
+# thermosensitivity by temperature
+# -------------------------------------------------------
+
+
 def threshold_temp_sensitivity(
     true_series         : pd.Series,
     dict_pred_series    : Dict[str, pd.Series],
@@ -597,7 +531,45 @@ def thermosensitivity_per_temperature(
          ylim=ylim, date_range=None, moving_average=7, groupby=None)
 
 
-def thermosensitivity_per_date(
+
+
+def thermosensitivity_per_temperature_model(
+     data_split,  # : containers.DataSplit,
+     thresholds_degC  : Sequence[float],
+     num_steps_per_day: int,
+     ylim             : [float, float] = [-3.5, 1.5]
+     )   -> None:
+    sensitivity_df = threshold_temp_sensitivity(
+            data_split.true_nation_GW, data_split.dict_preds_NNTQ,
+            data_split.dict_preds_ML, data_split.dict_preds_meta,
+            data_split.Tavg_degC.round(1), data_split.dates,
+            thresholds=thresholds_degC, direction='==',
+            num_steps_per_day=num_steps_per_day)
+
+    # /!\ quantiles are meaningless
+    #   they are slopes of quantiles, not quantiles of slopes
+
+    plots.curves(
+         sensitivity_df['true'],
+        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q50']},
+            # if data_split.name != Split.complete else None,
+        {_col: sensitivity_df[_col] for _col in ['RF', 'LGBM']} \
+            if data_split.name in [Split.train, Split.complete] else None,
+        {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
+            if data_split.name in [Split.valid, Split.test] else None,
+         xlabel="threshold T_avg [°C]",
+         ylabel="thermosensitivity [GW/K]",
+         title=f"{data_split.name_display}",
+         ylim=ylim, date_range=None, moving_average=7, groupby=None)
+
+
+
+# -------------------------------------------------------
+# thermosensitivity by date (long-term evoltions)
+# -------------------------------------------------------
+
+
+def thermosensitivity_per_date_continuous(
      consumption      : pd.Series,
      temperature      : pd.Series,
      list_dates       : Sequence[pd.DatetimeIndex],
@@ -743,36 +715,89 @@ def thermosensitivity_per_date(
 
 
 
+# -------------------------------------------------------
+# utils
+# -------------------------------------------------------
 
-def thermosensitivity_per_temperature_model(
-     data_split,  # : containers.DataSplit,
-     thresholds_degC  : Sequence[float],
-     num_steps_per_day: int,
-     ylim             : [float, float] = [-3.5, 1.5]
-     )   -> None:
-    sensitivity_df = threshold_temp_sensitivity(
-            data_split.true_nation_GW, data_split.dict_preds_NNTQ,
-            data_split.dict_preds_ML, data_split.dict_preds_meta,
-            data_split.Tavg_degC.round(1), data_split.dates,
-            thresholds=thresholds_degC, direction='==',
-            num_steps_per_day=num_steps_per_day)
+def apply_threshold(df            : pd.DataFrame,
+                    name_col      : str,
+                    threshold     : float,
+                    direction     : str,
+                    width         : Optional[float]) -> pd.DataFrame:
+    if name_col not in ['index', 'date']:
+        _col = df[name_col]
+    else:
+        _col = df.index
 
-    # /!\ quantiles are meaningless
-    #   they are slopes of quantiles, not quantiles of slopes
+    if threshold is not None:
+        # print("threshold:", threshold)
+        if direction == '<=':
+            df = df[_col <= threshold]
+        elif direction == '>=':
+            df = df[_col >= threshold]
+        elif direction in ['==', '=']:
+            df = df[np.abs(_col - threshold) < width]
 
-    plots.curves(
-         sensitivity_df['true'],
-        {_col: sensitivity_df['NNTQ '+_col] for _col in ['q50']},
-            # if data_split.name != Split.complete else None,
-        {_col: sensitivity_df[_col] for _col in ['RF', 'LGBM']} \
-            if data_split.name in [Split.train, Split.complete] else None,
-        {_col: sensitivity_df['meta '+_col] for _col in ['LR', 'NN']} \
-            if data_split.name in [Split.valid, Split.test] else None,
-         xlabel="threshold T_avg [°C]",
-         ylabel="thermosensitivity [GW/K]",
-         title=f"{data_split.name_display}",
-         ylim=ylim, date_range=None, moving_average=7, groupby=None)
+        else:
+            raise ValueError(f"`{direction}` not a valid direction")
 
+    return df
+
+
+def create_df(
+    true_series         : pd.Series,
+    dict_pred_series    : Dict[str, pd.Series],
+    dict_baseline_series: Dict[str, pd.Series],
+    dict_meta_series    : Dict[str, pd.Series],
+    T_degC              : pd.Series,
+    dates               : pd.DatetimeIndex,
+    threshold_degC      : Optional[Tuple[str, float]]) -> pd.DataFrame:
+
+    # print("true_series:", true_series.shape)
+    # print(pd.DataFrame(dict_pred_series    ).shape)
+    # print(pd.DataFrame(dict_baseline_series).shape)
+    # print(pd.DataFrame(dict_meta_series    ).shape)
+    # print(T_degC.shape)
+    # print(dates.shape)
+
+
+    list_df_to_concat = [true_series]
+
+    # add dicts if not empty
+    if dict_pred_series:
+        list_df_to_concat.append(pd.DataFrame(dict_pred_series))
+    if dict_baseline_series:
+        list_df_to_concat.append(pd.DataFrame(dict_baseline_series))
+    if dict_meta_series:
+        list_df_to_concat.append(pd.DataFrame(dict_meta_series))
+
+    # add T_degC
+    list_df_to_concat.append(pd.Series(T_degC, index=dates, name='T_degC'))
+
+    # Concaténation
+    if len(list_df_to_concat) > 0:
+        df = pd.concat(list_df_to_concat, axis=1).dropna()
+    else:
+        df = pd.DataFrame()
+
+    # df = pd.concat([true_series,
+    #                pd.DataFrame(dict_pred_series),
+    #                pd.DataFrame(dict_baseline_series),
+    #                pd.DataFrame(dict_meta_series),
+    #                pd.Series(T_degC, index=dates, name='T_degC')],
+    #                axis=1).dropna()
+
+    df.index = pd.to_datetime(df.index)
+    columns_preds = ['true'] + ["NNTQ " + e for e in dict_pred_series.keys()] + \
+                   list(dict_baseline_series.keys()) + \
+                   ["meta " + e for e in dict_meta_series.keys()]
+    df.columns = columns_preds + ['T_degC']
+
+    if threshold_degC is not None:
+        df = apply_threshold(df, 'T_degC', threshold_degC[1], threshold_degC[0], 2)
+    # print(df)
+
+    return (df, columns_preds)
 
 
 

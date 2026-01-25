@@ -1,6 +1,12 @@
-# ----------------------------------------------------------------------
-# losses
-# ----------------------------------------------------------------------
+###############################################################################
+#
+# Neural Network based on Transformers, with Quantiles (NNTQ)
+# by: Mathieu Bouville
+#
+# losses.py
+# Loss functions for the NNTQ model
+#
+###############################################################################
 
 
 from   typing import Dict, Tuple  # , List Sequence  #, Optional
