@@ -15,15 +15,22 @@ import pandas as pd  # for types
 
 
 
-def data(df, xlabel=None, ylabel=None, title=None) -> None:
+def data(df,
+         xlabel: Optional[str] = None,
+         ylabel: Optional[str] = None,
+         title:  Optional[str] = None,
+         enforce_0_on_y: bool = False) -> None:
     # print(f"Plotting {title}..." if title is not None else "Plotting...")
     df.plot(figsize=(10,6))
     if xlabel is not None:  plt.xlabel(xlabel)
     if ylabel is not None:  plt.ylabel(ylabel)
     if title  is not None:  plt.title (title)
 
+    if enforce_0_on_y and plt.ylim()[0] > 0.:
+        plt.ylim(bottom=0.)
+
     # Display legend only if there is more than one curve
-    if df.shape[1] > 1:
+    if df.shape[1] >= 1:
         plt.legend()
 
     plt.show()

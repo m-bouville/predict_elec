@@ -100,7 +100,8 @@ def load_consumption(
     return df
 
 
-# https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute-regionale/
+# https://odre.opendatasoft.com/explore/dataset/
+#   consommation-quotidienne-brute-regionale/
 # depth of historical data: 2013 to date (M-1)
 # Last processing
 #    January 13, 2026
@@ -579,8 +580,9 @@ def load_price(
     if verbose >= 3:
         # by day
         plots.data(df.drop(columns=['year', 'month', 'timeofday', 'dateofyear'])\
-                    .rolling(91 * 24, center=True).mean(),
-                  xlabel="date", ylabel="price [€/MWh], trimester moving average")
+                     .rolling(91 * 24, center=True).mean(),
+                   enforce_0_on_y = True,
+                   xlabel="date", ylabel="price [€/MWh], trimester moving average")
 
 
         # by day of year
@@ -588,23 +590,25 @@ def load_price(
         _df = pd.concat([df.drop(columns=['year', 'month', 'timeofday',
                                 'price_euro_per_MWh']), rolling_df], axis=1)
         plots.data(_df[~((_df.index.month == 2) & (_df.index.day == 29))]\
-                    .groupby('dateofyear').mean().sort_index(),
-                  xlabel="date", ylabel="price [€/MWh], weekly moving average")
+                      .groupby('dateofyear').median().sort_index(),
+                   enforce_0_on_y = True,
+                   xlabel="date", ylabel="price [€/MWh], weekly moving median")
 
 
         # by time of day
-        plots.data(df.drop(columns=['year', 'month', 'dateofyear'])\
-                    .groupby('timeofday').mean().sort_index(),
-                  xlabel="time of day (UTC)", ylabel="price [€/MWh]")
+        # plots.data(df.drop(columns=['year', 'month', 'dateofyear'])\
+        #             .groupby('timeofday').median().sort_index(),
+        #           xlabel="time of day (UTC)", ylabel="median price [€/MWh]")
 
             # seasonal effects
-        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').mean()\
-                  .rename(columns={"price_euro_per_MWh": "winter"})
-        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').mean()\
-                  .rename(columns={"price_euro_per_MWh": "summer"})
+        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').median()\
+                      .rename(columns={"price_euro_per_MWh": "winter"})
+        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').median()\
+                      .rename(columns={"price_euro_per_MWh": "summer"})
         plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
-                  .drop(columns=['year', 'month', 'dateofyear']),
-                  xlabel="time of day (UTC)", ylabel="price [€/MWh]",
+                     .drop(columns=['year', 'month', 'dateofyear']),
+                  xlabel="time of day (UTC)", ylabel="median price [€/MWh]",
+                  enforce_0_on_y = True,
                   title ="seasonal consumption")
 
     return df
@@ -666,9 +670,9 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
-    if verbose >= 3:
-        # # plot_statistics.thermosensitivity_regions(
-        # #     dfs['consumption_by_region'], dfs['temperature'])
+    if verbose >= -3:
+        # # # plot_statistics.thermosensitivity_regions(
+        # # #     dfs['consumption_by_region'], dfs['temperature'])
 
         # plot_statistics.drift_with_time(
         #      dfs['consumption']['consumption_GW'],
@@ -693,7 +697,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
              ylim = [-2.45, -2.15], moving_average=24
         )
 
-        # sys.exit()
+        sys.exit()
 
 
 
@@ -919,8 +923,8 @@ CANONICAL_HOLIDAYS = {
 
 def school_holidays(
         fname1: str= 'data/fr-en-calendrier-scolaire.csv',
-        url1  : str= 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/'
-                     'fr-en-calendrier-scolaire/exports/csv?delimiter=;',
+        url1  : str= 'https://data.education.gouv.fr/api/explore/v2.1/catalog/'
+                     'datasets/fr-en-calendrier-scolaire/exports/csv?delimiter=;',
         fname2: str= 'data/vacances_scolaires_2015_2017.csv') -> pd.DataFrame:
 
     # load local file if it exists, otherwise get it online
@@ -951,7 +955,7 @@ def school_holidays(
     # Complement: holidays 2015-17
     holidays_2015_2017 = pd.read_csv(fname2, sep=",", comment="#")
     for _date in ["start_date", "end_date"]:
-        holidays_2015_2017[_date] = pd.to_datetime(holidays_2015_2017[_date],utc=True)
+        holidays_2015_2017[_date]= pd.to_datetime(holidays_2015_2017[_date],utc=True)
 
     holidays = pd.concat([holidays_2015_2017, holidays], axis=0)
 
@@ -1162,9 +1166,8 @@ def print_model_summary(
     # Output head
     out_head_params = d * h + h
 
-    param_count = int(
-        (patch_embed_params + pos_embed_params + encoder_params + out_head_params)* 1.1
-    )
+    param_count = int((patch_embed_params + pos_embed_params + \
+                       encoder_params + out_head_params)* 1.1)
 
     params_per_sample = param_count / n
 
@@ -1175,7 +1178,8 @@ def print_model_summary(
 
     # ---- Checks & warnings ----
     if not (100 <= steps_per_epoch <= 2000):
-        print(f"/!\\ steps_per_epoch ({steps_per_epoch:n}) but should be in [100, 2000]")
+        print(f"/!\\ steps_per_epoch ({steps_per_epoch:n}) "
+              f"but should be in [100, 2000]")
 
     if not (2 <= warmup_epochs <= 5):
         print(f"/!\\ WARMUP_STEPS ({warmup_steps}) / "

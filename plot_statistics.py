@@ -15,6 +15,11 @@ from   constants   import Split
 
 
 
+year_ref = 2021
+
+
+
+
 # -------------------------------------------------------
 # drift over time
 # -------------------------------------------------------
@@ -39,34 +44,31 @@ def drift_with_time(
     # temperature
     # ------------------
 
-    _year = pd.Series(_temperature.index.year - 2020 + _temperature.index.dayofyear/365,
-                      index = _temperature.index, name="year")  # for long-term drift
+
+    _temperature_annual = temperature.rolling(365, min_periods=365, center=True) \
+                     .mean().dropna()
+    _year_annual = pd.Series(_temperature_annual.index.year - year_ref + _temperature_annual.index.dayofyear/365,
+                      index = _temperature_annual.index, name="year")  # for long-term drift
 
     # linear regression to quantify thermosensitivity in winter
     model_T = HuberRegressor(
                 epsilon=2.,  # outlier threshold, in the range [1, inf), def 1.35
                 alpha  =0.   # no regularization unless needed
               )
-    model_T.fit(_year.to_frame(), _temperature)
+    model_T.fit(_year_annual.to_frame(), _temperature_annual)
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_T = f"{model_T.intercept_:.2f} °C + " \
-                       f"{model_T.coef_[0]:.2f} * (year - 2020)"
-    print("T =", _formula_model_T)
+                       f"{model_T.coef_[0]:.2f} * (year - {year_ref})"
+    print(f"T [R² ={model_T.score(_year_annual.to_frame(), _temperature_annual)*100:3.0f}%] = "
+          f"{_formula_model_T}")
 
 
-    (start_date, end_date) = [_temperature.index[ 0] + pd.DateOffset(months=6), \
-                              _temperature.index[-1] - pd.DateOffset(months=6)]
-    print("date_range T°:", [start_date, end_date])
-
-    T_model = _year * model_T.coef_[0] + model_T.intercept_
-    T_model  = (T_model.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
-
-    _temperature  = (_temperature.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
+    T_model = _year_annual * model_T.coef_[0] + model_T.intercept_
+    T_model            = (T_model            .rolling(30, center=True).mean())
+    _temperature_annual= (_temperature_annual.rolling(30, center=True).mean())
 
     plt.figure(figsize=(10,6))
-    plt.plot(_temperature.index, _temperature.values,
+    plt.plot(_temperature_annual.index, _temperature_annual.values,
              label="real", color="black")
     plt.plot(T_model.index, T_model.values,
              label=f"model: {_formula_model_T}", color="red")
@@ -80,26 +82,29 @@ def drift_with_time(
     # consumption
     # ------------------
 
-
-    _temperature_sat = (temperature.clip(upper=15) - 15)
+    # _temperature_sat = (temperature.clip(upper=15) - 15)
     # _temperature  = (temperature.rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
+    _temperature_sat_annual = ((temperature.clip(upper=15) - 15).rolling(365, min_periods=365, center=True) \
+                     .mean()).dropna()
+    _consumption_annual = (_consumption.rolling(365, min_periods=365, center=True) \
+                     .mean()).dropna()
+    _year_annual = pd.Series(_consumption_annual.index.year - year_ref + _consumption_annual.index.dayofyear/365,
+                      index = _consumption_annual.index, name="year")  # for long-term drift
+
+
 
     # model w/o T°
-    _year = pd.Series(_consumption.index.year - 2020 + _consumption.index.dayofyear/365,
-                      index = _consumption.index, name="year")  # for long-term drift
-
-
-    # linear regression to quantify thermosensitivity in winter
     model_no_T = LinearRegression()
-    model_no_T.fit(_year.to_frame(), _consumption)
+    model_no_T.fit(_year_annual.to_frame(), _consumption_annual)
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_no_T = f"{model_no_T.intercept_:.1f} GW  " \
-                     f"{model_no_T.coef_[0]:.2f} * (year - 2020)"
-    print("consumption=", _formula_model_no_T)
+                     f"{model_no_T.coef_[0]:.2f} * (year - {year_ref})"
+    print(f"consumption [R² ={model_no_T.score(_year_annual.to_frame(), _consumption_annual)*100:3.0f}%] = "
+          f"{_formula_model_no_T}")
 
-    conso_model_no_T = _year * model_no_T.coef_[0] + model_no_T.intercept_
+    conso_model_no_T = _year_annual * model_no_T.coef_[0] + model_no_T.intercept_
 
     # _consumption  = (consumption.resample('D').mean()
     #                  .rolling(moving_average, center=True) \
@@ -109,70 +114,44 @@ def drift_with_time(
 
 
     # thermosensitive model
-    common_indices = _consumption.dropna().index.intersection(
-        _temperature_sat.dropna().index)
-    _temperature_common = _temperature_sat.reindex(common_indices)
-    _consumption_common = _consumption    .reindex(common_indices)
-    _year = pd.Series(common_indices.year - 2020 + common_indices.dayofyear/365,
+    common_indices = _consumption_annual.dropna().index.intersection(
+        _temperature_sat_annual.dropna().index)
+    _temperature_common = _temperature_sat_annual.reindex(common_indices)
+    _consumption_common = _consumption_annual    .reindex(common_indices)
+    _year_common = pd.Series(common_indices.year - year_ref + common_indices.dayofyear/365,
                       index = common_indices, name="year")  # for long-term drift
 
 
     # linear regression to quantify thermosensitivity in winter
     model_with_T = LinearRegression()
-    model_with_T.fit(pd.concat([_temperature_common, _year], axis=1),
-                 _consumption_common)
+    X = pd.concat([_temperature_common, _year_common], axis=1)
+    model_with_T.fit(X, _consumption_common)
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_with_T = f"{model_with_T.intercept_:.1f} GW  " \
-                     f"{model_with_T.coef_[1]:.2f} * (year - 2020) " \
+                     f"{model_with_T.coef_[1]:.2f} * (year - {year_ref}) " \
                      f"{model_with_T.coef_[0]:.2f} * min(T-15 °C, 0)"
-    print("consumption=", _formula_model_with_T)
+    print(f"consumption [R² ={model_with_T.score(X, _consumption_common)*100:3.0f}%] = "
+          f"{_formula_model_with_T}")
 
     conso_model_with_T =  _temperature_common * model_with_T.coef_[0] + \
-                    _year * model_with_T.coef_[1] + model_with_T.intercept_
+                    _year_common * model_with_T.coef_[1] + model_with_T.intercept_
 
 
     # plotting
-    (start_date, end_date) = [_consumption.index[ 0] + pd.DateOffset(months=6), \
-                              _consumption.index[-1] - pd.DateOffset(months=6)]
-    print("date_range consumption:", [start_date, end_date])
-
-    _consumption  = (_consumption.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
-    _conso_model_no_T  = (conso_model_no_T.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
-    _conso_model_with_T  = (conso_model_with_T.rolling(moving_average, center=True) \
-                     .mean()).loc[start_date:end_date]
-    # _temperature_sat = ((temperature.clip(upper=15) - 15). \
-    #                     rolling(moving_average, center=True) \
-    #                  .mean()).loc[start_date:end_date]
-    # _temperature  = (temperature.rolling(moving_average, center=True) \
-    #                  .mean()).loc[start_date:end_date]
+    _consumption_annual= _consumption_annual.rolling(30, center=True).mean()
+    _conso_model_no_T  = conso_model_no_T   .rolling(30, center=True).mean()
+    _conso_model_with_T= conso_model_with_T .rolling(30, center=True).mean()
 
     plt.figure(figsize=(10,6))
-    # print("_consumption:", _consumption)
-    plt.plot(_consumption.index, _consumption.values,
+    plt.plot(_consumption_annual.index, _consumption_annual.values,
              label="real", color="black")
     plt.plot(_conso_model_no_T.index, _conso_model_no_T.values,
              label=f"model: {_formula_model_no_T}", color="green")
     plt.plot(_conso_model_with_T.index, _conso_model_with_T.values,
              label=f"model: {_formula_model_with_T}", color="red")
     plt.ylabel("consumption [GW], annual moving average")
-
-    # ax2 = plt.twinx()
-    # ax2.plot(_temperature.index, _temperature.values,
-    #          label="temperature", color="grey")
-    # ax2.set_ylabel("temperature [°C], annual moving average")
-
-
-    # if ylim   is not None:  plt.ylim  (ylim)
     plt.xlabel("year")
     plt.legend()
-    # if title  is not None:  plt.title (title)
-
-    # lines1, labels1 = plt.gca().get_legend_handles_labels()
-    # lines2, labels2 = ax2      .get_legend_handles_labels()
-    # plt.legend(lines1 + lines2, labels1 + labels2, loc="lower left")
-
     plt.show()
 
 
@@ -190,11 +169,11 @@ def drift_with_time(
 
     plt.figure(figsize=(10,6))
     # print("_consumption:", _consumption)
-    plt.plot(_consumption.index, (_conso_model_no_T   - _consumption).values,
+    plt.plot(_consumption_annual.index, (_conso_model_no_T   - _consumption_annual).values,
              label=f"model: {_formula_model_no_T}",  color="green")
-    plt.plot(_consumption.index, (_conso_model_with_T - _consumption).values,
+    plt.plot(_consumption_annual.index, (_conso_model_with_T - _consumption_annual).values,
              label=f"model: {_formula_model_with_T}",color="red")
-    plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
+    plt.hlines(0, _consumption_annual.index[0], _consumption_annual.index[-1], color="black")
     plt.xlabel("year")
     plt.ylabel("consumption residual [GW], annual moving average")
     plt.legend()
@@ -325,8 +304,6 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
     _df_slopes_pc = pd.concat([_slopes_winter_pc.T, _slopes_summer_pc.T], axis=1)
     _df_slopes_pc.columns = ["winter", "summer"]
-    print(_df_slopes_pc.T.to_string())
-
 
     # plot summer f° winter
     plt.scatter(_df_slopes_pc['winter'], _df_slopes_pc['summer'], s=100)
@@ -476,9 +453,6 @@ def time_of_day_temp_sensitivity(
     for _col in columns_preds:
         sensitivity_GW_per_K[_col] = \
             round(LinearRegression().fit(df[["T_degC"]], df[_col]).coef_[0], 3)
-        # cov = np.cov(df["T_degC"], df[_col], bias=True)[0, 1]
-        # var = df["T_degC"].var()
-        # sensitivity_GW_per_K[_col] = round(float(cov / var), 3)
 
         slopes = []
         for h in range(num_steps_per_day):
@@ -491,9 +465,6 @@ def time_of_day_temp_sensitivity(
 
             slopes.append(round(LinearRegression().fit(
                 sub[["T_degC"]], sub[_col]).coef_[0], 3))
-            # cov = np.cov(sub["T_degC"], sub[_col], bias=True)[0, 1]
-            # var = sub["T_degC"].var()
-            # slopes.append(round(float(cov / var), 3))
 
         rows[_col] = slopes
 
@@ -597,9 +568,6 @@ def threshold_temp_sensitivity(
                 _df[['T_degC']], _df[_col]).coef_[0], 3))
             # print(_target, _col, slopes)
 
-            # cov = np.cov(_df["T_degC"], _df[_col], bias=True)[0, 1]
-            # var = _df["T_degC"].var()
-            # slopes.append(round(float(cov / var), 3))
         rows[_target] = slopes
 
     _df = pd.DataFrame(rows).T
@@ -640,54 +608,94 @@ def thermosensitivity_per_date(
 
     year_ref = 2021
 
-    # _temperature = temperature.resample('D').mean().dropna()
-    _temperature_sat_fit = (temperature.clip(upper=12) - 12).resample('D').mean().dropna()
-    _temperature_sat_plot= (temperature.clip(upper=13.5) - 13.5).resample('D').mean().dropna()
-    _consumption = consumption.resample('D').mean().dropna().reindex(_temperature_sat_fit.index)
-    _year = pd.Series(_temperature_sat_fit.index.year - year_ref + \
-                      _temperature_sat_fit.index.dayofyear/365,
-                      index = _temperature_sat_fit.index, name="year")  # for long-term drift
+    _list_coef     = []
+    _list_intercept= []
 
-    sensitivity_df = threshold_temp_sensitivity(
-            _consumption, {}, {}, {},
-            _temperature_sat_fit.round(1), _consumption.index, name_col='date',
-            thresholds=list_dates, direction='==',
-            num_steps_per_day=num_steps_per_day)
+    for threshold_degC in np.arange(13, 16, 0.5):
+        # _temperature = temperature.resample('D').mean().dropna()
+        _temperature_sat_fit = (temperature.clip(upper=threshold_degC, )- threshold_degC).\
+            resample('D').mean().dropna()
+        _temperature_sat_fit = _temperature_sat_fit[_temperature_sat_fit<0]
+        # _temperature_sat_plot= (temperature.clip(upper=13.5)- 13.5).resample('D').mean().dropna()
+        _consumption = consumption.resample('D').mean().dropna(). \
+                                                reindex(_temperature_sat_fit.index)
 
-    _sensitivity = sensitivity_df['true'] #.resample('D').mean().dropna()
-
-
-    # linear regression to quantify thermosensitivity in winter
-    model = LinearRegression()
-    X_year = pd.DataFrame(_sensitivity.index.year - year_ref + \
-                           _sensitivity.index.dayofyear/365,
-                               index = _sensitivity.index
-                          )
-    model.fit(X_year, _sensitivity)
-    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
-    _formula_model = f"{model.intercept_:.2f} GW/K + " \
-                     f"{model.coef_[0]:.3f} * (year - {year_ref})"
-    print(f"thermosensitivity [R² = {model.score(X_year, _sensitivity)*100:.1f}%] = "
-          f"{_formula_model}")
-
-    sensitivity_model = _year * model.coef_[0] + model.intercept_
+        common_indices = _consumption.dropna().index.intersection(
+            _temperature_sat_fit.dropna().index)
+        _temperature_common = _temperature_sat_fit.reindex(common_indices)
+        _consumption_common = _consumption        .reindex(common_indices)
+        _year_common = pd.Series(common_indices.year - year_ref + common_indices.dayofyear/365,
+                          index = common_indices, name="year")  # for long-term drift
 
 
-    plt.figure(figsize=(10,6))
-    # print("_consumption:", _consumption)
-    plt.plot(_sensitivity.index, plots._apply_moving_average(_sensitivity, 24).values,
-             label="actual",  color="black")
-    plt.plot(sensitivity_model.index, sensitivity_model.values,
-             label=f"model: {_formula_model}",color="red")
-    # plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
-    plt.xlabel("year")
-    plt.ylabel("thermosensitivity [GW/K], annual moving average")
-    plt.legend()
-    plt.show()
+
+        # _year= pd.Series(_temperature_sat_fit.index.year - year_ref + \
+        #                  _temperature_sat_fit.index.dayofyear/365,
+        #                  index= _temperature_sat_fit.index, name="year")  # for long-term drift
+
+        sensitivity_df = threshold_temp_sensitivity(
+                _consumption, {}, {}, {},
+                _temperature_common.round(1), _consumption_common.index, name_col='date',
+                thresholds=list_dates, direction='==',
+                num_steps_per_day=num_steps_per_day)
+
+        _sensitivity = sensitivity_df['true'] #.resample('D').mean().dropna()
+
+
+        # linear regression to quantify thermosensitivity in winter
+        model = LinearRegression()
+        X_year = pd.DataFrame(_sensitivity.index.year - year_ref + \
+                              _sensitivity.index.dayofyear/365,
+                                   index = _sensitivity.index
+                              )
+        model.fit(X_year, _sensitivity)
+        # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
+        # _formula_model = f"{model.intercept_:.2f} GW/K + " \
+        #                  f"{model.coef_[0]:.3f} * (year - {year_ref})"
+        # print(f"thermosensitivity "
+        #       f"({sum(_temperature_sat_fit<0):4n} with T < {threshold_degC:4.1f} °C, "
+        #       f"R² ={model.score(X_year, _sensitivity)*100:3.0f}%) = "
+        #       f"{_formula_model}")
+
+        _list_coef     = model.coef_[0]
+        _list_intercept= model.intercept_
+
+
+    # sensitivity_model = _year_common * np.mean(_list_coef) + np.mean(_list_intercept)
+
+    _formula_model = f"{np.mean(_list_intercept):.2f} GW/K + " \
+                     f"{np.mean(_list_coef):.3f} * (year - {year_ref})"
+    print(f"thermosensitivity = {_formula_model}")
+
+    # plt.figure(figsize=(10,6))
+    # # print("_consumption:", _consumption)
+    # plt.plot(_sensitivity.index, _sensitivity.rolling(
+    #                         6, min_periods=5, center=True).mean().values,
+    #          label="actual",  color="black")
+    # plt.plot(sensitivity_model.index, sensitivity_model.values,
+    #          label=f"model: {_formula_model}",color="red")
+    # # plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
+    # plt.xlabel("year")
+    # plt.ylabel(f"thermosensitivity [GW/K], T < {threshold_degC:4.1f} °C, annual moving average")
+    # plt.legend()
+    # plt.show()
+
 
     # I calculate thermsensitivity for T < 12 °C to avoid the bend around 15 °C
     #   but for the net consumption, I avoid excluding days with (a little) heating
-    _consumption_net = (_consumption - (sensitivity_model * _temperature_sat_plot)).dropna()
+
+    _temperature_sat = ((temperature.clip(upper=15.75) - 15.75).rolling(30, min_periods=30, center=True) \
+                     .mean()).dropna()
+    _consumption = consumption.resample('D').mean().dropna()
+    _consumption = (_consumption.rolling(30, min_periods=30, center=True) \
+                     .mean()).dropna()
+    _year= pd.Series(_temperature_sat.index.year - year_ref + \
+                     _temperature_sat.index.dayofyear/365,
+                     index= _temperature_sat.index, name="year")  # for long-term drift
+    _sensitivity = np.mean(_list_intercept) + _year * np.mean(_list_coef)
+
+
+    _consumption_net = (_consumption - (_sensitivity * _temperature_sat)).dropna()
     # print("shapes:", _consumption_net.shape, _year.shape,
     #       pd.DataFrame(_year.reindex(_consumption_net.index)).shape)
 
@@ -699,7 +707,7 @@ def thermosensitivity_per_date(
     _formula_model = f"{model.intercept_:.1f} GW " \
                      f"{model.coef_[0]:.2f} * (year - {year_ref})"
     print(f"non-thermosensitive consumption "
-          f"[R² = {model.score(X_year, _consumption_net)*100:.1f}%] = {_formula_model}")
+          f"[R² ={model.score(X_year, _consumption_net)*100:3.0f}%] = {_formula_model}")
 
     consumption_net_model = _year * model.coef_[0] + model.intercept_
 
@@ -707,47 +715,32 @@ def thermosensitivity_per_date(
 
     plt.figure(figsize=(10,6))
     sma_days = 3*30
-    # print("_consumption:", _consumption)
-    # plt.plot(_consumption.index, plots._apply_moving_average(_consumption, sma_days).values,
-    #          label="total",  color="black")
     # plt.plot(_consumption.index, plots._apply_moving_average(
-    #     (_consumption - (sensitivity_model.mean() * _temperature_sat)), sma_days).values,
-    #          label="minus avg thermosensitive",  color="green")
+    #     _consumption, sma_days).values, label="complete",color="grey")
     plt.plot(_consumption_net.index, plots._apply_moving_average(
-        _consumption_net, sma_days).values,
-             label="actual",color="black")
+        _consumption_net, sma_days).values, label="actual",color="black")
     plt.plot(consumption_net_model.index, consumption_net_model.values,
              label=f"trend: {_formula_model}",color="red")
-    plt.ylim(39, 47)
+    plt.ylim(38, 46)
     plt.xlabel("year")
     plt.ylabel("non-thermosensitive consumption [GW], trimester moving average")
     plt.legend(loc='lower left')
     plt.show()
 
-    # residual
-    # print(_consumption_net)
-    # print(consumption_net_model)
-    # print(_consumption_net - consumption_net_model)
 
+    # residual
     plt.figure(figsize=(10,6))
     sma_days = 3*30
     plt.plot(_consumption_net.index, plots._apply_moving_average(
-        _consumption_net - consumption_net_model.reindex(_consumption_net.index), sma_days).values,
-             label="actual - trend",color="blue")
-    plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
-    plt.ylim(-5, 3)
+        _consumption_net - consumption_net_model.reindex(_consumption_net.index),
+        sma_days).values,
+             label="actual - trend",color="black")
+    plt.hlines(0, _year.index[0], _year.index[-1], color="black")
+    plt.ylim(-5., 3.)
     plt.xlabel("year")
-    plt.ylabel("residual non-thermosensitive consumption [GW], trimester moving average")
-    # plt.legend(loc='lower left')
+    plt.ylabel("residual non-thermosensitive consumption [GW], trimester avg")
     plt.show()
 
-
-    # plots.curves(
-    #      sensitivity_df['true'], None, None, None,
-    #      xlabel="year",
-    #      ylabel="thermosensitivity [GW/K]",
-    #      title=None,
-    #      ylim=ylim, date_range=None, moving_average=moving_average, groupby=None)
 
 
 
