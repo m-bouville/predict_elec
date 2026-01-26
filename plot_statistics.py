@@ -192,6 +192,168 @@ def drift_with_time(
 
 
 
+# -------------------------------------------------------
+# prices
+# -------------------------------------------------------
+
+def prices_per_season(
+             price: pd.Series,
+        ) -> None:
+
+    print("from", price.index.date.min(), "to", price.index.date.max())
+
+    winter = price[price.index.month.isin([12, 1, 2])]
+    winter['year_as_January'] = (winter.index + pd.DateOffset(months=2)).year.astype(int)
+    # winter['year_pair'] = winter.apply(lambda row: f"{row['year_as_January']-1}-"
+    #                                                f"{row['year_as_January']-2000}", axis=1)
+    # print(winter)
+
+    summer = price[price.index.month.isin([ 6, 7, 8])]
+
+
+    ranges = {'winter':  range(2016, 2027), 'summer': range(2015, 2026)}
+    colors = {'winter': 'skyblue', 'summer': 'orange',
+              2020: 'blue', 2021: 'cornflowerblue', 2022: 'red', 2023: 'hotpink',
+              2024: 'green', 2025: 'chartreuse', 2026: 'yellowgreen'}
+    styles = {'avg': 'solid',   'std': 'dotted',  'range': 'dashed'}
+    names  = {'avg': "average", 'std': "std dev", 'range': "amplitude"}
+    styles.pop('std');  names.pop('std')
+
+    # plt.figure(figsize=(10,6))
+    # plt.plot(winter.index, winter['price_euro_per_MWh'].values, label="winter", color="skyblue")
+    # plt.plot(summer.index, summer['price_euro_per_MWh'].values, label="summer", color="orange")
+    # plt.ylabel("spot price [€/MWh]")
+    # plt.xlabel("time of day [UCT]")
+    # plt.legend()
+    # plt.show()
+
+    _ylim = [0, 150]
+    _dict_stats = {'avg_winter': [], 'std_winter': [], 'range_winter': [],
+                   'avg_summer': [], 'std_summer': [], 'range_summer': []}
+
+    # winter
+    plt.figure(figsize=(10,6))
+    for _year in ranges['winter']:
+        _winter = winter[winter['year_as_January'] == _year].\
+            drop(columns=['year_as_January'])
+        _winter = _winter.groupby(_winter.index.hour).mean()
+
+        _dict_stats['avg_winter'  ].append(float(_winter.mean().iloc[0]))
+        # _dict_stats['std_winter'  ].append(float(_winter.std ().iloc[0]))
+        _dict_stats['range_winter'].append(float((_winter.max()-_winter.min()).iloc[0]))
+
+        _winter = _winter.rename(lambda x: x + 1).rename_axis('hour_local')
+        _winter.loc[0] = _winter.loc[24]
+        _winter.sort_index(inplace=True)
+        # print(_year, _winter)
+
+        if _year >= 2020:
+            plt.plot(_winter.index, _winter.values,
+                     color=colors[_year], label=f"{_year-1}-{_year-2000}")
+
+    plt.ylabel("winter spot price [€/MWh]")
+    plt.xlabel("local time of day")
+    plt.ylim(_ylim)
+    plt.legend()
+    plt.show()
+
+    # # avg and std dev as functions of year
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(range(2016, 2026), _list_avg_winter, label="average, winter")
+    # plt.plot(range(2016, 2026), _list_std_winter, label="std dev, winter")
+    # plt.xlabel('year (of January)')
+    # plt.ylabel('winter spot price [€/MWh]')
+    # plt.ylim(2015, 2026)
+    # plt.ylim(_ylim)
+    # plt.legend()
+    # plt.show()
+
+
+    # summer
+    plt.figure(figsize=(10,6))
+    for _year in ranges['summer']:
+        _summer = summer[summer.index.year == _year]
+        _summer = _summer.groupby(_summer.index.hour).mean()
+
+        _dict_stats['avg_summer'  ].append(float(_summer.mean().iloc[0]))
+        # _dict_stats['std_summer'  ].append(float(_summer.std ().iloc[0]))
+        _dict_stats['range_summer'].append(float((_summer.max()-_summer.min()).iloc[0]))
+
+        _summer = _summer.rename(lambda x: x + 2).rename_axis('hour_local')
+        _summer.loc[0] = _summer.loc[24]
+        _summer.loc[1] = _summer.loc[25]
+        _summer.drop(index=[25], inplace=True)
+        _summer.sort_index(inplace=True)
+        # print(_year, _summer)
+
+        if _year >= 2020:
+            plt.plot(_summer.index, _summer['price_euro_per_MWh'].values,
+                     color=colors[_year], label=_year)
+
+    plt.ylabel("summer spot price [€/MWh]")
+    plt.xlabel("local time of day")
+    plt.ylim(_ylim)
+    plt.legend()
+    plt.show()
+
+
+    # avg and std dev as functions of year
+
+    plt.figure(figsize=(10, 6))
+    for _season in list(ranges.keys()):
+        for _stat in list(names.keys()):
+            plt.plot(ranges[_season], _dict_stats[_stat+'_'+_season],
+                     label = names[_stat] + ", " + _season,
+                     color=colors[_season], linestyle=styles[_stat])
+    plt.xlabel('year (winter: year of January)')
+    plt.ylabel('spot price [€/MWh]')
+    plt.xlim(2014, 2027)
+    plt.ylim(_ylim)
+    plt.legend(ncols=2)
+    plt.show()
+
+    _dict_ref = {}
+    for key in list(_dict_stats.keys()):
+        _dict_ref[key] = np.mean(_dict_stats[key][:6])
+
+    plt.figure(figsize=(10, 6))
+
+    for _season in list(ranges.keys()):
+        for _stat in list(names.keys()):
+            _complete = _stat+'_'+_season
+            plt.plot(ranges[_season], _dict_stats[_complete]/_dict_ref[_complete],
+                     label = names[_stat] + ", " + _season,
+                     color=colors[_season], linestyle=styles[_stat])
+    plt.xlabel('year (winter: year of January)')
+    plt.ylabel('spot price, normalized')
+    plt.xlim(2014, 2027)
+    plt.ylim(0, 6)
+    plt.legend(ncols=2)
+    plt.show()
+
+
+    _dict_ref = {}
+    for key in list(_dict_stats.keys()):
+        _dict_ref[key] = np.mean(_dict_stats[key][:6])
+
+    plt.figure(figsize=(10, 6))
+
+    normalized_amplitude = {_season:
+    [round(rg/avg, 3) for (rg, avg) in
+     zip(_dict_stats['range_'+ _season], _dict_stats['avg_'  + _season])]
+                        for _season in list(ranges.keys())}
+    print(normalized_amplitude)
+
+    for _season in list(ranges.keys()):
+        plt.plot(ranges[_season], normalized_amplitude[_season],
+                 label=_season, color=colors[_season])
+    plt.xlabel('year (winter: year of January)')
+    plt.ylabel('spot price: (max - min) / average')
+    plt.xlim(2014, 2027)
+    plt.ylim(0, 2)
+    plt.legend(loc='upper left')
+    plt.show()
+
 
 # -------------------------------------------------------
 # thermosensitivity by région
@@ -575,10 +737,8 @@ def thermosensitivity_per_temperature_model(
 def thermosensitivity_per_date_discrete(
      consumption      : pd.Series,
      temperature      : pd.Series,
-     num_steps_per_day: int,
      ranges_years     : List[List[int]],
-     ylim             : [float, float] = [-1.65, -1.25],
-     moving_average   = None
+     num_steps_per_day: int,
      )   -> None:
 
 
@@ -590,8 +750,7 @@ def thermosensitivity_per_date_discrete(
     common_indices = _consumption.index.intersection(_temperature.index)
     _temperature = _temperature.reindex(common_indices)
     _consumption = _consumption.reindex(common_indices)
-    _year = pd.Series(common_indices.year - year_ref + common_indices.dayofyear/365,
-                      index = common_indices, name="year")  # for long-term drift
+
 
     # statistics consumption and temperature
     consumption_per_range = [];  temperature_per_range = []
@@ -608,9 +767,6 @@ def thermosensitivity_per_date_discrete(
                                  for _series in consumption_per_range]
     avg_temperature_per_range = [round(float(_series.mean()), 2)
                                  for _series in temperature_per_range]
-
-
-    # _temperature_sat19 = (_temperature.clip(upper=19) - 19)
 
 
     # thermosensitivity
@@ -744,154 +900,6 @@ def thermosensitivity_per_date_discrete(
     # # for i, (k, v) in enumerate(breakdown.items()):      # display values on bars
     # #     plt.text(v, i, f"{k} {v:.1f} GW", color='black', va='center')
     # plt.show()
-
-
-
-
-
-def thermosensitivity_per_date_continuous(
-     consumption      : pd.Series,
-     temperature      : pd.Series,
-     list_dates       : Sequence[pd.DatetimeIndex],
-     num_steps_per_day: int,
-     ylim             : [float, float] = [-1.65, -1.25],
-     moving_average   = None
-     )   -> None:
-
-    year_ref = 2021
-
-    _list_coef     = []
-    _list_intercept= []
-
-    for threshold_degC in np.arange(13, 15.6, 0.5):
-        # _temperature = temperature.resample('D').mean().dropna()
-        _temperature_sat_fit = (temperature.clip(upper=threshold_degC, )- threshold_degC).\
-            resample('D').mean().dropna()
-        _temperature_sat_fit = _temperature_sat_fit[_temperature_sat_fit<0]
-        # _temperature_sat_plot= (temperature.clip(upper=13.5)- 13.5).resample('D').mean().dropna()
-        _consumption = consumption.resample('D').mean().dropna(). \
-                                                reindex(_temperature_sat_fit.index)
-
-        common_indices = _consumption.dropna().index.intersection(
-            _temperature_sat_fit.dropna().index)
-        _temperature_common = _temperature_sat_fit.reindex(common_indices)
-        _consumption_common = _consumption        .reindex(common_indices)
-        _year_common = pd.Series(common_indices.year - year_ref + common_indices.dayofyear/365,
-                          index = common_indices, name="year")  # for long-term drift
-
-
-
-        # _year= pd.Series(_temperature_sat_fit.index.year - year_ref + \
-        #                  _temperature_sat_fit.index.dayofyear/365,
-        #                  index= _temperature_sat_fit.index, name="year")  # for long-term drift
-
-        sensitivity_df = threshold_temp_sensitivity(
-                _consumption, {}, {}, {},
-                _temperature_common.round(1), _consumption_common.index, name_col='date',
-                thresholds=list_dates, direction='==',
-                num_steps_per_day=num_steps_per_day)
-
-        _sensitivity = sensitivity_df['true'] #.resample('D').mean().dropna()
-
-
-        # linear regression to quantify thermosensitivity in winter
-        model = LinearRegression()
-        X_year = pd.DataFrame(_sensitivity.index.year - year_ref + \
-                              _sensitivity.index.dayofyear/365,
-                                   index = _sensitivity.index
-                              )
-        model.fit(X_year, _sensitivity)
-
-        # _formula_model = f"{model.intercept_:.2f} GW/K + " \
-        #                  f"{model.coef_[0]:.3f} * (year - {year_ref})"
-        # print(f"thermosensitivity "
-        #       f"({sum(_temperature_sat_fit<0):4n} with T < {threshold_degC:4.1f} °C, "
-        #       f"R² ={model.score(X_year, _sensitivity)*100:3.0f}%) = "
-        #       f"{_formula_model}")
-
-        _list_coef     .append(model.coef_[0])
-        _list_intercept.append(model.intercept_)
-
-
-    # sensitivity_model = _year_common * np.mean(_list_coef) + np.mean(_list_intercept)
-
-    _formula_model = f"{np.mean(_list_intercept):.2f} GW/K + " \
-                     f"{np.mean(_list_coef):.3f} * (year - {year_ref})"
-    print(f"thermosensitivity = {_formula_model}")
-
-    # plt.figure(figsize=(10,6))
-    # # print("_consumption:", _consumption)
-    # plt.plot(_sensitivity.index, _sensitivity.rolling(
-    #                         6, min_periods=5, center=True).mean().values,
-    #          label="actual",  color="black")
-    # plt.plot(sensitivity_model.index, sensitivity_model.values,
-    #          label=f"model: {_formula_model}",color="red")
-    # # plt.hlines(0, _consumption.index[0], _consumption.index[-1], color="black")
-    # plt.xlabel("year")
-    # plt.ylabel(f"thermosensitivity [GW/K], T < {threshold_degC:4.1f} °C, annual moving average")
-    # plt.legend()
-    # plt.show()
-
-
-    # I calculate thermsensitivity for T < 12 °C to avoid the bend around 15 °C
-    #   but for the net consumption, I avoid excluding days with (a little) heating
-
-    _temperature_sat = ((temperature.clip(upper=15.75) - 15.75).rolling(30, min_periods=30, center=True) \
-                     .mean()).dropna()
-    _consumption = consumption.resample('D').mean().dropna()
-    _consumption = (_consumption.rolling(30, min_periods=30, center=True) \
-                     .mean()).dropna()
-    _year= pd.Series(_temperature_sat.index.year - year_ref + \
-                     _temperature_sat.index.dayofyear/365,
-                     index= _temperature_sat.index, name="year")  # for long-term drift
-    _sensitivity = np.mean(_list_intercept) + _year * np.mean(_list_coef)
-
-
-    _consumption_net = (_consumption - (_sensitivity * _temperature_sat)).dropna()
-    # print("shapes:", _consumption_net.shape, _year.shape,
-    #       pd.DataFrame(_year.reindex(_consumption_net.index)).shape)
-
-    # linear regression to quantify long-term drift
-    model = LinearRegression()
-    X_year = pd.DataFrame(_year.reindex(_consumption_net.index))
-    model.fit(X_year, _consumption_net)
-    # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
-    _formula_model = f"{model.intercept_:.1f} GW " \
-                     f"{model.coef_[0]:.2f} * (year - {year_ref})"
-    print(f"non-thermosensitive consumption "
-          f"[R² ={model.score(X_year, _consumption_net)*100:3.0f}%] = {_formula_model}")
-
-    consumption_net_model = _year * model.coef_[0] + model.intercept_
-
-
-
-    plt.figure(figsize=(10,6))
-    sma_days = 3*30
-    # plt.plot(_consumption.index, plots._apply_moving_average(
-    #     _consumption, sma_days).values, label="complete",color="grey")
-    plt.plot(_consumption_net.index, plots._apply_moving_average(
-        _consumption_net, sma_days).values, label="actual",color="black")
-    plt.plot(consumption_net_model.index, consumption_net_model.values,
-             label=f"trend: {_formula_model}",color="red")
-    plt.ylim(38, 46)
-    plt.xlabel("year")
-    plt.ylabel("non-thermosensitive consumption [GW], trimester moving average")
-    plt.legend(loc='lower left')
-    plt.show()
-
-
-    # residual
-    plt.figure(figsize=(10,6))
-    sma_days = 3*30
-    plt.plot(_consumption_net.index, plots._apply_moving_average(
-        _consumption_net - consumption_net_model.reindex(_consumption_net.index),
-        sma_days).values,
-             label="actual - trend",color="black")
-    plt.hlines(0, _year.index[0], _year.index[-1], color="black")
-    plt.ylim(-5., 3.)
-    plt.xlabel("year")
-    plt.ylabel("residual non-thermosensitive consumption [GW], trimester avg")
-    plt.show()
 
 
 

@@ -680,35 +680,27 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
         plot_statistics.drift_with_time(
              dfs['consumption']['consumption_GW'],
-             dfs['temperature']["Tavg_degC"],
+             dfs['temperature']['Tavg_degC'],
              num_steps_per_day=num_steps_per_day
         )
 
         plot_statistics.thermosensitivity_per_temperature(
              dfs['consumption']['consumption_GW'],
-             dfs['temperature']["Tavg_degC"],
+             dfs['temperature']['Tavg_degC'],
              thresholds_degC= np.arange(-1., 26.5, step=0.1),
              num_steps_per_day=num_steps_per_day
         )
 
-        # plot_statistics.thermosensitivity_per_date_continuous(
-        #      dfs['consumption']['consumption_GW'],
-        #      dfs['temperature']["Tavg_degC"],
-        #      list_dates = pd.date_range(
-        #          start= '2016-07-01 00:00:00+0000',
-        #          end  = '2025-06-01 00:00:00+0000', freq = '1ME'),  # months
-        #      num_steps_per_day=num_steps_per_day,
-        #      ylim = [-2.45, -2.15], moving_average=24
-        # )
-
         plot_statistics.thermosensitivity_per_date_discrete(
              dfs['consumption']['consumption_GW'],
-             dfs['temperature']["Tavg_degC"],
+             dfs['temperature']['Tavg_degC'],
              ranges_years = [[2016, 2019], [2023, 2025]],
-             num_steps_per_day=num_steps_per_day,
-             ylim = [-2.45, -2.15], moving_average=24
+             num_steps_per_day=num_steps_per_day
         )
 
+        plot_statistics.prices_per_season(
+             dfs['price'][['price_euro_per_MWh']],
+        )
 
         # sys.exit()
 
