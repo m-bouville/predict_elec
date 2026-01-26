@@ -10,7 +10,7 @@
 
 import sys
 
-from   typing   import Dict, Optional, Tuple, Sequence, List  # , Any,
+from   typing   import Dict, Optional, Tuple, Sequence, List, Any
 
 import numpy  as np
 import pandas as pd
@@ -219,17 +219,10 @@ def prices_per_season(
     names  = {'avg': "average", 'std': "std dev", 'range': "amplitude"}
     styles.pop('std');  names.pop('std')
 
-    # plt.figure(figsize=(10,6))
-    # plt.plot(winter.index, winter['price_euro_per_MWh'].values, label="winter", color="skyblue")
-    # plt.plot(summer.index, summer['price_euro_per_MWh'].values, label="summer", color="orange")
-    # plt.ylabel("spot price [€/MWh]")
-    # plt.xlabel("time of day [UCT]")
-    # plt.legend()
-    # plt.show()
-
     _ylim = [0, 150]
     _dict_stats = {'avg_winter': [], 'std_winter': [], 'range_winter': [],
                    'avg_summer': [], 'std_summer': [], 'range_summer': []}
+
 
     # winter
     plt.figure(figsize=(10,6))
@@ -256,17 +249,6 @@ def prices_per_season(
     plt.ylim(_ylim)
     plt.legend()
     plt.show()
-
-    # # avg and std dev as functions of year
-    # plt.figure(figsize=(10, 6))
-    # plt.plot(range(2016, 2026), _list_avg_winter, label="average, winter")
-    # plt.plot(range(2016, 2026), _list_std_winter, label="std dev, winter")
-    # plt.xlabel('year (of January)')
-    # plt.ylabel('winter spot price [€/MWh]')
-    # plt.ylim(2015, 2026)
-    # plt.ylim(_ylim)
-    # plt.legend()
-    # plt.show()
 
 
     # summer
@@ -298,7 +280,6 @@ def prices_per_season(
 
 
     # avg and std dev as functions of year
-
     plt.figure(figsize=(10, 6))
     for _season in list(ranges.keys()):
         for _stat in list(names.keys()):
@@ -353,6 +334,8 @@ def prices_per_season(
     plt.ylim(0, 2)
     plt.legend(loc='upper left')
     plt.show()
+
+
 
 
 # -------------------------------------------------------
@@ -618,7 +601,8 @@ def threshold_temp_sensitivity(
     name_col            : str,
     thresholds          : Sequence[float | None],
     direction           : str,  # '<=', '>=' or '=='
-    num_steps_per_day   : int
+    num_steps_per_day   : int,
+    width               : float | pd.Timedelta,
 ) -> pd.DataFrame:
     """
     Time-of-day–dependent temperature sensitivity:
@@ -647,12 +631,10 @@ def threshold_temp_sensitivity(
     # print(thresholds)
     # print(df.head())
 
-    width = {'T_degC': 2, 'date': pd.Timedelta(days=6*30)}
-
     rows = dict()
     for _target in thresholds:
         if _target:
-            _df = apply_threshold(df, name_col, _target, direction, width[name_col])
+            _df = apply_threshold(df, name_col, _target, direction, width)
         else:
             _df = df.copy()
 
@@ -661,11 +643,15 @@ def threshold_temp_sensitivity(
         #     rows[_target] = [np.nan] * len(columns_preds)
         #     continue
 
+
         slopes = []
         for _col in columns_preds:
-            slopes.append(round(LinearRegression().fit(
-                _df[['T_degC']], _df[_col]).coef_[0], 3))
-            # print(_target, _col, slopes)
+            if len(_df[_col]) < 10:
+                slopes.append(np.nan)
+            else:
+                slopes.append(round(LinearRegression().fit(
+                    _df[['T_degC']], _df[_col]).coef_[0], 3))
+                # print(_target, _col, slopes)
 
         rows[_target] = slopes
 
@@ -680,21 +666,54 @@ def thermosensitivity_per_temperature(
      temperature      : pd.Series,
      thresholds_degC  : Sequence[float],
      num_steps_per_day: int,
-     ylim             : [float, float] = [-3., 0.5]
+     deltaT_K         : float = 1.
      )   -> None:
-    sensitivity_df = threshold_temp_sensitivity(
-            consumption, {}, {}, {},
-            temperature.round(1), consumption.index, name_col='T_degC',
-            thresholds=thresholds_degC, direction='==',
-            num_steps_per_day=num_steps_per_day)
 
-    plots.curves(
-         sensitivity_df['true'], None, None, None,
-         xlabel="threshold T_avg [°C]",
-         ylabel="thermosensitivity [GW/K]",
-         title=None,
-         ylim=ylim, date_range=None, moving_average=7, groupby=None)
+    def _sensitivity(conso: pd.Series, temp: pd.Series)  -> pd.DataFrame:
+        return threshold_temp_sensitivity(
+                conso, {}, {}, {},
+                temp.round(1), conso.index, name_col='T_degC',
+                thresholds=thresholds_degC, direction='==',
+                num_steps_per_day=num_steps_per_day, width = 1)
 
+    colors = {'all': 'black', 'is_warmer': 'orange',
+              'is_colder': 'skyblue', 'is_stable': 'grey'}
+
+    _consumption  =  consumption.resample('D').mean().dropna()
+    common_indices= _consumption.index.intersection(temperature.index)
+    _temperature  =  temperature.reindex(common_indices)
+    _consumption  = _consumption.reindex(common_indices)
+
+
+    df_temperature = _temperature.to_frame()
+    df_temperature['yesterday'] = temperature.shift(1)
+    df_temperature['delta_k'] = (df_temperature['Tavg_degC'] - df_temperature['yesterday'])
+
+    df_temperature['is_warmer'] = (df_temperature['delta_k'] >  deltaT_K)
+    df_temperature['is_colder'] = (df_temperature['delta_k'] < -deltaT_K)
+    df_temperature['is_stable'] = (df_temperature['delta_k'] >= -deltaT_K) & \
+                                  (df_temperature['delta_k'] <=  deltaT_K)
+
+
+    sensitivity_df = pd.DataFrame()
+    sensitivity_df["all"] = _sensitivity(_consumption, _temperature)
+
+    for _state in ['is_warmer', 'is_colder', 'is_stable']:
+        print(_state, sum(df_temperature[_state]))
+        sensitivity_df[_state] = _sensitivity(
+            _consumption[df_temperature[_state]],
+            _temperature[df_temperature[_state]])
+
+    plt.figure(figsize=(10,6))
+    for _state in ['all', 'is_warmer', 'is_colder', 'is_stable']:
+        plt.plot(sensitivity_df[_state].index,
+                 sensitivity_df[_state].rolling(10, min_periods=7).mean(),
+                 color=colors[_state], label=_state)
+    plt.xlabel("threshold T_avg [°C]")
+    plt.ylabel("thermosensitivity [GW/K]")
+    plt.ylim(bottom=-3.5)
+    plt.legend()
+    plt.show()
 
 
 
@@ -709,7 +728,7 @@ def thermosensitivity_per_temperature_model(
             data_split.dict_preds_ML, data_split.dict_preds_meta,
             data_split.Tavg_degC.round(1), data_split.dates,
             thresholds=thresholds_degC, direction='==',
-            num_steps_per_day=num_steps_per_day)
+            num_steps_per_day=num_steps_per_day, width=2)
 
     # /!\ quantiles are meaningless
     #   they are slopes of quantiles, not quantiles of slopes
@@ -794,7 +813,9 @@ def thermosensitivity_per_date_discrete(
                 consumption_per_range[i], {}, {}, {},
                 _temperature_in_range, _index_sat, name_col='date',
                 thresholds=[None], direction=None,
-                num_steps_per_day=num_steps_per_day)
+                num_steps_per_day=num_steps_per_day,
+                width = pd.Timedelta(days=6*30)
+                )
 
             _sensitivity_per_range.append(float(sensitivity_df['true'].mean()))
 
