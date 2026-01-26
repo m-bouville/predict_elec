@@ -661,7 +661,49 @@ def threshold_temp_sensitivity(
     return _df
 
 
-def thermosensitivity_per_temperature(
+def thermosensitivity_per_temperature_by_season(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     thresholds_degC  : Sequence[float],
+     num_steps_per_day: int,
+     deltaT_K         : float = 1.5
+     )   -> None:
+
+    def _sensitivity(conso: pd.Series, temp: pd.Series)  -> pd.DataFrame:
+        return threshold_temp_sensitivity(
+                conso, {}, {}, {},
+                temp.round(1), conso.index, name_col='T_degC',
+                thresholds=thresholds_degC, direction='==',
+                num_steps_per_day=num_steps_per_day, width = 1)
+
+    months = {'spring': [3, 4, 5], 'summer': [ 6, 7, 8],
+              'autumn': [9,10,11], 'winter': [12, 1, 2]}
+    colors = {'spring': 'green', 'summer': 'orange',
+              'autumn': 'brown', 'winter': 'skyblue', 'all': 'black'}
+
+    sensitivity_df = pd.DataFrame()
+    sensitivity_df["all"] = _sensitivity(consumption, temperature)
+
+    for _season in list(months.keys()):
+        # print(_state, sum(df_temperature[_state]))
+        sensitivity_df[_season] = _sensitivity(
+            consumption[consumption.index.month.isin(months[_season])],
+            temperature[temperature.index.month.isin(months[_season])])
+
+    plt.figure(figsize=(10,6))
+    for _season in ["all"] + list(months.keys()):
+        plt.plot(sensitivity_df[_season].index,
+                 sensitivity_df[_season].rolling(15, min_periods=12).mean(),
+                 color=colors[_season], label=_season)
+    plt.xlabel("threshold T_avg [°C]")
+    plt.ylabel("thermosensitivity [GW/K]")
+    plt.ylim(bottom=-3.5)
+    plt.legend()
+    plt.show()
+
+
+
+def thermosensitivity_per_temperature_hysteresis(
      consumption      : pd.Series,
      temperature      : pd.Series,
      thresholds_degC  : Sequence[float],
