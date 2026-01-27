@@ -23,6 +23,8 @@ import pickle
 import numpy  as np
 import pandas as pd
 
+import matplotlib.pyplot as plt
+
 
 import architecture, plots, plot_statistics  # constants
 
@@ -529,6 +531,159 @@ def load_temperature(
 
 
 
+# https://odre.opendatasoft.com/explore/dataset/production-nette-nucleaire/
+# Last processing: December 15, 2025 (data + metadata)
+
+def load_nuclear(
+        path   : str = 'data/archives/production-nette-nucleaire.csv',
+        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/production-nette-nucleaire/exports/csv?'
+                       'lang=en&timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
+        verbose: int = 0) -> pd.Series:
+
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df = pd.read_csv(url, sep=';')
+        df.to_csv(path, sep=';')
+
+    df['datetime_UTC'] = pd.to_datetime(df['Date heure'], utc=True)
+    df = df.set_index('datetime_UTC').sort_index()
+        # was inverse inverse chronology
+    df.index.name = "datetime_UTC"
+
+    df = df[['Production nette en GWh']]
+    df = df.rename(columns={'Production nette en GWh': 'prod_nuclear_GW'})
+        # hourly GWh equivalent to GW
+
+    if verbose >= 3:
+        df['year']     = df.index.year
+        df['month']    = df.index.month
+        df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+            year=2000, month=d.month, day=d.day))
+        df['timeofday']= df.index.hour + df.index.minute/60
+
+        plt.figure(figsize=(10,6))
+        df['prod_nuclear_GW'].rolling(24*365).mean().plot()
+        plt.ylabel("nuclear production [GW], annual moving average")
+        plt.xlabel("year")
+        plt.show()
+
+        plt.figure(figsize=(10,6))
+        df.groupby('timeofday').mean()['prod_nuclear_GW'].plot()
+        plt.ylabel("nuclear production [GW]")
+        plt.xlabel('time of day (UTC)')
+        plt.show()
+
+        plt.figure(figsize=(10,6))
+        df.groupby('dateofyear').mean() \
+            .rolling(7).mean() \
+            ['prod_nuclear_GW'].plot()
+        plt.ylabel("nuclear production [GW], weekly moving average")
+        plt.xlabel('dateofyear')
+        plt.show()
+
+
+    return df['prod_nuclear_GW']
+
+
+def load_eco2mix(
+        path   : str = 'data/archives/eco2mix-national-tr.csv',
+        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/eco2mix-national-tr/exports/csv?lang=en&'
+                       'timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
+        verbose: int = 0) -> pd.Series:
+
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        df = pd.read_csv(path, sep=';')
+    else:
+        # Load from URL
+        df = pd.read_csv(url, sep=';')
+        df.to_csv(path, sep=';')
+
+    df.drop(columns=['Périmètre', 'Nature', 'Date', 'Heure'], inplace=True)
+
+    df.dropna(inplace=True)  # rows of NA for the most recent time steps
+
+    df['Date - Heure'] = pd.to_datetime(df['Date - Heure'], utc=True)
+    df = df.set_index('Date - Heure').sort_index()
+        # was inverse inverse chronology
+    df.index.name = "datetime_UTC"
+    df = df[~df.index.duplicated(keep="first")]
+
+    # cleaning names: eg "Bioénergies - Déchets (MW)" -> "Bioénergies_Déchets_MW"
+    df.columns = df.columns.str.replace(r'[()\-.]', '', regex=True) \
+                           .str.replace(' ', '_')
+
+    # remove breakdowns
+    df = df.loc[:, ~df.columns.str.contains(r'^Ech_comm_.*_MW$')]
+    df = df.loc[:, ~df.columns.str.contains(r'^Fioul__.*_MW$')]
+    df = df.loc[:, ~df.columns.str.contains(r'^Gaz__.*_MW$')]
+    df = df.loc[:, ~df.columns.str.contains(r'^Bioénergies__.*_MW$')]
+    df = df.loc[:, ~df.columns.str.contains(r'^Hydraulique__.*_MW$')]
+
+
+    # convert to GW
+    df = (df / 1000).round(2)
+    df.columns = df.columns.str.replace('MW', 'GW')
+
+
+    if verbose >= 3:
+        print(df.mean(axis=0).round(2))
+
+        # df['year']     = df.index.year
+        # df['month']    = df.index.month
+        # df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+        #     year=2000, month=d.month, day=d.day))
+        df['timeofday']= df.index.hour + df.index.minute/60
+
+        plt.figure(figsize=(10,6))
+        df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #'Eolien_offshore_GW'
+            'Ech_physiques_GW', 'Pompage_GW']].rolling(4*24*7).mean().plot()
+        plt.ylabel("production [GW], weekly moving average")
+        plt.xlabel("year")
+        plt.legend()
+        plt.show()
+
+        plt.figure(figsize=(10,6))
+        df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
+            'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        plt.ylabel("production [GW]")
+        plt.xlabel('time of day (UTC)')
+        plt.legend()
+        plt.show()
+
+
+        # as fraction of consumption
+        df_norm_pc = df.div(df['Consommation_GW'], axis=0) * 100
+        df_norm_pc.columns = df.columns.str.replace('GW', 'pc')
+        df_norm_pc['timeofday'] = df['timeofday']
+        print(df_norm_pc.mean(axis=0).round(2))
+
+        plt.figure(figsize=(10,6))
+        df_norm_pc[['Hydraulique_pc', 'Solaire_pc', 'Eolien_pc', #'Eolien_offshore_pc'
+            'Ech_physiques_pc', 'Pompage_pc']].rolling(4*24*7).mean().plot()
+        plt.ylabel("production [%], weekly moving average")
+        plt.xlabel("year")
+        plt.legend()
+        plt.show()
+
+        plt.figure(figsize=(10,6))
+        df_norm_pc[['Hydraulique_pc', 'Solaire_pc', 'Eolien_pc', #♦ 'Eolien_offshore_pc',
+            'Ech_physiques_pc', 'Pompage_pc', 'timeofday']].groupby('timeofday').mean().plot()
+        plt.ylabel("production [%]")
+        plt.xlabel('time of day (UTC)')
+        plt.legend()
+        plt.show()
+
+    return df
+
+
+
+
 
 # -------------------------------------------------------
 # Load prices
@@ -631,6 +786,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
     # print("weights_regions:", weights_regions)
 
+
     # Load both CSVs
     for name, path in dict_input_csv_fnames.items():
         if not os.path.exists(path):
@@ -674,35 +830,35 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
-    if verbose >= 3:
-        # plot_statistics.thermosensitivity_regions(
-        #     dfs['consumption_by_region'], dfs['temperature'])
+    if verbose >= -3:
+        # # plot_statistics.thermosensitivity_regions(
+        # #     dfs['consumption_by_region'], dfs['temperature'])
 
-        plot_statistics.drift_with_time(
-             dfs['consumption']['consumption_GW'],
-             dfs['temperature']['Tavg_degC'],
-             num_steps_per_day=num_steps_per_day
-        )
+        # plot_statistics.drift_with_time(
+        #      dfs['consumption']['consumption_GW'],
+        #      dfs['temperature']['Tavg_degC'],
+        #      num_steps_per_day=num_steps_per_day
+        # )
 
-        plot_statistics.thermosensitivity_per_temperature(
+        plot_statistics.thermosensitivity_per_temperature_by_season(
              dfs['consumption']['consumption_GW'],
              dfs['temperature']['Tavg_degC'],
              thresholds_degC= np.arange(-1., 26.5, step=0.1),
              num_steps_per_day=num_steps_per_day
         )
 
-        plot_statistics.thermosensitivity_per_date_discrete(
-             dfs['consumption']['consumption_GW'],
-             dfs['temperature']['Tavg_degC'],
-             ranges_years = [[2016, 2019], [2023, 2025]],
-             num_steps_per_day=num_steps_per_day
-        )
+        # plot_statistics.thermosensitivity_per_date_discrete(
+        #      dfs['consumption']['consumption_GW'],
+        #      dfs['temperature']['Tavg_degC'],
+        #      ranges_years = [[2016, 2019], [2023, 2025]],
+        #      num_steps_per_day=num_steps_per_day
+        # )
 
-        plot_statistics.prices_per_season(
-             dfs['price'][['price_euro_per_MWh']],
-        )
+        # plot_statistics.prices_per_season(
+        #      dfs['price'][['price_euro_per_MWh']],
+        # )
 
-        # sys.exit()
+        sys.exit()
 
 
 
