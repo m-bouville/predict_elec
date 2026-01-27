@@ -39,6 +39,73 @@ os.makedirs('cache', exist_ok=True)
 # -------------------------------------------------------
 
 
+def load_consumptions_recent(
+    path_nation:str= 'data/eco2mix-national-tr.csv',
+    url_nation: str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/eco2mix-national-tr/exports/csv?'
+                       'timezone=UTC&use_labels=true&delimiter=%3B',
+
+    path_region:str= 'data/eco2mix-regional-tr.csv',
+    url_region: str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                       'datasets/eco2mix-regional-tr/exports/csv?'
+                       'timezone=UTC&use_labels=true&delimiter=%3B',
+    verbose:   int = 0) -> Tuple[pd.Series, pd.DataFrame]:
+
+
+    # national data
+    if os.path.exists(path_nation):
+        df_nation = pd.read_csv(path_nation, sep=';')
+    else:
+        # Load from URL
+        df_nation = pd.read_csv(url_nation, sep=';')
+        df_nation.to_csv(path_nation, sep=';')
+
+    df_nation['Date - Heure'] = pd.to_datetime(df_nation['Date - Heure'], utc=True)
+    df_nation = df_nation.set_index('Date - Heure').sort_index()
+    df_nation.index.name = "datetime_utc"
+
+    #  convert to GW and remove rows of NA for the most recent time steps
+    df_nation = (df_nation['Consommation (MW)'] / 1000).round(3).dropna()
+    df_nation.columns = ['consumption_GW']
+
+    df_nation = df_nation.resample('30min').mean()  # to match the rest of the dataset
+
+
+    # régional
+    if os.path.exists(path_region):
+        df_region = pd.read_csv(path_region, sep=';')
+    else:
+        # Load from URL
+        df_region = pd.read_csv(url_region, sep=';')
+        df_region.to_csv(path_region, sep=';')
+
+    df_region['Date - Heure'] = pd.to_datetime(df_region['Date - Heure'], utc=True)
+    df_region = df_region.set_index('Date - Heure').sort_index()
+    df_region.index.name = "datetime_utc"
+
+    df_region = df_region[['Région', 'Consommation (MW)']]
+
+    #  convert to GW
+    df_region = df_region.rename(columns={'Consommation (MW)': 'consumption_GW'})
+    df_region['consumption_GW'] = (df_region['consumption_GW'] / 1000).round(3)
+
+    df_region = df_region.pivot_table(
+        index="datetime_utc", columns="Région", values='consumption_GW',
+        aggfunc='mean').sort_index()
+
+    df_region = df_region.resample('30min').mean()  # to match the rest of the dataset
+
+    # remove rows with at least 2 NAs
+    df_region = df_region.dropna(thresh=2)
+
+    #  Nouvelle-Aquitaine is missing lots of data
+    # print(df_region.iloc[-48*2])
+
+
+    return df_nation, df_region
+
+
+
 # https://odre.opendatasoft.com/explore/dataset/consommation-quotidienne-brute/
 # depth of historical data: 2012 to date (M-1)
 # Last processing
@@ -48,7 +115,9 @@ def load_consumption(
         path   : str = 'data/consommation-quotidienne-brute.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute/exports/csv?'
-                       'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
+                       'timezone=Europe/Paris&use_labels=true&delimiter=%3B',
+            # 'timezone=UTC' is not genuine UTC: it has duplicates
+        df_recent: Optional[pd.Series] = None,
         verbose: int = 0) -> pd.DataFrame:
 
     # load local file if it exists, otherwise get it online
@@ -67,7 +136,7 @@ def load_consumption(
     df[col_datetime] = pd.to_datetime(df[col_datetime])
     df = df.set_index(col_datetime).sort_index()
     df.index = df.index.tz_convert("UTC")
-    df.index.name = "datetime"
+    df.index.name = "datetime_utc"
 
     df = df[['Consommation brute électricité (MW) - RTE']]
     df = df.rename(columns={
@@ -77,6 +146,14 @@ def load_consumption(
 
     # plots.data(df.resample('D').mean(),
     #           xlabel="date", ylabel="consumption (MW)")
+
+
+    # concatenate more recent data
+    if df_recent is not None:
+        # print(df['consumption_GW'])
+        # print(df_recent)
+        df = df['consumption_GW'].combine_first(df_recent).to_frame()
+        # df = df.resample('30min').mean()
 
     df['year']     = df.index.year
     df['month']    = df.index.month
@@ -116,8 +193,9 @@ def load_consumption_by_region(
         path   : str = 'data/consommation-quotidienne-brute-regionale.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute-regionale/exports/'
-                       'csv?lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
+                       'csv?timezone=UTC&use_labels=true&delimiter=%3B',
         cache_dir:str= 'cache',
+        df_recent: Optional[pd.Series] = None,
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
 
     # This input csv is an order of magnitude larger than all others combined
@@ -168,7 +246,7 @@ def load_consumption_by_region(
         col_datetime = 'Date - Heure'  # given as local time
         df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)
         df = df.set_index(col_datetime).sort_index()
-        # df.index.name = "datetime"
+        # df.index.name = "datetime_utc"
 
         df = df[['Région', 'Consommation brute électricité (MW) - RTE']]
         df = df.rename(columns={
@@ -179,9 +257,17 @@ def load_consumption_by_region(
         # plots.data(df.resample('D').mean(),
         #           xlabel="date", ylabel="consumption (MW)")
 
-        df['datetime'] = df.index
-        df = df.pivot_table(index="datetime",columns="Région",values='consumption_GW',
+        df['datetime_utc'] = df.index
+        df = df.pivot_table(index="datetime_utc",columns="Région",values='consumption_GW',
                       aggfunc='mean').sort_index()
+
+        # concatenate more recent data
+        if df_recent is not None:
+            # print(df)
+            # print(df_recent)
+            df = df.combine_first(df_recent)
+            # df = df.resample('30min').mean()
+            # print(df)
 
 
         out = pd.DataFrame()
@@ -298,7 +384,7 @@ def load_temperature(
         weights: Dict[str, float],
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/temperature-quotidienne-regionale/exports/csv?'
-                       'lang=en&timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
+                       'timezone=UTC&use_labels=true&delimiter=%3B',
         # noise_std: float or Tuple[float] = 0.,# realistic forecast error
         verbose: int = 0) -> [pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
@@ -510,7 +596,7 @@ def load_temperature(
 #     col = "Date"
 #     df[col] = pd.to_datetime(df[col], utc=True)
 #     df = df.set_index(col).sort_index()
-#     df.index.name = "datetime"
+#     df.index.name = "datetime_utc"
 
 #     df.drop(columns=["Code INSEE région"], errors="ignore", inplace=True)
 
@@ -531,6 +617,12 @@ def load_temperature(
 
 
 
+
+# -------------------------------------------------------
+# Load misc. (nuclear, éco2mix)
+# -------------------------------------------------------
+
+
 # https://odre.opendatasoft.com/explore/dataset/production-nette-nucleaire/
 # Last processing: December 15, 2025 (data + metadata)
 
@@ -538,7 +630,7 @@ def load_nuclear(
         path   : str = 'data/archives/production-nette-nucleaire.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/production-nette-nucleaire/exports/csv?'
-                       'lang=en&timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
+                       'timezone=UTC&use_labels=true&delimiter=%3B',
         verbose: int = 0) -> pd.Series:
 
     # load local file if it exists, otherwise get it online
@@ -549,10 +641,10 @@ def load_nuclear(
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
 
-    df['datetime_UTC'] = pd.to_datetime(df['Date heure'], utc=True)
-    df = df.set_index('datetime_UTC').sort_index()
+    df['datetime_utc'] = pd.to_datetime(df['Date heure'], utc=True)
+    df = df.set_index('datetime_utc').sort_index()
         # was inverse inverse chronology
-    df.index.name = "datetime_UTC"
+    df.index.name = "datetime_utc"
 
     df = df[['Production nette en GWh']]
     df = df.rename(columns={'Production nette en GWh': 'prod_nuclear_GW'})
@@ -589,30 +681,67 @@ def load_nuclear(
     return df['prod_nuclear_GW']
 
 
-def load_eco2mix(
-        path   : str = 'data/archives/eco2mix-national-tr.csv',
-        url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
-                       'datasets/eco2mix-national-tr/exports/csv?lang=en&'
-                       'timezone=Europe%2FParis&use_labels=true&delimiter=%3B',
-        verbose: int = 0) -> pd.Series:
 
-    # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        df = pd.read_csv(path, sep=';')
+# January 1st 2025 to January 26th 2026
+def load_eco2mix(
+    path_monthly:str= 'data/archives/eco2mix-national-cons-def.csv',
+    url_monthly: str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                      'datasets/eco2mix-national-cons-def/exports/csv?'
+                      'timezone=UTC&use_labels=true&delimiter=%3B',
+    path_recent: str= 'data/eco2mix-national-tr.csv',
+    url_recent:  str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
+                      'datasets/eco2mix-national-tr/exports/csv?'
+                      'timezone=UTC&use_labels=true&delimiter=%3B',
+    verbose:    int = 0) -> pd.DataFrame:
+
+
+    # older data `monhtly`
+    # load local files if they exist, otherwise get them online
+    if os.path.exists(path_monthly):
+        df_monthly = pd.read_csv(path_monthly, sep=';')
     else:
         # Load from URL
-        df = pd.read_csv(url, sep=';')
-        df.to_csv(path, sep=';')
+        df_monthly = pd.read_csv(url_monthly, sep=';')
+        df_monthly.to_csv(path_monthly, sep=';')
+
+    df_monthly['Date et Heure'] = pd.to_datetime(df_monthly['Date et Heure'], utc=True)
+    df_monthly = df_monthly.set_index('Date et Heure').sort_index()
+    df_monthly.index.name = "datetime_utc"
+
+    # print("monthly:", df_monthly.shape, df_monthly.index.min(), df_monthly.index.max())
+    # df_monthly.dropna(inplace=True)  # data are not really per 15 min but rather 30 min
+
+    # analyze_datetime(df_monthly, freq="15min", name="eco2mix monthly")
+
+
+    # recent (real time) data
+    if os.path.exists(path_recent):
+        df_recent = pd.read_csv(path_recent, sep=';')
+    else:
+        # Load from URL
+        df_recent = pd.read_csv(url_recent, sep=';')
+        df_recent.to_csv(path_recent, sep=';')
+
+
+    df_recent['Date - Heure'] = pd.to_datetime(df_recent['Date - Heure'], utc=True)
+    df_recent = df_recent.set_index('Date - Heure').sort_index()
+    df_recent.index.name = "datetime_utc"
+
+    df_recent.dropna(inplace=True)  # rows of NA for the most recent time steps
+
+
+    # analyze_datetime(df_recent, freq="15min", name="eco2mix recent")
+
+
+
+    # merge
+    df = pd.concat([df_monthly, df_recent], axis=0)
 
     df.drop(columns=['Périmètre', 'Nature', 'Date', 'Heure'], inplace=True)
 
-    df.dropna(inplace=True)  # rows of NA for the most recent time steps
+    # print("all:    ", df.shape, df.index.min(), df.index.max())
 
-    df['Date - Heure'] = pd.to_datetime(df['Date - Heure'], utc=True)
-    df = df.set_index('Date - Heure').sort_index()
-        # was inverse inverse chronology
-    df.index.name = "datetime_UTC"
-    df = df[~df.index.duplicated(keep="first")]
+    # df = df[~df.index.duplicated(keep="first")]
 
     # cleaning names: eg "Bioénergies - Déchets (MW)" -> "Bioénergies_Déchets_MW"
     df.columns = df.columns.str.replace(r'[()\-.]', '', regex=True) \
@@ -625,10 +754,20 @@ def load_eco2mix(
     df = df.loc[:, ~df.columns.str.contains(r'^Bioénergies__.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Hydraulique__.*_MW$')]
 
+    df =df.resample('30min').mean()  # older dat are on this freq
 
     # convert to GW
     df = (df / 1000).round(2)
     df.columns = df.columns.str.replace('MW', 'GW')
+
+
+    if verbose >= 2:
+        print("monthly:", df_monthly.shape, df_monthly.index.min(), df_monthly.index.max())
+        print("recent:  ",df_recent .shape, df_recent .index.min(), df_recent .index.max())
+        print("all:    ", df.shape, df.index.min(), df.index.max())
+
+    # print(df)
+
 
 
     if verbose >= 3:
@@ -679,6 +818,7 @@ def load_eco2mix(
         plt.legend()
         plt.show()
 
+
     return df
 
 
@@ -725,7 +865,7 @@ def load_price(
     df['Datetime (UTC)'] = pd.to_datetime(df['Datetime (UTC)'], utc=True)
     df = df.set_index('Datetime (UTC)').sort_index()
     # df.index = df.index.tz_convert("UTC")
-    df.index.name = "datetime"
+    df.index.name = "datetime_utc"
 
     df = df[['Price (EUR/MWhe)']]
     df = df.rename(columns={'Price (EUR/MWhe)': 'price_euro_per_MWh'})
@@ -787,50 +927,54 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("weights_regions:", weights_regions)
 
 
+    consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
+
+
     # Load both CSVs
     for name, path in dict_input_csv_fnames.items():
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Input file not found: {path}")
+        # if not os.path.exists(path):
+        #     raise FileNotFoundError(f"Input file not found: {path}")
 
 
         if verbose >= 1:
             print(f"Loading {path}...")
         if name == 'consumption':
-            dfs[name] = load_consumption(path, verbose=verbose)
-            if verbose >= 3:
-                analyze_datetime(dfs["consumption"],
-                                 freq=f"{minutes_per_step}T", name="consumption")
+            dfs[name] = load_consumption(
+                path, df_recent=consumption_nation_recent, verbose=verbose)
 
         if name == 'consumption_by_region':
-            dfs[name], names_regions = \
-                    load_consumption_by_region(path, verbose=verbose)
-            if verbose >= 3:
-                analyze_datetime(dfs["consumption_by_region"],
-                                 freq=f"{minutes_per_step}T", name="consumption")
+            dfs[name], names_regions = load_consumption_by_region(
+                path, df_recent=consumption_region_recent, verbose=verbose)
 
         elif name == 'temperature':
             dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
                 load_temperature(path, weights_by_region, verbose=verbose)
-            if verbose >= 3:
-                analyze_datetime(dfs['temperature'], freq="D", name="temperature")
 
         # elif name == 'solar':
             # BUG: The whole of September 2021 is missing
             # dfs[name] = load_solar(path, verbose=verbose)
-            # if verbose >= 3:
-            #     analyze_datetime(dfs["solar"],       freq="3H", name="solar")
 
         elif name == 'price':
             dfs[name] = load_price(path, verbose=verbose)
-            if verbose >= 3:
-                analyze_datetime(dfs['price'], freq="H", name="price")
+
+    if verbose >= 3:
+        analyze_datetime(dfs["consumption"],
+                    freq=f"{minutes_per_step}min", name="consumption")
+        analyze_datetime(dfs["consumption_by_region"],
+                    freq=f"{minutes_per_step}min", name="consumption_by_region")
+        analyze_datetime(dfs['temperature'], freq="D", name="temperature")
+        # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
+        analyze_datetime(dfs['price'], freq="h", name="price")
+        analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
+        analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
+
 
     # print("dfs['temperature']", dfs['temperature'])
     # print("Tavg_regions", Tavg_regions)
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
-    if verbose >= -3:
+    if verbose >= 3:
         # # plot_statistics.thermosensitivity_regions(
         # #     dfs['consumption_by_region'], dfs['temperature'])
 
@@ -858,7 +1002,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         #      dfs['price'][['price_euro_per_MWh']],
         # )
 
-        sys.exit()
+        # sys.exit()
 
 
 
