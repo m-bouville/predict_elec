@@ -98,8 +98,19 @@ def load_consumptions_recent(
     # remove rows with at least 2 NAs
     df_region = df_region.dropna(thresh=2)
 
-    #  Nouvelle-Aquitaine is missing lots of data
-    # print(df_region.iloc[-48*2])
+
+    # Nouvelle-Aquitaine is missing lots of data
+    # from 2025-01-01 to 2025-03-10 (when data are complete):
+    #   (df_nation - df_region.sum(1, skipna=False)).dropna().mean() == 0.11
+
+    # infer consumption as: whole minus sum of the other parts
+    series_Aquitaine = \
+        df_nation - df_region.drop(columns='Nouvelle-Aquitaine').sum(1, skipna=False) - 0.11
+    # print(series_Aquitaine.dropna())
+
+    df_region['Nouvelle-Aquitaine'] = \
+        df_region['Nouvelle-Aquitaine'].fillna(series_Aquitaine)
+    # print(pd.concat([df_nation.T, df_region.sum(1, skipna=False)], axis=1).dropna())
 
 
     return df_nation, df_region
