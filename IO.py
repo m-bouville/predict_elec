@@ -115,7 +115,7 @@ def load_consumption(
         path   : str = 'data/consommation-quotidienne-brute.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute/exports/csv?'
-                       'timezone=Europe/Paris&use_labels=true&delimiter=%3B',
+                       'lang=en&timezone=Europe/Paris&use_labels=true&delimiter=%3B',
             # 'timezone=UTC' is not genuine UTC: it has duplicates
         df_recent: Optional[pd.Series] = None,
         verbose: int = 0) -> pd.DataFrame:
@@ -128,13 +128,29 @@ def load_consumption(
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
 
+    # /!\ at time change, `Date - Heure` is incorrect (same time, same tz)
+    #       but `Heure` is monotonic (at +02:00?)
+    # Date - Heure;Date;Heure; [...]
+    #   version downloaded with `timezone=Europe/Paris`:
+    # 2020-03-29T03:30:00+02:00;29/03/2020;03:30; [...]
+    # 2020-03-29T03:00:00+02:00;29/03/2020;03:00; [...]
+    # 2020-03-29T03:30:00+02:00;29/03/2020;02:30; [...]
+    # 2020-03-29T03:00:00+02:00;29/03/2020;02:00; [...]
+    #   version downloaded with `timezone=UTC`:
+    # 2020-03-29T01:30:00+00:00;29/03/2020;03:30; [...]
+    # 2020-03-29T01:00:00+00:00;29/03/2020;03:00; [...]
+    # 2020-03-29T01:30:00+00:00;29/03/2020;02:30; [...]
+    # 2020-03-29T01:00:00+00:00;29/03/2020;02:00; [...]
 
-    if 'Date - Heure' not in df.columns:
-        raise RuntimeError(f"No datetime-like column found in {path}")
 
-    col_datetime = 'Date - Heure'  # given as UTC
-    df[col_datetime] = pd.to_datetime(df[col_datetime])
-    df = df.set_index(col_datetime).sort_index()
+    df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
+                                    format='%d/%m/%Y %H:%M')
+    df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
+    # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
+
+    # col_datetime = 'Date - Heure'  # given as pseudo-local
+    # df[col_datetime] = pd.to_datetime(df[col_datetime], tz='Europe/Paris')
+    df = df.set_index('Datetime').sort_index()
     df.index = df.index.tz_convert("UTC")
     df.index.name = "datetime_utc"
 
@@ -193,7 +209,7 @@ def load_consumption_by_region(
         path   : str = 'data/consommation-quotidienne-brute-regionale.csv',
         url    : str = 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                        'datasets/consommation-quotidienne-brute-regionale/exports/'
-                       'csv?timezone=UTC&use_labels=true&delimiter=%3B',
+                       'csv?lang=en&timezone=Europe/Paris&use_labels=true&delimiter=%3B',
         cache_dir:str= 'cache',
         df_recent: Optional[pd.Series] = None,
         verbose: int = 0) -> [pd.DataFrame, List[float]]:
@@ -239,13 +255,15 @@ def load_consumption_by_region(
             df = pd.read_csv(url, sep=';')
             df.to_csv(path, sep=';')
 
+        # See comment in `load_consumption`
+        df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
+                                        format='%Y-%m-%d %H:%M')
+        df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
+        # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
 
-        if 'Date - Heure' not in df.columns:
-            raise RuntimeError(f"No datetime-like column found in {path}")
-
-        col_datetime = 'Date - Heure'  # given as local time
-        df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)
-        df = df.set_index(col_datetime).sort_index()
+        # col_datetime = 'Date - Heure'  # given as pseudo-local
+        # df[col_datetime] = pd.to_datetime(df[col_datetime], tz='Europe/Paris')
+        df = df.set_index('Datetime').sort_index()
         # df.index.name = "datetime_utc"
 
         df = df[['Région', 'Consommation brute électricité (MW) - RTE']]
@@ -1159,12 +1177,11 @@ def analyze_datetime(df, freq=None, name="dataset"):
     """
     print(f"\n=== Analyzing {name} ===")
 
-    # -------------------------------
+
     # 1. Check for duplicates
-    # -------------------------------
     if df.index.has_duplicates:
-        print("/!\ Duplicates found:")
         dup_rows = df[df.index.duplicated(keep=False)].sort_index().index
+        print(f"/!\ {len(dup_rows)} duplicates found:")
         print(dup_rows)
 
         # counts = df.index[df.index.duplicated()].value_counts()
@@ -1173,25 +1190,24 @@ def analyze_datetime(df, freq=None, name="dataset"):
     else:
         print("No duplicate timestamps.")
 
-    # -------------------------------
+
     # 2. Check for missing timestamps
-    # -------------------------------
     if freq is not None:
         # full expected index
         full_index = pd.date_range(
-            start=df.index.min(),
-            end=df.index.max(),
-            freq=freq,
-            tz=df.index.tz  # preserve timezone awareness
+            start= df.index.min(),
+            end  = df.index.max(),
+            freq = freq,
+            tz   = df.index.tz  # preserve timezone awareness
         )
 
         missing = full_index.difference(df.index)
 
         if len(missing) > 0:
-            print(f"\n Missing {len(missing)} timestamps:")
+            print(f"\n /!\ Missing {len(missing)} timestamps:")
             print(missing[:20])     # first 20 only
             if len(missing) > 20:
-                print("... (more omitted)")
+                print(f"... ({len(missing) - 20} more omitted)")
         else:
             print(f"No missing timestamps at freq = {freq}")
 
