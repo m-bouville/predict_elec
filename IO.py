@@ -10,6 +10,7 @@
 
 
 import os, sys
+import warnings
 
 import requests
 import zipfile
@@ -51,7 +52,6 @@ def load_consumptions_recent(
                        'timezone=UTC&use_labels=true&delimiter=%3B',
     verbose:   int = 0) -> Tuple[pd.Series, pd.DataFrame]:
 
-
     # national data
     if os.path.exists(path_nation):
         df_nation = pd.read_csv(path_nation, sep=';')
@@ -65,8 +65,8 @@ def load_consumptions_recent(
     df_nation.index.name = "datetime_utc"
 
     #  convert to GW and remove rows of NA for the most recent time steps
-    df_nation = (df_nation['Consommation (MW)'] / 1000).round(3).dropna()
-    df_nation.columns = ['consumption_GW']
+    df_nation = df_nation['Consommation (MW)'].div(1000).round(3).dropna().squeeze()
+    df_nation.name = 'consumption_GW'
 
     df_nation = df_nation.resample('30min').mean()  # to match the rest of the dataset
 
@@ -104,10 +104,8 @@ def load_consumptions_recent(
     #   (df_nation - df_region.sum(1, skipna=False)).dropna().mean() == 0.11
 
     # infer consumption as: whole minus sum of the other parts
-    series_Aquitaine = \
-        df_nation - df_region.drop(columns='Nouvelle-Aquitaine').sum(1, skipna=False) - 0.11
-    # print(series_Aquitaine.dropna())
-
+    series_Aquitaine = df_nation - \
+        df_region.drop(columns='Nouvelle-Aquitaine').sum(1, skipna=False) - 0.11
     df_region['Nouvelle-Aquitaine'] = \
         df_region['Nouvelle-Aquitaine'].fillna(series_Aquitaine)
     # print(pd.concat([df_nation.T, df_region.sum(1, skipna=False)], axis=1).dropna())
@@ -154,15 +152,34 @@ def load_consumption(
     # 2020-03-29T01:00:00+00:00;29/03/2020;02:00; [...]
 
 
-    df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
-                                    format='%d/%m/%Y %H:%M')
-    df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
-    # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
+    # # attempt at using 'Date' + 'Heure' (no tz) instead of 'Date - Heure' (tz-aware)
+    # #   offset by 1 hour 41% of the time!
+    # df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
+    #                                 format='%d/%m/%Y %H:%M')
+    # df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
+    # # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
 
-    # col_datetime = 'Date - Heure'  # given as pseudo-local
-    # df[col_datetime] = pd.to_datetime(df[col_datetime], tz='Europe/Paris')
-    df = df.set_index('Datetime').sort_index()
-    df.index = df.index.tz_convert("UTC")
+    # # testing
+    # df['from_Heure'] = df['Datetime'].dt.tz_convert('utc')
+    # df['Date - Heure'] = pd.to_datetime(df['Date - Heure'], utc=True)
+    # df['from_datetime'] = df['Date - Heure'].dt.tz_convert('utc')
+    # df['hour_difference'] = (df['from_Heure'] - df['from_datetime']).\
+    #     dt.total_seconds() / 3600
+    # print(df[['from_Heure', 'from_datetime', 'hour_difference']])
+
+    # occurrences_df = df['hour_difference'].value_counts().reset_index()
+    # # Rename columns for clarity
+    # occurrences_df.columns = ['hour_difference', 'count_steps']
+    # occurrences_df['count_years']= occurrences_df['count_steps'] / 48 / 365.25
+    # occurrences_df['count_pc']= occurrences_df['count_steps'] / \
+    #     occurrences_df['count_steps'].sum() * 100
+    # print(occurrences_df)
+
+
+    col_datetime = 'Date - Heure'  # tz-aware
+    df[col_datetime] = pd.to_datetime(df[col_datetime], utc=True)  # tz='Europe/Paris')
+    df = df.set_index(col_datetime).sort_index()
+    # df.index = df.index.tz_convert("UTC")
     df.index.name = "datetime_utc"
 
     df = df[['Consommation brute électricité (MW) - RTE']]
@@ -223,7 +240,7 @@ def load_consumption_by_region(
                        'csv?lang=en&timezone=Europe/Paris&use_labels=true&delimiter=%3B',
         cache_dir:str= 'cache',
         df_recent: Optional[pd.Series] = None,
-        verbose: int = 0) -> [pd.DataFrame, List[float]]:
+        verbose: int = 0) -> Tuple[pd.DataFrame, List[str]]:
 
     # This input csv is an order of magnitude larger than all others combined
     #   so if only one csv is to be cached, this is the one
@@ -580,7 +597,7 @@ def load_temperature(
     # simple moving average (SMA) for Tavg, per région
     for _cluster in CLUSTERS_SHORT.keys():
         for duration_days in [3, 10]:
-            out[f'Tavg_SMA_{duration_days}days'] = Tavg[_cluster] \
+            out[f'Tavg_{_cluster}_SMA_{duration_days}days'] = Tavg[_cluster] \
                 .rolling(duration_days, min_periods=int(duration_days*.8)).mean()
 
     # para-dates
@@ -810,18 +827,41 @@ def load_eco2mix(
 
         plt.figure(figsize=(10,6))
         df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #'Eolien_offshore_GW'
-            'Ech_physiques_GW', 'Pompage_GW']].rolling(4*24*7).mean().plot()
+            'Ech_physiques_GW', 'Pompage_GW']].rolling(2*24*7*4).mean().plot()
         plt.ylabel("production [GW], weekly moving average")
         plt.xlabel("year")
         plt.legend()
         plt.show()
 
+        y_lim_GW = [-10, 15]
+        # plt.figure(figsize=(10,6))
+        # df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+        #     'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        # plt.xlabel('time of day (UTC)')
+        # plt.ylabel("production [GW]")
+        # plt.ylim(y_lim_GW)
+        # plt.legend()
+        # plt.show()
+
+        # seasons
+        df_summer = df.loc[df.index.month.isin([6, 7, 8])]
         plt.figure(figsize=(10,6))
-        df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
+        df_summer[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
             'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
-        plt.ylabel("production [GW]")
         plt.xlabel('time of day (UTC)')
-        plt.legend()
+        plt.ylabel("summer production [GW]")
+        plt.ylim(y_lim_GW)
+        plt.legend(loc='upper left')
+        plt.show()
+
+        df_winter = df.loc[df.index.month.isin([12, 1, 2])]
+        plt.figure(figsize=(10,6))
+        df_winter[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
+            'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        plt.xlabel('time of day (UTC)')
+        plt.ylabel("winter production [GW]")
+        plt.ylim(y_lim_GW)
+        plt.legend(loc='upper left')
         plt.show()
 
 
@@ -833,7 +873,7 @@ def load_eco2mix(
 
         plt.figure(figsize=(10,6))
         df_norm_pc[['Hydraulique_pc', 'Solaire_pc', 'Eolien_pc', #'Eolien_offshore_pc'
-            'Ech_physiques_pc', 'Pompage_pc']].rolling(4*24*7).mean().plot()
+            'Ech_physiques_pc', 'Pompage_pc']].rolling(2*24*7*4).mean().plot()
         plt.ylabel("production [%], weekly moving average")
         plt.xlabel("year")
         plt.legend()
@@ -958,7 +998,6 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
     consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
 
-
     # Load both CSVs
     for name, path in dict_input_csv_fnames.items():
         # if not os.path.exists(path):
@@ -986,6 +1025,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         elif name == 'price':
             dfs[name] = load_price(path, verbose=verbose)
 
+
+    # check datetime indices (duplicates, missing)
     if verbose >= 3:
         analyze_datetime(dfs["consumption"],
                     freq=f"{minutes_per_step}min", name="consumption")
@@ -1003,6 +1044,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     # print("Tmin_regions", Tmin_regions)
     # print("Tmax_regions", Tmax_regions)
 
+
+    # plot statistics
     if verbose >= 3:
         # # plot_statistics.thermosensitivity_regions(
         # #     dfs['consumption_by_region'], dfs['temperature'])
@@ -1066,9 +1109,13 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     aligned = []
     for name, df in dfs.items():
 
-        # If there are duplicate timestamps, collapse them by averaging
+        # If there are duplicate timestamps
+        # known issue: consumption has a date error on 5th Dec. in 2020, 22, 23
         if df.index.has_duplicates:
-            df = df.groupby(df.index).mean()  # TODO despicable
+            warnings.warn(f"{name} has duplicates")
+            # df.drop_duplicates(keep=False, inplace=True)
+            # idx = idx.intersection(df.index)
+            df = df.groupby(df.index).mean()  # collapse duplicates by averaging
 
         # Keep metadata ONLY for the consumption dataset
         if name != "consumption":
@@ -1095,7 +1142,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         aligned.append(d)
 
     df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
-    df_merged.index.name = "datetime"
+    df_merged.index.name = "datetime_utc"
 
     if cache_fname is not None:
         df_merged.to_csv(cache_fname)
