@@ -156,10 +156,11 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
             (series.index.hour + series.index.minute/60) / 24
         return series.groupby(dayofweek).mean()
     if col == 'dateofyear':
-        dateofyear = series.index.map(lambda d: pd.Timestamp(
+        # remove February 29th which does not exist evergy year
+        _series = series[~((series.index.month == 2) & (series.index.day == 29))]
+        dateofyear = _series.index.map(lambda d: pd.Timestamp(
             year=2000, month=d.month, day=d.day))
-        return series[~((series.index.month == 2) & (series.index.day == 29))] \
-                    .groupby(dateofyear).mean()
+        return _series.groupby(dateofyear).mean()
     raise ValueError(f"Invalid column: {col}.")
 
 

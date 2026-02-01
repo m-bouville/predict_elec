@@ -207,7 +207,8 @@ class DataSplit:
                            num_steps_per_day:int,
                            top_n           : int,
                            verbose         : int = 0) -> (pd.DataFrame, float):
-
+        # print("temperature_full:\n", temperature_full)
+        # print(f"{self.name}.true_nation_GW:\n", self.true_nation_GW)
         return utils.worst_days_by_loss(
             split       = self.name,
             y_true      = self.true_nation_GW,

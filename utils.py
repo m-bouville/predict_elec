@@ -171,7 +171,6 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
     df = pd.concat([df.loc[df.index >= first_available], df_holiday,
                     df_calendar, df_consumption], axis=1)
 
-
     # start date: next full day (eg 2011-12-31 23:00 -> 2012-01-01)
     dates_df["start"]= (dates_df["start"] + pd.Timedelta(hours=2)) \
         .dt.floor("D").dt.date
@@ -462,6 +461,7 @@ def worst_days_by_loss(
     df_aligned =pd.concat([diff,  diff_pc,  temperature,  holidays],
                           axis=1, join='inner').astype(np.float32)
     df_aligned.columns = ['diff','diff_pc','temperature','holidays']
+    df_aligned.index = df_aligned.index.tz_convert('Europe/Paris')
 
     df = pd.DataFrame({
         'date':     df_aligned.index.normalize(),  # midnight per day
@@ -481,14 +481,15 @@ def worst_days_by_loss(
               max_diff = ('abs_diff',  "max" ),
               ramp     = ('diff', lambda x: np.max(np.abs(np.diff(x)))
                              if len(x) > 1 else np.nan),
-              n_points = ('diff',      "size"),
               Tavg_degC= ('Tavg_degC', "mean"),
               holiday  = ('holiday',   "mean"),
+              n_points = ('date',      "size"),
           )
           .sort_values('abs_diff', ascending=False)
     )
 
     daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
+
 
     avg_abs_diff = float(daily['abs_diff'].mean())
 
@@ -505,7 +506,6 @@ def worst_days_by_loss(
     daily['Tavg_degC']= daily['Tavg_degC'].astype(np.float32).round(1)
     daily['holiday' ] = daily['holiday'  ].astype(np.int16)
 
-
     daily = daily[['day_name', 'day', 'month', # 'year', 'holiday',
                    'Tavg_degC', 'diff', 'diff_pc', # 'max_diff',
                    'ramp']].head(top_n)
@@ -513,6 +513,8 @@ def worst_days_by_loss(
 
     # plots
     if verbose > 0:
+        # print("daily:\n", daily)
+
         plt.figure(figsize=(10, 6))
         sns.histplot(data=daily, x='month', bins=12, discrete=True)
         plt.title('Histogram of Months for Bad Days')

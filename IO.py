@@ -35,6 +35,212 @@ os.makedirs('data',  exist_ok=True)
 os.makedirs('cache', exist_ok=True)
 
 
+
+
+# -------------------------------------------------------
+# Load all data
+# -------------------------------------------------------
+
+def load_data(dict_input_csv_fnames: dict, cache_fname: str,
+              num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
+            -> Tuple[pd.DataFrame, pd.DataFrame]:
+    dfs = {}
+
+    (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
+    # print("weights_regions:", weights_regions)
+
+
+    consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
+
+    # Load both CSVs
+    for name, path in dict_input_csv_fnames.items():
+        # if not os.path.exists(path):
+        #     raise FileNotFoundError(f"Input file not found: {path}")
+
+
+        # if verbose >= 1:
+        #     print(f"Loading {path}...")
+        if name == 'consumption':
+            dfs[name] = load_consumption(
+                path, df_recent=consumption_nation_recent, verbose=verbose)
+
+        if name == 'consumption_by_region':
+            dfs[name], names_regions = load_consumption_by_region(
+                path, df_recent=consumption_region_recent, verbose=verbose)
+
+        elif name == 'temperature':
+            dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
+                load_temperature(path, weights_by_region, verbose=verbose)
+        # elif name == 'solar':
+            # BUG: The whole of September 2021 is missing
+            # dfs[name] = load_solar(path, verbose=verbose)
+
+        elif name == 'price':
+            dfs[name] = load_price(path, verbose=verbose)
+
+        # print(name, dfs[name].index)
+
+
+
+    # check datetime indices (duplicates, missing)
+    if verbose >= 3:
+        analyze_datetime(dfs["consumption"],
+                    freq=f"{minutes_per_step}min", name="consumption")
+        analyze_datetime(dfs["consumption_by_region"],
+                    freq=f"{minutes_per_step}min", name="consumption_by_region")
+        analyze_datetime(dfs['temperature'], freq="D", name="temperature")
+        # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
+        analyze_datetime(dfs['price'], freq="h", name="price")
+        analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
+        analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
+
+
+    # print("dfs['temperature']", dfs['temperature'])
+    # print("Tavg_regions", Tavg_regions)
+    # print("Tmin_regions", Tmin_regions)
+    # print("Tmax_regions", Tmax_regions)
+
+
+
+    starts = {name: df.index.min() for name, df in dfs.items()}
+    ends   = {name: df.index.max() for name, df in dfs.items()}
+    dates_df = pd.DataFrame({
+        "start": pd.to_datetime(pd.Series(starts), utc=True),
+        "end":   pd.to_datetime(pd.Series(ends  ), utc=True),
+    })
+
+    # # Common range
+    # starts = [df.index.min() for df in dfs.values()]
+    # ends   = [df.index.max() for df in dfs.values()]
+
+    common_start  = max(starts.values()); common_end = min(ends  .values())
+    earliest_start= min(starts.values()); latest_end = max(ends  .values())
+
+    if verbose >= 3:
+        print(f"intersection start: {common_start  }, end: {common_end}")
+        print(f"union        start: {earliest_start}, end: {latest_end}")
+
+    # # Half‑hour index (padding will generate NAs which will be trimmed later)
+    idx = pd.date_range(start= earliest_start,
+                        end  = latest_end + pd.Timedelta(days=1), freq="30min")
+    # idx = pd.date_range(start= common_start,
+    #                     end  = common_end + pd.Timedelta(days=1), freq="30min")
+
+    META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
+
+
+    # Align
+    aligned = []
+    for name, df in dfs.items():
+
+        # If there are duplicate timestamps
+        # known issue: consumption has a date error on 5th Dec. in 2020, 22, 23
+        if df.index.has_duplicates:
+            warnings.warn(f"{name} has duplicates")
+            # df.drop_duplicates(keep=False, inplace=True)
+            # idx = idx.intersection(df.index)
+            df = df.groupby(df.index).mean()  # collapse duplicates by averaging
+
+        # Keep metadata ONLY for the consumption dataset
+        if name != "consumption":
+            df.drop(columns=[c for c in META_COLS if c in df.columns], inplace=True)
+
+        d = df.reindex(idx)
+
+        # # ---- Fill 24 hours of temperature when data are daily ----
+        # is_daily = (
+        #     (df.index.hour == 0).all()
+        #     and (df.index.minute == 0).all()
+        #     and (df.index.second == 0).all()
+        # )
+        # if is_daily:
+        #     d = d.ffill(limit=48)   # 48×30min = 24 hours
+
+        delta = df.index.to_series().diff().dropna().mode()[0]
+        if delta == pd.Timedelta(days=1):
+            d = d.ffill(limit=num_steps_per_day)
+        elif delta == pd.Timedelta(hours=1):  # price
+            d = d.ffill(limit=   2)
+        elif delta == pd.Timedelta(hours=3):  # solar
+            d = d.ffill(limit= 3*2)
+
+        # d = d.add_prefix(f"{name}_")
+        aligned.append(d)
+
+    df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
+    df_merged.index.name = "datetime_utc"
+    # print("df_merged:\n", df_merged)
+
+    if cache_fname is not None:
+        df_merged.to_csv(cache_fname)
+
+        if verbose >= 2:
+            print(f"Saved merged dataset to {cache_fname}")
+            print(df_merged.head())
+
+    if verbose >= 3:
+        plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
+                    .resample('D').mean()\
+                    .groupby('dateofyear').mean().sort_index(),
+                  xlabel="date")
+
+
+    # plot statistics
+    if verbose >= 3:
+        # remove NA from consumption and T°
+        _df_plot = df_merged[['consumption_GW', 'Tavg_degC']].dropna()
+
+        # plot_statistics.thermosensitivity_regions(
+        #     dfs['consumption_by_region'], dfs['temperature'])
+
+        plot_statistics.drift_with_time(
+             _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
+             num_steps_per_day=num_steps_per_day
+        )
+
+        plot_statistics.thermosensitivity_per_temperature_by_season(
+             _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
+             thresholds_degC= np.arange(-1., 26.5, step=0.1),
+             num_steps_per_day=num_steps_per_day
+        )
+
+        plot_statistics.thermosensitivity_per_date_discrete(
+             _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
+             ranges_years = [[2016, 2019], [2023, 2025]],
+             num_steps_per_day=num_steps_per_day
+        )
+
+        plot_statistics.prices_per_season(
+             dfs['price'][['price_euro_per_MWh']],
+        )
+
+
+        # print(dfs['temperature']['Tavg_degC'])
+        # print(_df_plot['Tavg_degC'])
+
+
+        plot_statistics.thermosensitivity_peak_hour(
+            _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
+            num_steps_per_day=num_steps_per_day)
+    # sys.exit()
+
+
+
+    # quantiles for input
+    if verbose >= 2:
+        quantiles_pc = [0.5, 1, 2, 5, 50, 95, 98, 99, 99.5]
+        quantiles_df = df_merged[[
+                'consumption_GW','Tmin_degC','Tavg_degC','Tmax_degC'
+            ]].quantile([q/100 for q in quantiles_pc], axis=0)
+        quantiles_df.index = [f'q{q}' for q in quantiles_pc]
+
+        print(quantiles_df)
+
+    return (df_merged, dates_df, weights_by_cluster)
+
+
+
+
 # -------------------------------------------------------
 # consumption
 # -------------------------------------------------------
@@ -131,9 +337,13 @@ def load_consumption(
 
     # load local file if it exists, otherwise get it online
     if os.path.exists(path):
+        if verbose >= 1:
+            print(f"Loading {path}...")
         df = pd.read_csv(path, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"downloading {url}...")
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
 
@@ -191,6 +401,9 @@ def load_consumption(
     # plots.data(df.resample('D').mean(),
     #           xlabel="date", ylabel="consumption (MW)")
 
+    if verbose > 0:
+        print(path, "(monthly): from",
+              df.index.tz_convert('Europe/Paris').date.min(), "to", df.index.date.max())
 
     # concatenate more recent data
     if df_recent is not None:
@@ -248,6 +461,8 @@ def load_consumption_by_region(
 
     # download csv if it does not exist locally
     if not os.path.exists(path):
+        if verbose >= 1:
+            print(f"Downloading {url}...")
         response = requests.get(url)
         response.raise_for_status()  # Raise an error for bad status codes
 
@@ -302,6 +517,12 @@ def load_consumption_by_region(
 
         # plots.data(df.resample('D').mean(),
         #           xlabel="date", ylabel="consumption (MW)")
+
+        if verbose > 0:
+            print(path, "(monthly): from",
+                  df.index.tz_convert('Europe/Paris').date.min(),
+                  "to", df.index.date.max())
+
 
         df['datetime_utc'] = df.index
         df = df.pivot_table(index="datetime_utc",columns="Région",values='consumption_GW',
@@ -486,9 +707,13 @@ def load_temperature(
 
     # load local file if it exists, otherwise get it online
     if os.path.exists(path):
+        if verbose >= 1:
+            print(f"Loading {path}...")
         df = pd.read_csv(path, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"Downloading {url}...")
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
 
@@ -496,9 +721,9 @@ def load_temperature(
     if 'Date' not in df.columns:
         raise RuntimeError(f"No date column found in {path}")
 
-    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d', utc=True)
-    df = df.set_index('Date').sort_index()
-    df.index.name = "date"
+    df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+    df = df.set_index('Date').tz_localize('Europe/Paris').sort_index()
+    df.index.name = "date_local"
 
     df['Région'] = [SHORT_NAMES_REGIONS[normalize_name(r)]
                         for r in df['Région']]
@@ -511,7 +736,7 @@ def load_temperature(
     # 2. Pivot by region
     def _pivot(col):
         return (
-            df.pivot(index="date", columns="Région", values=col)
+            df.pivot(index="date_local", columns="Région", values=col)
               .sort_index()
               .drop(columns=['corse'])
                   # Corsica is not in the consumption data:
@@ -613,7 +838,7 @@ def load_temperature(
     if verbose >= 2:
         print(out.drop(columns='dateofyear').head().to_string())
 
-    #     plots.data(df, xlabel="date", ylabel="temperature (°C)")
+    #     plots.data(df, xlabel="date_local", ylabel="temperature (°C)")
 
     if verbose >= 3:
         plots.data(out.groupby('dateofyear').mean().sort_index()\
@@ -665,6 +890,99 @@ def load_temperature(
 
 
 # -------------------------------------------------------
+# Load prices
+# -------------------------------------------------------
+
+
+# depth of historical data: 2015 to today
+
+def load_price(
+        path_csv:str = 'data/wholesale_electricity_price_hourly.csv',
+        path_zip:str = 'data/european_wholesale_electricity_price_data_hourly.zip',
+        url    : str = 'https://files.ember-energy.org/public-downloads/price/'
+                       'outputs/european_wholesale_electricity_price_data_hourly.zip',
+        verbose: int = 0) -> pd.DataFrame:
+
+    # load local file if it exists, otherwise get it online
+    if not os.path.exists(path_csv):   # we don't have the csv file locally
+        if not os.path.exists(path_zip):  # nor the zip file locally
+            if verbose >= 1:
+                print(f"Downloading {url}...")
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an error for bad status codes
+
+            with open(path_zip, 'wb') as f:
+                f.write(response.content)
+        # we have the zip file locally
+
+        with zipfile.ZipFile(path_zip, 'r') as zip_ref:
+            if verbose >= 1:
+                print(f"Loading {zip_ref}...")
+            # List all files in the zip archive
+            file_list = zip_ref.namelist()
+            # print("Files in the zip archive:", file_list)
+            assert 'France.csv' in file_list, file_list
+
+            zip_ref.extract('France.csv', StrPath=path_csv)
+    # we have the csv file locally
+
+
+    df = pd.read_csv(path_csv, sep=',')
+    # print(df.columns)
+
+    df['Datetime (UTC)'] = pd.to_datetime(df['Datetime (UTC)'], utc=True)
+    df = df.set_index('Datetime (UTC)').sort_index()
+    # df.index = df.index.tz_convert("UTC")
+    df.index.name = "datetime_utc"
+
+    df = df[['Price (EUR/MWhe)']]
+    df = df.rename(columns={'Price (EUR/MWhe)': 'price_euro_per_MWh'})
+
+    df['year']     = df.index.year
+    df['month']    = df.index.month
+    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+        year=2000, month=d.month, day=d.day))
+    df['timeofday']= df.index.hour + df.index.minute/60
+
+    if verbose >= 3:
+        # by day
+        plots.data(df.drop(columns=['year', 'month', 'timeofday', 'dateofyear'])\
+                     .rolling(91 * 24, center=True).mean(),
+                   enforce_0_on_y = True,
+                   xlabel="date", ylabel="price [€/MWh], trimester moving average")
+
+
+        # by day of year
+        rolling_df= df['price_euro_per_MWh'].rolling(window=7*24, center=True).mean()
+        _df = pd.concat([df.drop(columns=['year', 'month', 'timeofday',
+                                'price_euro_per_MWh']), rolling_df], axis=1)
+        plots.data(_df[~((_df.index.month == 2) & (_df.index.day == 29))]\
+                      .groupby('dateofyear').median().sort_index(),
+                   enforce_0_on_y = True,
+                   xlabel="date", ylabel="price [€/MWh], weekly moving median")
+
+
+        # by time of day
+        # plots.data(df.drop(columns=['year', 'month', 'dateofyear'])\
+        #             .groupby('timeofday').median().sort_index(),
+        #           xlabel="time of day (UTC)", ylabel="median price [€/MWh]")
+
+            # seasonal effects
+        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').median()\
+                      .rename(columns={"price_euro_per_MWh": "winter"})
+        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').median()\
+                      .rename(columns={"price_euro_per_MWh": "summer"})
+        plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
+                     .drop(columns=['year', 'month', 'dateofyear']),
+                  xlabel="time of day (UTC)", ylabel="median price [€/MWh]",
+                  enforce_0_on_y = True,
+                  title ="seasonal consumption")
+
+    return df
+
+
+
+# -------------------------------------------------------
 # Load misc. (nuclear, éco2mix)
 # -------------------------------------------------------
 
@@ -681,9 +999,13 @@ def load_nuclear(
 
     # load local file if it exists, otherwise get it online
     if os.path.exists(path):
+        if verbose >= 1:
+            print(f"Loading {path}...")
         df = pd.read_csv(path, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"Downloading {url}...")
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
 
@@ -744,9 +1066,13 @@ def load_eco2mix(
     # older data `monhtly`
     # load local files if they exist, otherwise get them online
     if os.path.exists(path_monthly):
+        if verbose >= 1:
+            print(f"Loading {path_monthly}...")
         df_monthly = pd.read_csv(path_monthly, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"Downloading {url_monthly}...")
         df_monthly = pd.read_csv(url_monthly, sep=';')
         df_monthly.to_csv(path_monthly, sep=';')
 
@@ -889,285 +1215,6 @@ def load_eco2mix(
 
 
     return df
-
-
-
-
-
-# -------------------------------------------------------
-# Load prices
-# -------------------------------------------------------
-
-
-# depth of historical data: 2015 to today
-
-def load_price(
-        path_csv:str = 'data/wholesale_electricity_price_hourly.csv',
-        path_zip:str = 'data/european_wholesale_electricity_price_data_hourly.zip',
-        url    : str = 'https://files.ember-energy.org/public-downloads/price/'
-                       'outputs/european_wholesale_electricity_price_data_hourly.zip',
-        verbose: int = 0) -> pd.DataFrame:
-
-    # load local file if it exists, otherwise get it online
-    if not os.path.exists(path_csv):   # we don't have the csv file locally
-        if not os.path.exists(path_zip):  # nor the zip file locally
-            response = requests.get(url)
-            response.raise_for_status()  # Raise an error for bad status codes
-
-            with open(path_zip, 'wb') as f:
-                f.write(response.content)
-        # we have the zip file locally
-
-        with zipfile.ZipFile(path_zip, 'r') as zip_ref:
-            # List all files in the zip archive
-            file_list = zip_ref.namelist()
-            # print("Files in the zip archive:", file_list)
-            assert 'France.csv' in file_list, file_list
-
-            zip_ref.extract('France.csv', StrPath=path_csv)
-    # we have the csv file locally
-
-
-    df = pd.read_csv(path_csv, sep=',')
-    # print(df.columns)
-
-    df['Datetime (UTC)'] = pd.to_datetime(df['Datetime (UTC)'], utc=True)
-    df = df.set_index('Datetime (UTC)').sort_index()
-    # df.index = df.index.tz_convert("UTC")
-    df.index.name = "datetime_utc"
-
-    df = df[['Price (EUR/MWhe)']]
-    df = df.rename(columns={'Price (EUR/MWhe)': 'price_euro_per_MWh'})
-
-    df['year']     = df.index.year
-    df['month']    = df.index.month
-    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
-        year=2000, month=d.month, day=d.day))
-    df['timeofday']= df.index.hour + df.index.minute/60
-
-    if verbose >= 3:
-        # by day
-        plots.data(df.drop(columns=['year', 'month', 'timeofday', 'dateofyear'])\
-                     .rolling(91 * 24, center=True).mean(),
-                   enforce_0_on_y = True,
-                   xlabel="date", ylabel="price [€/MWh], trimester moving average")
-
-
-        # by day of year
-        rolling_df= df['price_euro_per_MWh'].rolling(window=7*24, center=True).mean()
-        _df = pd.concat([df.drop(columns=['year', 'month', 'timeofday',
-                                'price_euro_per_MWh']), rolling_df], axis=1)
-        plots.data(_df[~((_df.index.month == 2) & (_df.index.day == 29))]\
-                      .groupby('dateofyear').median().sort_index(),
-                   enforce_0_on_y = True,
-                   xlabel="date", ylabel="price [€/MWh], weekly moving median")
-
-
-        # by time of day
-        # plots.data(df.drop(columns=['year', 'month', 'dateofyear'])\
-        #             .groupby('timeofday').median().sort_index(),
-        #           xlabel="time of day (UTC)", ylabel="median price [€/MWh]")
-
-            # seasonal effects
-        _winter = df[df['month'].isin([12, 1, 2])].groupby('timeofday').median()\
-                      .rename(columns={"price_euro_per_MWh": "winter"})
-        _summer = df[df['month'].isin([ 6, 7, 8])].groupby('timeofday').median()\
-                      .rename(columns={"price_euro_per_MWh": "summer"})
-        plots.data(pd.concat([_winter, _summer], axis=1).sort_index()\
-                     .drop(columns=['year', 'month', 'dateofyear']),
-                  xlabel="time of day (UTC)", ylabel="median price [€/MWh]",
-                  enforce_0_on_y = True,
-                  title ="seasonal consumption")
-
-    return df
-
-
-
-# -------------------------------------------------------
-# Load all data
-# -------------------------------------------------------
-
-def load_data(dict_input_csv_fnames: dict, cache_fname: str,
-              num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
-            -> Tuple[pd.DataFrame, pd.DataFrame]:
-    dfs = {}
-
-    (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
-    # print("weights_regions:", weights_regions)
-
-
-    consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
-
-    # Load both CSVs
-    for name, path in dict_input_csv_fnames.items():
-        # if not os.path.exists(path):
-        #     raise FileNotFoundError(f"Input file not found: {path}")
-
-
-        if verbose >= 1:
-            print(f"Loading {path}...")
-        if name == 'consumption':
-            dfs[name] = load_consumption(
-                path, df_recent=consumption_nation_recent, verbose=verbose)
-
-        if name == 'consumption_by_region':
-            dfs[name], names_regions = load_consumption_by_region(
-                path, df_recent=consumption_region_recent, verbose=verbose)
-
-        elif name == 'temperature':
-            dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
-                load_temperature(path, weights_by_region, verbose=verbose)
-
-        # elif name == 'solar':
-            # BUG: The whole of September 2021 is missing
-            # dfs[name] = load_solar(path, verbose=verbose)
-
-        elif name == 'price':
-            dfs[name] = load_price(path, verbose=verbose)
-
-
-    # check datetime indices (duplicates, missing)
-    if verbose >= 3:
-        analyze_datetime(dfs["consumption"],
-                    freq=f"{minutes_per_step}min", name="consumption")
-        analyze_datetime(dfs["consumption_by_region"],
-                    freq=f"{minutes_per_step}min", name="consumption_by_region")
-        analyze_datetime(dfs['temperature'], freq="D", name="temperature")
-        # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
-        analyze_datetime(dfs['price'], freq="h", name="price")
-        analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
-        analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
-
-
-    # print("dfs['temperature']", dfs['temperature'])
-    # print("Tavg_regions", Tavg_regions)
-    # print("Tmin_regions", Tmin_regions)
-    # print("Tmax_regions", Tmax_regions)
-
-
-    # plot statistics
-    if verbose >= 3:
-        # # plot_statistics.thermosensitivity_regions(
-        # #     dfs['consumption_by_region'], dfs['temperature'])
-
-        # plot_statistics.drift_with_time(
-        #      dfs['consumption']['consumption_GW'],
-        #      dfs['temperature']['Tavg_degC'],
-        #      num_steps_per_day=num_steps_per_day
-        # )
-
-        plot_statistics.thermosensitivity_per_temperature_by_season(
-             dfs['consumption']['consumption_GW'],
-             dfs['temperature']['Tavg_degC'],
-             thresholds_degC= np.arange(-1., 26.5, step=0.1),
-             num_steps_per_day=num_steps_per_day
-        )
-
-        # plot_statistics.thermosensitivity_per_date_discrete(
-        #      dfs['consumption']['consumption_GW'],
-        #      dfs['temperature']['Tavg_degC'],
-        #      ranges_years = [[2016, 2019], [2023, 2025]],
-        #      num_steps_per_day=num_steps_per_day
-        # )
-
-        # plot_statistics.prices_per_season(
-        #      dfs['price'][['price_euro_per_MWh']],
-        # )
-
-        # sys.exit()
-
-
-
-    starts = {name: df.index.min() for name, df in dfs.items()}
-    ends   = {name: df.index.max() for name, df in dfs.items()}
-    dates_df = pd.DataFrame({
-        "start": pd.Series(starts),
-        "end":   pd.Series(ends),
-    })
-
-    # # Common range
-    # starts = [df.index.min() for df in dfs.values()]
-    # ends   = [df.index.max() for df in dfs.values()]
-
-    common_start  = max(starts.values()); common_end = min(ends  .values())
-    earliest_start= min(starts.values()); latest_end = max(ends  .values())
-
-    if verbose >= 3:
-        print(f"intersection start: {common_start  }, end: {common_end}")
-        print(f"union        start: {earliest_start}, end: {latest_end}")
-
-    # # Half‑hour index (padding will generate NAs which will be trimmed later)
-    idx = pd.date_range(start= earliest_start,
-                        end  = latest_end + pd.Timedelta(days=1), freq="30min")
-    # idx = pd.date_range(start= common_start,
-    #                     end  = common_end + pd.Timedelta(days=1), freq="30min")
-
-    META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
-
-
-    # Align
-    aligned = []
-    for name, df in dfs.items():
-
-        # If there are duplicate timestamps
-        # known issue: consumption has a date error on 5th Dec. in 2020, 22, 23
-        if df.index.has_duplicates:
-            warnings.warn(f"{name} has duplicates")
-            # df.drop_duplicates(keep=False, inplace=True)
-            # idx = idx.intersection(df.index)
-            df = df.groupby(df.index).mean()  # collapse duplicates by averaging
-
-        # Keep metadata ONLY for the consumption dataset
-        if name != "consumption":
-            df.drop(columns=[c for c in META_COLS if c in df.columns], inplace=True)
-
-        d = df.reindex(idx)
-
-        # # ---- Fill 24 hours of temperature when data are daily ----
-        # is_daily = (
-        #     (df.index.hour == 0).all()
-        #     and (df.index.minute == 0).all()
-        #     and (df.index.second == 0).all()
-        # )
-        # if is_daily:
-        #     d = d.ffill(limit=48)   # 48×30min = 24 hours
-
-        delta = df.index.to_series().diff().dropna().mode()[0]
-        if delta == pd.Timedelta(days=1):
-            d = d.ffill(limit=num_steps_per_day)
-        elif delta == pd.Timedelta(hours=3):
-            d = d.ffill(limit= 3*2)
-
-        # d = d.add_prefix(f"{name}_")
-        aligned.append(d)
-
-    df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
-    df_merged.index.name = "datetime_utc"
-
-    if cache_fname is not None:
-        df_merged.to_csv(cache_fname)
-
-        if verbose >= 2:
-            print(f"Saved merged dataset to {cache_fname}")
-            print(df_merged.head())
-
-    if verbose >= 3:
-        plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
-                    .resample('D').mean()\
-                    .groupby('dateofyear').mean().sort_index(),
-                  xlabel="date")
-
-    # quantiles for input
-    if verbose >= 2:
-        quantiles_pc = [0.5, 1, 2, 5, 50, 95, 98, 99, 99.5]
-        quantiles_df = df_merged[[
-                'consumption_GW','Tmin_degC','Tavg_degC','Tmax_degC'
-            ]].quantile([q/100 for q in quantiles_pc], axis=0)
-        quantiles_df.index = [f'q{q}' for q in quantiles_pc]
-
-        print(quantiles_df)
-
-    return (df_merged, dates_df, weights_by_cluster)
 
 
 

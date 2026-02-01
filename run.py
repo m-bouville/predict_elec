@@ -90,6 +90,11 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     # print start and end dates
     dates_df.loc["df"]= [df.index.min().date(), df.index.max().date()]
     if verbose >= 1:
+        dates_df["days_ago"] = (pd.Timestamp(datetime.now()) - \
+                                pd.to_datetime(dates_df["end"])).dt.days
+        dates_df["days_ago"] = \
+            dates_df["days_ago"].where(dates_df["days_ago"] >= 0, 0).astype(int)
+
         print(dates_df)
 
     drop = df_len_before - df.shape[0]

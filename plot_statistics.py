@@ -10,7 +10,7 @@
 
 import sys
 
-from   typing   import Dict, Optional, Tuple, Sequence, List, Any
+from   typing   import Dict, Optional, Tuple, Sequence, List  # , Any
 
 import numpy  as np
 import pandas as pd
@@ -26,6 +26,13 @@ from   constants   import Split
 
 
 year_ref = 2021
+
+months_seasons = {'spring': [3, 4, 5], 'summer': [ 6, 7, 8],
+                  'autumn': [9,10,11], 'winter': [12, 1, 2]}
+colors_seasons = {'spring': 'green', 'summer': 'orange',
+                  'autumn': 'brown', 'winter': 'skyblue',
+                  'all': 'black',    'mid'   : 'grey'
+                  }
 
 
 
@@ -57,7 +64,8 @@ def drift_with_time(
 
     _temperature_annual = temperature.rolling(365, min_periods=365, center=True) \
                      .mean().dropna()
-    _year_annual = pd.Series(_temperature_annual.index.year - year_ref + _temperature_annual.index.dayofyear/365,
+    _year_annual = pd.Series(_temperature_annual.index.year - year_ref + \
+                             _temperature_annual.index.dayofyear/365,
                       index = _temperature_annual.index, name="year")  # for long-term drift
 
     # linear regression to quantify thermosensitivity in winter
@@ -96,11 +104,12 @@ def drift_with_time(
     # _temperature  = (temperature.rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
-    _temperature_sat_annual = ((temperature.clip(upper=15) - 15).rolling(365, min_periods=365, center=True) \
-                     .mean()).dropna()
+    _temperature_sat_annual = ((temperature.clip(upper=15) - 15).\
+                rolling(365, min_periods=365, center=True).mean()).dropna()
     _consumption_annual = (_consumption.rolling(365, min_periods=365, center=True) \
                      .mean()).dropna()
-    _year_annual = pd.Series(_consumption_annual.index.year - year_ref + _consumption_annual.index.dayofyear/365,
+    _year_annual = pd.Series(_consumption_annual.index.year - year_ref + \
+                             _consumption_annual.index.dayofyear/365,
                       index = _consumption_annual.index, name="year")  # for long-term drift
 
 
@@ -111,8 +120,8 @@ def drift_with_time(
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_no_T = f"{model_no_T.intercept_:.1f} GW  " \
                      f"{model_no_T.coef_[0]:.2f} * (year - {year_ref})"
-    print(f"consumption [R² ={model_no_T.score(_year_annual.to_frame(), _consumption_annual)*100:3.0f}%] = "
-          f"{_formula_model_no_T}")
+    _R2 = model_no_T.score(_year_annual.to_frame(), _consumption_annual)
+    print(f"consumption [R² ={_R2*100:3.0f}%] = {_formula_model_no_T}")
 
     conso_model_no_T = _year_annual * model_no_T.coef_[0] + model_no_T.intercept_
 
@@ -204,17 +213,17 @@ def prices_per_season(
 
     winter = price[price.index.month.isin([12, 1, 2])]
     winter['year_as_January'] = (winter.index + pd.DateOffset(months=2)).year.astype(int)
-    # winter['year_pair'] = winter.apply(lambda row: f"{row['year_as_January']-1}-"
-    #                                                f"{row['year_as_January']-2000}", axis=1)
+    # winter['year_pair']= winter.apply(lambda row:f"{row['year_as_January']-1}-"
+    #                                              f"{row['year_as_January']-2000}",axis=1)
     # print(winter)
 
     summer = price[price.index.month.isin([ 6, 7, 8])]
 
 
-    ranges = {'winter':  range(2016, 2027), 'summer': range(2015, 2026)}
-    colors = {'winter': 'skyblue', 'summer': 'orange',
-              2020: 'blue', 2021: 'cornflowerblue', 2022: 'red', 2023: 'hotpink',
-              2024: 'green', 2025: 'chartreuse', 2026: 'yellowgreen'}
+    ranges = {'winter': range(2016, 2027), 'summer': range(2015, 2026)}
+    colors = colors_seasons | \
+             {2020: 'blue', 2021: 'cornflowerblue',2022: 'red',   2023: 'hotpink',
+              2024: 'green',2025: 'chartreuse',    2026: 'yellowgreen'}
     styles = {'avg': 'solid',   'std': 'dotted',  'range': 'dashed'}
     names  = {'avg': "average", 'std': "std dev", 'range': "amplitude"}
     styles.pop('std');  names.pop('std')
@@ -346,8 +355,8 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
                               df_temperature       : pd.DataFrame,
                               threshold_winter_degC: float = 15.,
                               threshold_summer_degC: float = 20.) -> None:
-    df_consumption.drop(columns=['year', 'month', 'dateofyear', 'timeofday'],
-                        inplace=True)
+    # df_consumption.drop(columns=['year', 'month', 'dateofyear', 'timeofday'],
+    #                     inplace=True)
     df_consumption.columns = [_col.split("_")[1]
                               for _col in list(df_consumption.columns)]
     df_consumption = df_consumption.resample('D').mean().dropna()  # half-hour -> day
@@ -586,6 +595,249 @@ def thermosensitivity_per_time_of_day(
 
 
 
+
+
+def thermosensitivity_peak_hour(
+     consumption      : pd.Series,
+     temperature      : pd.Series,
+     num_steps_per_day: int
+)   -> None:
+
+    _min_year = 2010
+
+    _consumption = consumption[(consumption.index.year >= _min_year)].dropna()
+    _temperature = temperature[(consumption.index.year >= _min_year)].dropna()
+
+
+    # switch to local time (time changes at ends of March and October)
+    _consumption.index = _consumption.index.tz_convert('Europe/Paris').sort_values()
+    _temperature.index = _temperature.index.tz_convert('Europe/Paris').sort_values()
+    name_tz = "local"
+    # remove duplicates introduced by local time
+    _consumption = _consumption[~_consumption.index.duplicated(keep="first")]
+    _temperature = _temperature[~_temperature.index.duplicated(keep="first")]
+
+    # _consumption.index = _consumption.index.tz_convert('utc')
+    # _temperature.index = _temperature.index.tz_convert('utc')
+    # name_tz = "UTC"
+
+
+    dict_conso= {'all': _consumption}
+    dict_T    = {'all': _temperature}
+    dict_df   = {}
+
+    dict_months = months_seasons
+    # dict_months['spring'] = [ 4]
+    # dict_months['autumn'] = [10]
+    # dict_months['mid']    = dict_months['spring'] + dict_months['autumn']
+    # del dict_months['spring'], dict_months['autumn']
+
+    for season in list(dict_months.keys()):
+        dict_conso[season]= _consumption[(_consumption.index.month.isin(dict_months[season]))]
+        dict_T    [season]= _temperature[(_temperature.index.month.isin(dict_months[season]))]
+
+    list_thresholds = list(np.arange(3, 26, 2.5))
+    dict_thresholds = {
+        'winter': list_thresholds[0:4],
+        'mid'   : list_thresholds[2:7],
+        'summer': list_thresholds[6:9],
+        'all'   : list_thresholds[0:6]
+    }
+    dict_thresholds['spring'] = dict_thresholds['mid']
+    dict_thresholds['autumn'] = dict_thresholds['mid']
+
+
+    dict_colors = { # key: number of curves and of colors
+        4: ['blue', 'skyblue', 'orange', 'red'],
+        5: ['blue', 'skyblue', 'grey', 'orange', 'red'],
+        6: ['blue', 'skyblue', 'lightgreen', 'gold', 'darkorange', 'red'],
+        7: ['blue', 'skyblue', 'lightgreen', 'grey', 'gold', 'darkorange', 'red']
+    }
+
+    dict_slopes = {}
+    for season in list(dict_conso.keys()):
+        # initializing lists
+        idx_T = dict_T[season] < dict_thresholds[season][0]
+        count = [round(sum(idx_T) / num_steps_per_day)]  # steps -> days
+        _list_series = [dict_conso[season][idx_T]]
+        _cols        = [f"T < {dict_thresholds[season][0]} °C"]
+
+        for _idx in range(0, len(dict_thresholds[season])-1):
+            idx_T = (dict_T[season] >= dict_thresholds[season][_idx  ]) & \
+                    (dict_T[season] <  dict_thresholds[season][_idx+1])
+            count.append(round(sum(idx_T) / num_steps_per_day))  # steps -> days
+            _list_series.append(dict_conso[season][idx_T])
+            _cols.append(f"{dict_thresholds[season][_idx]} <= T < "
+                         f"{dict_thresholds[season][_idx+1]} °C")
+
+
+        idx_T = dict_T[season] >= dict_thresholds[season][-1]
+        count.append(round(sum(idx_T) / num_steps_per_day))  # steps -> days
+        _list_series.append(dict_conso[season][idx_T])
+        _cols       .append(f"T >= {dict_thresholds[season][-1]} °C")
+
+        # _list_series.append(dict_conso[season])
+        # _cols       .append("summer")
+
+
+        dict_df[season] = pd.DataFrame()
+        for i, _series in enumerate(_list_series):
+            _timeofday = _series.index.hour + _series.index.minute/60
+            dict_df[season][i] = _series.groupby(_timeofday).mean()
+        dict_df[season].columns  = _cols
+        dict_df[season].loc[24.] = dict_df[season].loc[0.]
+
+        print(f"{season:6s} count: {count}")
+        # print(dict_df[season].round(1))
+
+        _colors = dict_colors[dict_df[season].shape[1]]
+        i = 0
+        plt.plot(figsize=(10,6))
+        for name, col in dict_df[season].T.iterrows():
+            plt.plot(col.index, col.values, label=name, color=_colors[i])
+            i += 1
+        plt.xlabel(f"{name_tz} time of day")
+        plt.ylabel(f"{season} consumption [GW]")
+        # plt.title (title)
+        plt.xlim( 0, 24)
+        plt.xticks(range(0, 25, 4))
+        plt.ylim(30, 82)
+        plt.legend(loc='lower center' if season in ['all','winter'] else 'upper left')
+        plt.show()
+
+
+        # _stats = {'avg': dict_df[season].mean(0), 'std': dict_df[season].std(0),
+        #           'amplitude': dict_df[season].max(0)-dict_df[season].min(0)}
+        # print(season, "\n", pd.DataFrame(_stats).round(2))
+
+        # plt.figure(figsize=(10,6))
+        # plt.bar(_stats['amplitude'].index, _stats['amplitude'].values,color='skyblue')
+        # plt.ylabel("winter consumption: max hour - min hour [GW]")
+        # plt.show()
+
+        plt.plot(figsize=(10,6))
+        plt.hlines(0, 0, 24, color="black")
+        i = 0
+        ref_series = dict_df[season][list(dict_df[season].columns)[-3]]
+        for name, col in dict_df[season].T.iterrows():
+            # ref_series = col.mean(0)
+            plt.plot(col.index, (col - ref_series).values,
+                     label=name, color=_colors[i])
+            i += 1
+
+        plt.xlabel(f"{name_tz} time of day")
+        plt.ylabel(f"{season} consumption [GW], ref.: "
+                   f"{list(dict_df[season].columns)[-3]}")
+        # plt.title (title)
+        plt.xlim(  0, 24)
+        plt.xticks(range(0, 25, 4))
+        plt.ylim(-20, 20)
+        plt.legend(loc='lower right', ncols=2)
+            # if season in ['all','winter'] else 'upper left')
+        plt.show()
+
+
+        _idx   = dict_T    [season] <= 13
+        _conso = dict_conso[season].loc[_idx]
+        _T     = dict_T    [season].loc[_idx]
+        # print(season, round(sum(_idx)/num_steps_per_day))
+
+        if sum(_idx)/num_steps_per_day > 30:  # do only w/ enough data
+            dict_slopes[season] = []
+            for h in range(num_steps_per_day):
+                _idx = (_T.index.hour == h//2) & (_T.index.minute == (h%2)*30)
+
+                # linear regression to quantify thermosensitivity in winter
+                model = LinearRegression()
+                model.fit(_T.loc[_idx].to_frame(), _conso.loc[_idx])
+                dict_slopes[season].append(-round(float(model.coef_[0]), 4))
+            dict_slopes[season].append(dict_slopes[season][0])  # 24:00 == 0:00
+            # print(season, dict_slopes[season])
+
+
+    # plotting consumption
+    plt.plot(figsize=(12,5))
+    _dict_series_timeofday = dict()
+    for season in dict_conso.keys():
+        if season not in ['all']:
+            _series_date = dict_conso[season]
+            _timeofday = _series_date.index.hour + _series_date.index.minute/60
+            _dict_series_timeofday[season] = _series_date.groupby(_timeofday).mean()
+            _dict_series_timeofday[season].loc[24.] = _dict_series_timeofday[season].loc[0.]
+
+            plt.plot(_dict_series_timeofday[season].index,
+                     _dict_series_timeofday[season].values,
+                     label=season, color=colors_seasons[season])
+    plt.xlabel(f"{name_tz} time of day")
+    plt.ylabel( "consumption [GW]")
+    plt.xlim( 0, 24)
+    plt.xticks(range(0, 25, 4))
+    plt.legend(loc='lower right', ncols=2)
+    plt.show()
+
+    # plotting consumption w.r.t. summer
+    plt.plot(figsize=(12,5))
+    for season in dict_conso.keys():
+        if season not in ['all']:
+            plt.plot(_dict_series_timeofday[season].index,
+                     (_dict_series_timeofday[season]-_dict_series_timeofday['summer']).values,
+                     label=season, color=colors_seasons[season])
+    plt.xlabel(f"{name_tz} time of day")
+    plt.ylabel( "consumption compared to summer [GW]")
+    plt.xlim( 0, 24)
+    plt.xticks(range(0, 25, 4))
+    plt.legend(loc='lower left', ncols=2)
+    plt.show()
+
+
+    # plotting thermosensitivity
+    plt.plot(figsize=(12,5))
+    for season in dict_slopes.keys():
+        if season not in ['all']:
+            plt.plot(np.arange(24.5, step=0.5), dict_slopes[season],
+                     label=season, color=colors_seasons[season])
+    plt.xlabel(f"{name_tz} time of day")
+    plt.ylabel( "heating thermosensitivity [GW/K]")
+    plt.xlim( 0, 24)
+    plt.xticks(range(0, 25, 4))
+    # if plt.ylim()[0] > 1.5:  # ensure zero is part of the axis
+    #     plt.ylim(bottom = 1.5)
+    plt.legend(loc='upper left')
+    plt.show()
+
+
+
+    # same T° range across seasons
+    plt.plot(figsize=(10,6))
+
+    for idx_threshold in [2, 3, 6]:
+        _thresholds = [list_thresholds[idx_threshold],
+                       list_thresholds[idx_threshold+1]]
+        _list_possible_cols = [
+            f'T >= {_thresholds[0]} °C',
+            f'{_thresholds[0]} <= T < {_thresholds[1]} °C',
+            f'T < {_thresholds[1]} °C'
+        ]
+
+        for season in dict_df.keys():
+            if season not in ['all']:
+                str_threshold = [e for e in _list_possible_cols
+                                    if e in dict_df[season].columns]
+                plt.plot(dict_df[season][str_threshold].index,
+                         dict_df[season][str_threshold].values,
+                         label = season, color=colors_seasons[season])
+
+        str_threshold = _list_possible_cols[1]
+        plt.xlabel(f"{name_tz} time of day")
+        plt.ylabel("consumption [GW]")
+        plt.title (str_threshold)
+        plt.xlim( 0, 24)
+        plt.xticks(range(0, 25, 4))
+        plt.ylim(30, 80)
+        plt.legend()
+        plt.show()
+
+
 # -------------------------------------------------------
 # thermosensitivity by temperature
 # -------------------------------------------------------
@@ -676,25 +928,20 @@ def thermosensitivity_per_temperature_by_season(
                 thresholds=thresholds_degC, direction='==',
                 num_steps_per_day=num_steps_per_day, width = 1)
 
-    months = {'spring': [3, 4, 5], 'summer': [ 6, 7, 8],
-              'autumn': [9,10,11], 'winter': [12, 1, 2]}
-    colors = {'spring': 'green', 'summer': 'orange',
-              'autumn': 'brown', 'winter': 'skyblue', 'all': 'black'}
-
     sensitivity_df = pd.DataFrame()
     sensitivity_df["all"] = _sensitivity(consumption, temperature)
 
-    for _season in list(months.keys()):
+    for _season in list(months_seasons.keys()):
         # print(_state, sum(df_temperature[_state]))
         sensitivity_df[_season] = _sensitivity(
-            consumption[consumption.index.month.isin(months[_season])],
-            temperature[temperature.index.month.isin(months[_season])])
+            consumption[consumption.index.month.isin(months_seasons[_season])],
+            temperature[temperature.index.month.isin(months_seasons[_season])])
 
     plt.figure(figsize=(10,6))
-    for _season in ["all"] + list(months.keys()):
+    for _season in ["all"] + list(months_seasons.keys()):
         plt.plot(sensitivity_df[_season].index,
                  sensitivity_df[_season].rolling(15, min_periods=12).mean(),
-                 color=colors[_season], label=_season)
+                 color=colors_seasons[_season], label=_season)
     plt.xlabel("threshold T_avg [°C]")
     plt.ylabel("thermosensitivity [GW/K]")
     plt.ylim(bottom=-3.5)
@@ -913,7 +1160,8 @@ def thermosensitivity_per_date_discrete(
 
     # plotting ratios
     ratios = {
-        "consumption, non-T":avg_consumption_net_per_range[1] / avg_consumption_net_per_range[0],
+        "consumption, non-T": avg_consumption_net_per_range[1] / \
+                              avg_consumption_net_per_range[0],
         "DJU15": DJU_per_range[1] / DJU_per_range[0],
         "sensitivity": sensitivity_per_range[1] / sensitivity_per_range[0],
         "consumption, T": (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) / \
@@ -944,7 +1192,8 @@ def thermosensitivity_per_date_discrete(
         }
     print("breakdown [GW]:", breakdown_GW)
 
-    breakdown_pc = {k: round(100 * v / (avg_consumption_per_range[1]-avg_consumption_per_range[0]), 1)
+    breakdown_pc = {
+        k: round(100 * v / (avg_consumption_per_range[1]-avg_consumption_per_range[0]), 1)
                  for (k, v) in breakdown_GW.items()}
     print("breakdown [%]:", breakdown_pc)
 

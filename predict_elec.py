@@ -27,7 +27,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'stats'
+    MODE = 'once'
         # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', 'stats']
 
     VERBOSE:    int =  1
@@ -49,7 +49,7 @@ if __name__ == "__main__":
             (BASELINE_PARAMS_FAST, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
                 constants.fast_parameters(NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS)
 
-        if 'stat' in MODE:    # works for `stats` and `statistics
+        if 'stat' in MODE:    # works for `stats` and `statistics`
         # we will plot on the training (nearly complete) data set
             train_split_fraction = 0.99
             valid_ratio          = 0.01
