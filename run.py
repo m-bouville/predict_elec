@@ -49,7 +49,7 @@ from   constants import Stage, Split
 # ============================================================
 
 def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
-                       cache_fname        : str,
+                       cache_fname        : str,  # pickle file
                        pred_length        : int,
                        num_steps_per_day  : int,
                        minutes_per_step   : int,
@@ -320,7 +320,8 @@ def run_model_once(
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, names_cols, dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
-            dict_input_csv_fnames, None, NNTQ_parameters['pred_length'],
+            dict_input_csv_fnames, os.path.join(cache_dir, 'input_data.pkl'),
+            NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, verbose)
     # print("Tavg_full:", Tavg_full)
 

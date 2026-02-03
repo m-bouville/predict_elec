@@ -44,8 +44,19 @@ os.makedirs('cache', exist_ok=True)
 def load_data(dict_input_csv_fnames: dict, cache_fname: str,
               num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
             -> Tuple[pd.DataFrame, pd.DataFrame]:
-    dfs = {}
 
+
+    # either load pickle...
+    if (cache_fname is not None) and (os.path.exists(cache_fname)):
+        if verbose > 0:
+            print(f"Loading input data from: {cache_fname}...")
+        with open(cache_fname, "rb") as f:
+            (df_merged, dates_df, weights_by_cluster) = pickle.load(f)
+        return (df_merged, dates_df, weights_by_cluster)
+
+
+
+    # ... or compute
     (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
     # print("weights_regions:", weights_regions)
 
@@ -53,6 +64,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
 
     # Load both CSVs
+    dfs = {}
     for name, path in dict_input_csv_fnames.items():
         # if not os.path.exists(path):
         #     raise FileNotFoundError(f"Input file not found: {path}")
@@ -174,12 +186,13 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     df_merged.index.name = "datetime_utc"
     # print("df_merged:\n", df_merged)
 
-    if cache_fname is not None:
-        df_merged.to_csv(cache_fname)
 
-        if verbose >= 2:
-            print(f"Saved merged dataset to {cache_fname}")
-            print(df_merged.head())
+    # Save pickle
+    if cache_fname is not None:
+        with open(cache_fname, "wb") as f:
+            pickle.dump((df_merged, dates_df, weights_by_cluster), f)
+        if verbose > 0:
+            print(f"Saved merged input data to: {cache_fname}")
 
 
     # plot statistics
@@ -461,6 +474,10 @@ def load_consumption_by_region(
     # identify csv file by size and date
     _dict_csv  = {"file_size"        : os.path.getsize (path),
                   "modification_time": os.path.getmtime(path)}
+    _dict_csv['recent'] = df_recent.index.min().strftime('%Y-%m-%d %H:%M:%S') \
+        if df_recent is not None else ""
+
+
     key_str    = json.dumps(_dict_csv, sort_keys=True)
     cache_key  = hashlib.md5(key_str.encode()).hexdigest()
     cache_path = os.path.join(cache_dir, f"conso_region_{cache_key}.pkl")
@@ -904,13 +921,18 @@ def load_price(
 
         with zipfile.ZipFile(path_zip, 'r') as zip_ref:
             if verbose >= 1:
-                print(f"Loading {zip_ref}...")
+                print(f"Extracting csv from {path_zip}...")
+
             # List all files in the zip archive
             file_list = zip_ref.namelist()
             # print("Files in the zip archive:", file_list)
             assert 'France.csv' in file_list, file_list
 
-            zip_ref.extract('France.csv', StrPath=path_csv)
+            # extract and rename csv
+            _dir   = os.path.dirname (path_csv)
+            # _fname = os.path.basename(path_csv)
+            zip_ref.extract('France.csv', path=_dir)
+            os.rename(os.path.join(_dir, 'France.csv'), path_csv)
     # we have the csv file locally
 
 
