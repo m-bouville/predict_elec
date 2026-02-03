@@ -71,6 +71,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         elif name == 'temperature':
             dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
                 load_temperature(path, weights_by_region, verbose=verbose)
+
         # elif name == 'solar':
             # BUG: The whole of September 2021 is missing
             # dfs[name] = load_solar(path, verbose=verbose)
@@ -80,6 +81,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
         # print(name, dfs[name].index)
 
+    if verbose >= 3:
+        dfs["eco2mix"] = load_eco2mix()
 
 
     # check datetime indices (duplicates, missing)
@@ -102,19 +105,19 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
 
 
-    starts = {name: df.index.min() for name, df in dfs.items()}
-    ends   = {name: df.index.max() for name, df in dfs.items()}
+    starts = {name: df.index.tz_convert('UTC').min() for name, df in dfs.items()}
+    ends   = {name: df.index.tz_convert('UTC').max() for name, df in dfs.items()}
     dates_df = pd.DataFrame({
-        "start": pd.to_datetime(pd.Series(starts), utc=True),
-        "end":   pd.to_datetime(pd.Series(ends  ), utc=True),
+        "start": pd.to_datetime(pd.Series(starts)),
+        "end":   pd.to_datetime(pd.Series(ends  )),
     })
 
     # # Common range
     # starts = [df.index.min() for df in dfs.values()]
     # ends   = [df.index.max() for df in dfs.values()]
 
-    common_start  = max(starts.values()); common_end = min(ends  .values())
-    earliest_start= min(starts.values()); latest_end = max(ends  .values())
+    common_start  = max(starts.values()); common_end = min(ends.values())
+    earliest_start= min(starts.values()); latest_end = max(ends.values())
 
     if verbose >= 3:
         print(f"intersection start: {common_start  }, end: {common_end}")
@@ -178,17 +181,17 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             print(f"Saved merged dataset to {cache_fname}")
             print(df_merged.head())
 
+
+    # plot statistics
     if verbose >= 3:
         plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date")
 
-
-    # plot statistics
-    if verbose >= 3:
         # remove NA from consumption and T°
-        _df_plot = df_merged[['consumption_GW', 'Tavg_degC']].dropna()
+        _df_plot = df_merged[['consumption_GW', 'Tavg_degC', 'price_euro_per_MWh',
+                     'EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']].dropna()
 
         # plot_statistics.thermosensitivity_regions(
         #     dfs['consumption_by_region'], dfs['temperature'])
@@ -222,7 +225,19 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         plot_statistics.thermosensitivity_peak_hour(
             _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
             num_steps_per_day=num_steps_per_day)
-    # sys.exit()
+
+
+        plot_statistics.production_function_price(
+             _df_plot[['EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']],
+             _df_plot[ 'consumption_GW'],
+             _df_plot[ 'price_euro_per_MWh'],
+             min_year = 2023,
+             range_prices = [-20, 260] # euro/MWh
+        )
+
+
+
+        sys.exit()
 
 
 
@@ -260,9 +275,13 @@ def load_consumptions_recent(
 
     # national data
     if os.path.exists(path_nation):
+        if verbose >= 1:
+            print(f"loading {path_nation}...")
         df_nation = pd.read_csv(path_nation, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"downloading {url_nation}...")
         df_nation = pd.read_csv(url_nation, sep=';')
         df_nation.to_csv(path_nation, sep=';')
 
@@ -279,9 +298,13 @@ def load_consumptions_recent(
 
     # régional
     if os.path.exists(path_region):
+        if verbose >= 1:
+            print(f"loading {path_region}...")
         df_region = pd.read_csv(path_region, sep=';')
     else:
         # Load from URL
+        if verbose >= 1:
+            print(f"downloading {url_region}...")
         df_region = pd.read_csv(url_region, sep=';')
         df_region.to_csv(path_region, sep=';')
 
@@ -346,44 +369,6 @@ def load_consumption(
             print(f"downloading {url}...")
         df = pd.read_csv(url, sep=';')
         df.to_csv(path, sep=';')
-
-    # /!\ at time change, `Date - Heure` is incorrect (same time, same tz)
-    #       but `Heure` is monotonic (at +02:00?)
-    # Date - Heure;Date;Heure; [...]
-    #   version downloaded with `timezone=Europe/Paris`:
-    # 2020-03-29T03:30:00+02:00;29/03/2020;03:30; [...]
-    # 2020-03-29T03:00:00+02:00;29/03/2020;03:00; [...]
-    # 2020-03-29T03:30:00+02:00;29/03/2020;02:30; [...]
-    # 2020-03-29T03:00:00+02:00;29/03/2020;02:00; [...]
-    #   version downloaded with `timezone=UTC`:
-    # 2020-03-29T01:30:00+00:00;29/03/2020;03:30; [...]
-    # 2020-03-29T01:00:00+00:00;29/03/2020;03:00; [...]
-    # 2020-03-29T01:30:00+00:00;29/03/2020;02:30; [...]
-    # 2020-03-29T01:00:00+00:00;29/03/2020;02:00; [...]
-
-
-    # # attempt at using 'Date' + 'Heure' (no tz) instead of 'Date - Heure' (tz-aware)
-    # #   offset by 1 hour 41% of the time!
-    # df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
-    #                                 format='%d/%m/%Y %H:%M')
-    # df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
-    # # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
-
-    # # testing
-    # df['from_Heure'] = df['Datetime'].dt.tz_convert('utc')
-    # df['Date - Heure'] = pd.to_datetime(df['Date - Heure'], utc=True)
-    # df['from_datetime'] = df['Date - Heure'].dt.tz_convert('utc')
-    # df['hour_difference'] = (df['from_Heure'] - df['from_datetime']).\
-    #     dt.total_seconds() / 3600
-    # print(df[['from_Heure', 'from_datetime', 'hour_difference']])
-
-    # occurrences_df = df['hour_difference'].value_counts().reset_index()
-    # # Rename columns for clarity
-    # occurrences_df.columns = ['hour_difference', 'count_steps']
-    # occurrences_df['count_years']= occurrences_df['count_steps'] / 48 / 365.25
-    # occurrences_df['count_pc']= occurrences_df['count_steps'] / \
-    #     occurrences_df['count_steps'].sum() * 100
-    # print(occurrences_df)
 
 
     col_datetime = 'Date - Heure'  # tz-aware
@@ -724,6 +709,8 @@ def load_temperature(
     df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
     df = df.set_index('Date').tz_localize('Europe/Paris').sort_index()
     df.index.name = "date_local"
+        # the date has be be local, otherwise, when switching to datetime
+        #   the daily T° will change at midnight UTC instead of midnight local
 
     df['Région'] = [SHORT_NAMES_REGIONS[normalize_name(r)]
                         for r in df['Région']]
@@ -1116,8 +1103,18 @@ def load_eco2mix(
     # df = df[~df.index.duplicated(keep="first")]
 
     # cleaning names: eg "Bioénergies - Déchets (MW)" -> "Bioénergies_Déchets_MW"
-    df.columns = df.columns.str.replace(r'[()\-.]', '', regex=True) \
-                           .str.replace(' ', '_')
+    df.columns = df.columns.str.replace(r"[()\-.']", '', regex=True) \
+                           .str.replace(' ', '_').str.replace('+', 'et')
+    # print(df.columns)
+
+    # non-dispatchable renewables, net charge
+    df['EnR_MW'] = df[['Hydraulique__Fil_de_leau_et_éclusée_MW',
+                       'Solaire_MW', 'Eolien_MW']].mean(1)
+    df['net_charge_MW'] = df[['Hydraulique__Lacs_MW',
+                'Hydraulique__STEP_turbinage_MW', 'Pompage_MW',
+                'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(1)
+    # print( df[['Hydraulique__STEP_turbinage_MW', 'Pompage_MW',
+    #             'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(0))
 
     # remove breakdowns
     df = df.loc[:, ~df.columns.str.contains(r'^Ech_comm_.*_MW$')]
@@ -1283,6 +1280,8 @@ def analyze_datetime(df, freq=None, name="dataset"):
     print(f"\n=== Analyzing {name} ===")
 
 
+    _str_step = "timestamp" if freq != 'D' else "day"
+
     # 1. Check for duplicates
     if df.index.has_duplicates:
         dup_rows = df[df.index.duplicated(keep=False)].sort_index().index
@@ -1293,7 +1292,7 @@ def analyze_datetime(df, freq=None, name="dataset"):
         # print("\nDuplicate counts:")
         # print(counts)
     else:
-        print("No duplicate timestamps.")
+        print(f"No duplicate {_str_step}s.")
 
 
     # 2. Check for missing timestamps
@@ -1309,12 +1308,14 @@ def analyze_datetime(df, freq=None, name="dataset"):
         missing = full_index.difference(df.index)
 
         if len(missing) > 0:
-            print(f"\n /!\ Missing {len(missing)} timestamps:")
+            print(f"\n /!\ Missing {len(missing)} {_str_step}s:")
             print(missing[:20])     # first 20 only
             if len(missing) > 20:
                 print(f"... ({len(missing) - 20} more omitted)")
+        elif freq != 'D':
+            print(f"No missing timestamps at freq == {freq}")
         else:
-            print(f"No missing timestamps at freq = {freq}")
+            print( "No missing days")
 
 
 

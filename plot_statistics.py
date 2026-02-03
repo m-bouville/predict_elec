@@ -346,6 +346,56 @@ def prices_per_season(
 
 
 
+def production_function_price(
+     production:    pd.DataFrame,
+     consumption:   pd.Series,
+     price:         pd.Series,
+     min_year:      int   = 2023,
+     range_prices:  Tuple = [-20, 260] # euro/MWh
+) -> None:
+
+        _production = production [(production.index.year >= min_year)].\
+            resample('h').mean().dropna()
+        _consumption= consumption[(consumption.index.year>= min_year)].\
+            resample('h').mean().dropna()
+        _price = price[(price.index.year >= min_year)].resample('h').mean().dropna()
+
+        _size  = 10
+        _alpha =  0.05
+        _labels= {'EnR_GW': "renewables", 'net_charge_GW': "net charge",
+                  'Ech_physiques_GW': "inter-connect"}
+        _colors= {'EnR_GW': 'green', 'net_charge_GW': 'blue',
+                  'Ech_physiques_GW': 'red'}
+
+
+        for _col in production.columns:
+            plt.scatter(_price, _production[_col],
+                        s=_size, alpha=_alpha,
+                        color=_colors[_col], label=_labels[_col])
+        plt.xlim(range_prices)
+        # plt.ylim(bottom=   0)
+        plt.xlabel("price [€/MWh]")
+        plt.ylabel("production [GW]")
+        _legend  = plt.legend(loc='upper right')
+        for handle in _legend.legend_handles:
+            handle.set_alpha(1)
+        plt.show()
+
+
+        for _col in production.columns:
+            plt.scatter(_price, _production[_col] / _consumption * 100,
+                        s=_size, alpha=_alpha,
+                        color=_colors[_col], label=_labels[_col])
+        plt.xlim(range_prices)
+        # plt.ylim(bottom=   0)
+        plt.xlabel("price [€/MWh]")
+        plt.ylabel("fraction consumption [%]")
+        _legend  = plt.legend(loc='upper right')
+        for handle in _legend.legend_handles:
+            handle.set_alpha(1)
+        plt.show()
+
+
 
 # -------------------------------------------------------
 # thermosensitivity by région
