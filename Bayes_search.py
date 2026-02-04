@@ -81,7 +81,7 @@ DISTRIBUTIONS_NNTQ = {
     # quantile loss
     'lambda_cross':   FloatDistribution(low=0., high=0.1, step=0.002),
     'lambda_coverage':FloatDistribution(low=0., high=0.4, step=0.004),
-    'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.004),
+    'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.002),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
     'smoothing_cross':FloatDistribution(low=0.004, high=0.072, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
@@ -170,7 +170,7 @@ def sample_baseline_parameters(
             if 'boosting_type' in p:   # TODO add more?
                 p['boosting_type'] = trial.suggest_categorical('LGBM_boosting_type', ['gbdt'])
             if 'num_leaves' in p:
-                p['num_leaves'] = trial.suggest_categorical('LGBM_num_leaves',[8-1,16-1,32-1,64-1])
+                p['num_leaves']=trial.suggest_categorical('LGBM_num_leaves',[8-1,16-1,32-1,64-1])
             if 'max_depth' in p:
                 p['max_depth'] = trial.suggest_int('LGBM_max_depth', 1, 10)
             if 'learning_rate' in p:
@@ -398,6 +398,9 @@ def run_Bayes_search(
             metamodel_parameters['epochs'] = 1  # for speed
 
 
+        _threshold = trial.study.best_trial.value + wiggle_value
+        _stop_now  = False
+
         # print(stage, trial.number, num_runs)
 
         for i in range(num_runs):
@@ -438,22 +441,35 @@ def run_Bayes_search(
 
             if num_runs > 1 and trial.number > min_num_trials[stage]:
                 if i == 0: # we must decide whether to run more
-                    if _loss_1run <= trial.study.best_trial.value + wiggle_value:
+                    if _loss_1run <= _threshold:
                         _list_losses_NNTQ = [_loss_NNTQ]
                         _list_losses_meta = [_loss_meta]
                         print(f"potential new record: {_loss_1run} "
-                              f"against {trial.study.best_trial.value} "
-                              f"=> starting {num_runs-1} more runs...")
+                              f"(best so far: {trial.study.best_trial.value}) "
+                              f"=> starting up to {num_runs-1} more runs...")
                     else:
                         break  # no need to run more than once
 
-                else:  # we committed to running `num_runs` times
+                else:
                     _list_losses_NNTQ.append(_loss_NNTQ)
                     _list_losses_meta.append(_loss_meta)
                     # print(i, _list_losses_NNTQ)
 
-                if i == num_runs-1:  # we just ran the last
-                    dict_row['num_runs'] = num_runs
+                    # is running for longer likely to be worth our while?
+                    # we compare an optimistic metric --average after
+                    #   removing the worst (largest) loss-- to the threshold
+                    _losses = _list_losses_NNTQ.copy() if stage == Stage.NNTQ \
+                        else  _list_losses_meta.copy()
+                    # _losses_complete = _losses
+                    _losses.remove(max(_losses))
+                    if (verbose >= 2) and (i < num_runs-1):
+                        print(f"{i}: comparing avg({_losses}) = "
+                              f"{np.mean(_losses):.2f} to {_threshold}")
+                    if np.mean(_losses) > _threshold:
+                        _stop_now = True
+
+                if (i == num_runs-1) or _stop_now:  # we just finished the last run
+                    dict_row['num_runs'] = i+1
 
                     # average after excluding min and max
                     dict_row['loss_NNTQ'] = round(clean_avg(_list_losses_NNTQ), 2)
@@ -462,9 +478,10 @@ def run_Bayes_search(
                     _loss_NNTQ = dict_row['loss_NNTQ']
                     _loss_meta = dict_row['loss_meta']
 
-                    print(f"{num_runs} runs: losses "
+                    print(f"{i+1} runs: losses "
                           f"{_list_losses_NNTQ if stage==Stage.NNTQ else _list_losses_meta} "
                           f"-> avg {dict_row[f'loss_{stage.value}']}")
+                    break
 
             if trial.number <= min_num_trials[stage]:
                 break
@@ -640,7 +657,7 @@ def plot_optuna(study,
     avg_params = params_df.mean()  # .drop(['number', 'best_so_far'])
 
     print(f"\nAverage parameters from the best {num_best_runs_params} runs "
-          f"(mean of {list_values} = {avg_value:.4f}):")
+          f"(mean of {list_values} = {avg_value:.2f}):")
     print(avg_params)
 
 

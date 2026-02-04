@@ -27,7 +27,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'once'
+    MODE = 'Bayes_meta'
         # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', 'stats']
 
     VERBOSE:    int =  1
@@ -56,7 +56,7 @@ if __name__ == "__main__":
 
 
     elif MODE in ['Bayes_NNTQ']:
-        NUM_TRIALS = 25
+        NUM_TRIALS = 15
         VERBOSE    = 0
 
     elif MODE in ['Bayes_meta']:

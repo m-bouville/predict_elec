@@ -75,51 +75,51 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           :  30,                  # Number of training epochs
-    'batch_size'       : 128,                   # Training batch size
+    'epochs'           : 24,   # Number of training epochs  # Bayes: 20
+    'batch_size'       : 96,   # Training batch size
 
     # architecture size
-    'model_dim'        :525,                # Transformer embedding dimension
-    'num_layers'        : 5,               # Number of transformer encoder layers
-    'num_heads'         : 5,                # Number of attention heads
-    'ffn_size'          : 6,                # expansion factor
-    'num_geo_blocks'   :  5,
+    'model_dim'        : 500,  # Transformer embedding dimension
+    'num_layers'       : 5,    # Number of transformer encoder layers
+    'num_heads'        : 5,    # Number of attention heads
+    'ffn_size'         : 7,    # expansion factor
+    'num_geo_blocks'   : 6,    # Number of geometric blocks
 
     # optimizer
-    'learning_rate'    :  0.0044,            # Optimizer learning rate
-    'weight_decay'     : 11.e-9,
-    'dropout'          :  0.38,              # 0.384
-    'warmup_steps'     :1900,
+    'learning_rate'    : 0.0036,  # Optimizer learning rate
+    'weight_decay'     : 1.5e-7,
+    'dropout'          : 0.38,
+    'warmup_steps'     : 3000,
 
     # early stopping
-    'patience'         :  5,
-    'min_delta'        :  0.036,
+    'patience'         : 5,
+    'min_delta'        : 0.038,
 
     # PatchEmbedding
-    'patch_length'     : 42,  # _patch_length,              # [half-hours]
-    'stride'           : 21,   # max(int(round(_patch_length/2)), 1), # [half-hours]
+    'patch_length'     : 48,  # [half-hours]
+    'stride'           : 24,  # [half-hours]  # max(int(round(_patch_length/2)), 1),
 
     # geometric blocks
     'geo_block_ratio'  : 1,
-         # each block is a fraction of the size of the previous (geometric)
+        # each block is a fraction of the size of the previous (geometric)
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.03,          # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.06,
-    'lambda_deriv'     : 0.04,         # derivative weight in loss function
+    'lambda_cross'     : 0.064,   # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.084,
+    'lambda_deriv'     : 0.062,   # derivative weight in loss function
     'lambda_median'    : 0.0,
-    'smoothing_cross'  : 0.064,
+    'smoothing_cross'  : 0.044,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
         #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
-    'saturation_cold_degC':-7.5,
-    'threshold_cold_degC': -0.5,
-    'lambda_cold'      :    0.18,
+    'saturation_cold_degC':-7.6,
+    'threshold_cold_degC': -0.2,
+    'lambda_cold'      :    0.22,
 
-    'lambda_regions'   :    0.04,
+    'lambda_regions'   :    0.034,
     'lambda_regions_sum':   0.32,
 }
 
