@@ -1264,6 +1264,195 @@ def thermosensitivity_per_date_discrete(
     # plt.show()
 
 
+# -------------------------------------------------------
+# production by price
+# -------------------------------------------------------
+
+
+
+def production_by_price(production: pd.DataFrame,
+                        prices    : pd.DataFrame) -> None:
+    _df_GW = production.copy()
+
+    # interconnections
+    _df_GW['export_Ech_comm_total_GW'] = 0.
+    _df_GW['import_Ech_comm_total_GW'] = 0.
+    for _col in [e for e in production.columns if ('Ech_comm' in e)]:
+        # print(_col)
+        _df_GW['export_'+_col]  = _df_GW[_col].clip(upper=0)
+        _df_GW['import_'+_col]  = _df_GW[_col].clip(lower=0)
+
+        _df_GW['export_Ech_comm_total_GW'] += _df_GW['export_'+_col]
+        _df_GW['import_Ech_comm_total_GW'] += _df_GW['import_'+_col]
+
+
+    _cols_GW = [e for e in _df_GW.columns if ('_GW' in e) \
+                and not (('consumption' in e) or ('Prévision_J' in e))
+                and e not in ['Eolien_terrestre_GW', 'Eolien_offshore_GW',
+                              'EnR_GW', 'net_charge_GW',
+                              'Ech_comm_Espagne']]
+    # _cols_GW.append('consumption_GW')
+    # print(_cols_GW)
+    _prod    = _df_GW[_cols_GW]      .mean(0)
+    _abs_prod= _df_GW[_cols_GW].abs().mean(0)
+    _cost = _df_GW[_cols_GW].mul(prices, axis=0)
+    _df_cost = pd.concat([_cost.mean(0).div(_prod) .round(1),
+                         (_prod    *24*365.25/1000).round(1),
+                         (_abs_prod*24*365.25/1000).round(1)
+                         ], axis=1)
+    _df_cost.columns= ["cost_euro_per_MWh", "prod_TWh_per_year", "abs_prod"]
+    _df_cost.index  = [e[:-3] for e in _df_cost.index]
+    _df_cost.rename(index={'Ech_physiques' : 'interconnexions',
+                           'pompage_STEP'  : 'pompage STEP',
+                           'turbinage_STEP': 'turbinage STEP'},
+                    inplace=True)
+    print("average price [€/MWh]:\n", _df_cost.sort_values(
+        "cost_euro_per_MWh", ascending=False))
+    # print(_df_cost.index)
+    # _df_cost = _df_cost.reindex(['Charbon', 'Gaz', 'Fioul',
+    #        'Hydraulique', 'lacs', 'turbinage STEP', 'fil de l\'eau', 'pompage STEP',
+    #        'Consommation', 'Nucléaire', 'Eolien', 'Bioénergies', 'Solaire',
+    #        'interconnexions', 'Ech_comm_Angleterre', 'Ech_comm_Suisse',
+    #        'Ech_comm_AllemagneBelgique', 'Ech_comm_Italie', 'Ech_comm_Espagne',
+    #        'Déstockage_batterie', 'Stockage_batterie'])
+
+
+    # plot sources of production
+    dict_colors = {
+        # Renewables
+        'Solaire':        'orange',
+        'Eolien':         'greenyellow',
+        'Bioénergies':    'tab:green',
+
+        # hydroelectricity
+        # 'Hydraulique':    'tab:blue',
+        'fil de l\'eau':   'blue',
+        'pompage STEP':   'deepskyblue',
+        'lacs':           'cyan',
+        'turbinage STEP': 'skyblue',
+
+        # Storage / exchanges
+        'Stockage_batterie':  'red',
+        'Déstockage_batterie': 'darkorange',
+        'interconnexions':    'fuchsia',
+        'interconn All Belg': 'pink',
+
+        # Low-carbon, non-renewable
+        'Nucléaire':      'purple',
+
+        # Demand
+        'Consommation':   'navy',
+
+        # Fossil fuels
+        'Gaz':            'grey',
+        'Fioul':          'saddlebrown',
+        'Charbon':        'black',
+    }
+
+    plt.figure(figsize=(10, 6))
+    # plt.scatter(_df_cost['power_GW'], _df_cost['cost_euro_per_MWh'])
+
+    _indices_plot = [e for e in _df_cost.index
+            if e not in [
+                'Consommation', 'Hydraulique',
+                'Nucléaire', 'interconnexions',
+                'Stockage_batterie', 'Déstockage_batterie'] and
+            'Ech_' not in e]
+
+    for _idx in _indices_plot:
+        plt.scatter(_df_cost.loc[_idx]['prod_TWh_per_year'],
+                    _df_cost.loc[_idx]['cost_euro_per_MWh'],
+                    label=_idx, s=120, color=dict_colors[_idx])
+    plt.title("Prix de la production par filière, 2023–25")
+    plt.xlabel('production [TWh/an]')
+    plt.ylabel('prix moyen [€/MWh]')
+    plt.xlim(-10,  60)
+    plt.ylim( 40, 120)
+
+    # Annotate each point with its key
+    for _idx in _indices_plot:
+        plt.annotate(_idx, (_df_cost.loc[_idx]['prod_TWh_per_year'] + 1.5,
+                            _df_cost.loc[_idx]['cost_euro_per_MWh'] + 0.5))
+    plt.show()
+
+
+
+
+    # plot interconnections
+    _df_interconnect = _df_cost.loc[[e for e in _df_cost.index
+                                     if 'Ech_' in e]]
+
+    _df_interconnect.index = _df_interconnect.index.\
+                    str.replace('AllemagneBelgique', 'All Belg').\
+                    str.replace('Ech_comm_', '')
+                    # str.replace('Ech_physiques', 'total')
+    print(_df_interconnect)
+
+    values = {}
+    for _direction in ['export', 'import']:
+        _series = _df_interconnect.loc[_direction+'_total']
+        values[_direction] = round(float(_series['prod_TWh_per_year'] * \
+                                         _series['cost_euro_per_MWh']), 1)
+    print("value [millions € per year]", values)
+
+    _fraction_import = {}
+    _fraction_import["energy"] = round(float(
+        _df_interconnect.loc['import_total']['abs_prod'] / \
+            (_df_interconnect.loc['export_total']['abs_prod'] + \
+             _df_interconnect.loc['import_total']['abs_prod'])), 4)
+    _fraction_import["value"] = round(abs(values['import']) / \
+        (abs(values['export']) + values['import']), 4)
+    print("proportion of imports:", _fraction_import)
+
+
+    dict_colors_countries = {
+        'total':     'black',
+        'Angleterre':'darkorchid',
+        'Suisse':    'chocolate',
+        'Italie':    'cornflowerblue',
+        'All Belg':  'grey',
+        'Espagne':   'red',
+    }
+
+    plt.figure(figsize=(10, 6))
+    # plt.scatter(_df_cost['power_GW'], _df_cost['cost_euro_per_MWh'])
+
+    _indices_plot = list(dict_colors_countries.keys())
+
+    for _idx in _indices_plot:
+        if _df_interconnect.loc['export_'+_idx]['abs_prod'] > 2:
+            plt.scatter(_df_interconnect.loc['export_'+_idx]['prod_TWh_per_year'],
+                        _df_interconnect.loc['export_'+_idx]['cost_euro_per_MWh'],
+                        label='export '+_idx, s=120, marker='o',
+                        color=dict_colors_countries[_idx])
+
+        if _df_interconnect.loc['import_'+_idx]['abs_prod'] > 2:
+            plt.scatter(_df_interconnect.loc['import_'+_idx]['prod_TWh_per_year'],
+                        _df_interconnect.loc['import_'+_idx]['cost_euro_per_MWh'],
+                        label='import '+_idx, s=120, marker='s',
+                        color=dict_colors_countries[_idx])
+    plt.title("interconnexions, 2023–25")
+    plt.xlabel('énergie échangée [TWh/an]')
+    plt.ylabel('prix moyen [€/MWh]')
+    plt.xlim(-25, 15)
+    plt.ylim( 60, 95)
+
+    # Annotate each point with its key
+    for _idx in _indices_plot:
+        x_off =  0.7
+        y_off = -0.5 if _idx != 'All Belg' else -1.5
+        if _df_interconnect.loc['export_'+_idx]['abs_prod'] > 2:
+            plt.annotate('export '+_idx,
+                (_df_interconnect.loc['export_'+_idx]['prod_TWh_per_year'] + x_off,
+                 _df_interconnect.loc['export_'+_idx]['cost_euro_per_MWh'] + y_off))
+
+        if _df_interconnect.loc['import_'+_idx]['abs_prod'] > 2:
+            plt.annotate('import '+_idx,
+                (_df_interconnect.loc['import_'+_idx]['prod_TWh_per_year'] + x_off,
+                 _df_interconnect.loc['import_'+_idx]['cost_euro_per_MWh'] + y_off))
+    plt.show()
+
+
 
 # -------------------------------------------------------
 # utils

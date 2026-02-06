@@ -42,9 +42,12 @@ os.makedirs('cache', exist_ok=True)
 # -------------------------------------------------------
 
 def load_data(dict_input_csv_fnames: dict, cache_fname: str,
-              num_steps_per_day: int, minutes_per_step: int, verbose: int = 0)\
+              num_steps_per_day: int, minutes_per_step: int,
+              do_plot_statistics: Optional[bool] = None, verbose: int = 0)\
             -> Tuple[pd.DataFrame, pd.DataFrame]:
 
+    if do_plot_statistics is None:
+        do_plot_statistics = (verbose >= 3)
 
     # either load pickle...
     if (cache_fname is not None) and (os.path.exists(cache_fname)):
@@ -52,159 +55,164 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             print(f"Loading input data from: {cache_fname}...")
         with open(cache_fname, "rb") as f:
             (df_merged, dates_df, weights_by_cluster) = pickle.load(f)
-        return (df_merged, dates_df, weights_by_cluster)
-
-
+        # return (df_merged, dates_df, weights_by_cluster)
 
     # ... or compute
-    (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
-    # print("weights_regions:", weights_regions)
+    else:
+        (weights_by_region, weights_by_cluster) = load_weights(verbose=verbose)
+        # print("weights_regions:", weights_regions)
 
 
-    consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
+        consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
 
-    # Load both CSVs
-    dfs = {}
-    for name, path in dict_input_csv_fnames.items():
-        # if not os.path.exists(path):
-        #     raise FileNotFoundError(f"Input file not found: {path}")
-
-
-        # if verbose >= 1:
-        #     print(f"Loading {path}...")
-        if name == 'consumption':
-            dfs[name] = load_consumption(
-                path, df_recent=consumption_nation_recent, verbose=verbose)
-
-        if name == 'consumption_by_region':
-            dfs[name], names_regions = load_consumption_by_region(
-                path, df_recent=consumption_region_recent, verbose=verbose)
-
-        elif name == 'temperature':
-            dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
-                load_temperature(path, weights_by_region, verbose=verbose)
-
-        # elif name == 'solar':
-            # BUG: The whole of September 2021 is missing
-            # dfs[name] = load_solar(path, verbose=verbose)
-
-        elif name == 'price':
-            dfs[name] = load_price(path, verbose=verbose)
-
-        # print(name, dfs[name].index)
-
-    if verbose >= 3:
-        dfs["eco2mix"] = load_eco2mix()
+        # Load both CSVs
+        dfs = {}
+        for name, path in dict_input_csv_fnames.items():
+            # if not os.path.exists(path):
+            #     raise FileNotFoundError(f"Input file not found: {path}")
 
 
-    # check datetime indices (duplicates, missing)
-    if verbose >= 3:
-        analyze_datetime(dfs["consumption"],
-                    freq=f"{minutes_per_step}min", name="consumption")
-        analyze_datetime(dfs["consumption_by_region"],
-                    freq=f"{minutes_per_step}min", name="consumption_by_region")
-        analyze_datetime(dfs['temperature'], freq="D", name="temperature")
-        # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
-        analyze_datetime(dfs['price'], freq="h", name="price")
-        analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
-        analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
+            # if verbose >= 1:
+            #     print(f"Loading {path}...")
+            if name == 'consumption':
+                dfs[name] = load_consumption(
+                    path, df_recent=consumption_nation_recent, verbose=verbose)
+
+            if name == 'consumption_by_region':
+                dfs[name], names_regions = load_consumption_by_region(
+                    path, df_recent=consumption_region_recent, verbose=verbose)
+
+            elif name == 'temperature':
+                dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
+                    load_temperature(path, weights_by_region, verbose=verbose)
+
+            # elif name == 'solar':
+                # BUG: The whole of September 2021 is missing
+                # dfs[name] = load_solar(path, verbose=verbose)
+
+            elif name == 'price':
+                dfs[name] = load_price(path, verbose=verbose)
+
+            # print(name, dfs[name].index)
 
 
-    # print("dfs['temperature']", dfs['temperature'])
-    # print("Tavg_regions", Tavg_regions)
-    # print("Tmin_regions", Tmin_regions)
-    # print("Tmax_regions", Tmax_regions)
+        # check datetime indices (duplicates, missing)
+        if verbose >= 3:
+            analyze_datetime(dfs["consumption"],
+                        freq=f"{minutes_per_step}min", name="consumption")
+            analyze_datetime(dfs["consumption_by_region"],
+                        freq=f"{minutes_per_step}min", name="consumption_by_region")
+            analyze_datetime(dfs['temperature'], freq="D", name="temperature")
+            # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
+            analyze_datetime(dfs['price'], freq="h", name="price")
+            analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
+            analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
+
+
+        # print("dfs['temperature']", dfs['temperature'])
+        # print("Tavg_regions", Tavg_regions)
+        # print("Tmin_regions", Tmin_regions)
+        # print("Tmax_regions", Tmax_regions)
 
 
 
-    starts = {name: df.index.tz_convert('UTC').min() for name, df in dfs.items()}
-    ends   = {name: df.index.tz_convert('UTC').max() for name, df in dfs.items()}
-    dates_df = pd.DataFrame({
-        "start": pd.to_datetime(pd.Series(starts)),
-        "end":   pd.to_datetime(pd.Series(ends  )),
-    })
+        starts = {name: df.index.tz_convert('UTC').min() for name, df in dfs.items()}
+        ends   = {name: df.index.tz_convert('UTC').max() for name, df in dfs.items()}
+        dates_df = pd.DataFrame({
+            "start": pd.to_datetime(pd.Series(starts)),
+            "end":   pd.to_datetime(pd.Series(ends  )),
+        })
 
-    # # Common range
-    # starts = [df.index.min() for df in dfs.values()]
-    # ends   = [df.index.max() for df in dfs.values()]
+        # # Common range
+        # starts = [df.index.min() for df in dfs.values()]
+        # ends   = [df.index.max() for df in dfs.values()]
 
-    common_start  = max(starts.values()); common_end = min(ends.values())
-    earliest_start= min(starts.values()); latest_end = max(ends.values())
+        common_start  = max(starts.values()); common_end = min(ends.values())
+        earliest_start= min(starts.values()); latest_end = max(ends.values())
 
-    if verbose >= 3:
-        print(f"intersection start: {common_start  }, end: {common_end}")
-        print(f"union        start: {earliest_start}, end: {latest_end}")
+        if verbose >= 3:
+            print(f"intersection start: {common_start  }, end: {common_end}")
+            print(f"union        start: {earliest_start}, end: {latest_end}")
 
-    # # Half‑hour index (padding will generate NAs which will be trimmed later)
-    idx = pd.date_range(start= earliest_start,
-                        end  = latest_end + pd.Timedelta(days=1), freq="30min")
-    # idx = pd.date_range(start= common_start,
-    #                     end  = common_end + pd.Timedelta(days=1), freq="30min")
+        # # Half‑hour index (padding will generate NAs which will be trimmed later)
+        idx = pd.date_range(start= earliest_start,
+                            end  = latest_end + pd.Timedelta(days=1), freq="30min")
+        # idx = pd.date_range(start= common_start,
+        #                     end  = common_end + pd.Timedelta(days=1), freq="30min")
 
-    META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
-
-
-    # Align
-    aligned = []
-    for name, df in dfs.items():
-
-        # If there are duplicate timestamps
-        # known issue: consumption has a date error on 5th Dec. in 2020, 22, 23
-        if df.index.has_duplicates:
-            warnings.warn(f"{name} has duplicates")
-            # df.drop_duplicates(keep=False, inplace=True)
-            # idx = idx.intersection(df.index)
-            df = df.groupby(df.index).mean()  # collapse duplicates by averaging
-
-        # Keep metadata ONLY for the consumption dataset
-        if name != "consumption":
-            df.drop(columns=[c for c in META_COLS if c in df.columns], inplace=True)
-
-        d = df.reindex(idx)
-
-        # # ---- Fill 24 hours of temperature when data are daily ----
-        # is_daily = (
-        #     (df.index.hour == 0).all()
-        #     and (df.index.minute == 0).all()
-        #     and (df.index.second == 0).all()
-        # )
-        # if is_daily:
-        #     d = d.ffill(limit=48)   # 48×30min = 24 hours
-
-        delta = df.index.to_series().diff().dropna().mode()[0]
-        if delta == pd.Timedelta(days=1):
-            d = d.ffill(limit=num_steps_per_day)
-        elif delta == pd.Timedelta(hours=1):  # price
-            d = d.ffill(limit=   2)
-        elif delta == pd.Timedelta(hours=3):  # solar
-            d = d.ffill(limit= 3*2)
-
-        # d = d.add_prefix(f"{name}_")
-        aligned.append(d)
-
-    df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
-    df_merged.index.name = "datetime_utc"
-    # print("df_merged:\n", df_merged)
+        META_COLS = ["year","month","timeofday","dateofyear","dayofyear"]
 
 
-    # Save pickle
-    if cache_fname is not None:
-        with open(cache_fname, "wb") as f:
-            pickle.dump((df_merged, dates_df, weights_by_cluster), f)
-        if verbose > 0:
-            print(f"Saved merged input data to: {cache_fname}")
+        # Align
+        aligned = []
+        for name, df in dfs.items():
+
+            # If there are duplicate timestamps
+            # known issue: consumption has a date error on 5th Dec. in 2020, 22, 23
+            if df.index.has_duplicates:
+                warnings.warn(f"{name} has duplicates")
+                # df.drop_duplicates(keep=False, inplace=True)
+                # idx = idx.intersection(df.index)
+                df = df.groupby(df.index).mean()  # collapse duplicates by averaging
+
+            # Keep metadata ONLY for the consumption dataset
+            if name != "consumption":
+                df.drop(columns=[c for c in META_COLS if c in df.columns], inplace=True)
+
+            d = df.reindex(idx)
+
+            # # ---- Fill 24 hours of temperature when data are daily ----
+            # is_daily = (
+            #     (df.index.hour == 0).all()
+            #     and (df.index.minute == 0).all()
+            #     and (df.index.second == 0).all()
+            # )
+            # if is_daily:
+            #     d = d.ffill(limit=48)   # 48×30min = 24 hours
+
+            delta = df.index.to_series().diff().dropna().mode()[0]
+            if delta == pd.Timedelta(days=1):
+                d = d.ffill(limit=num_steps_per_day)
+            elif delta == pd.Timedelta(hours=1):  # price
+                d = d.ffill(limit=   2)
+            elif delta == pd.Timedelta(hours=3):  # solar
+                d = d.ffill(limit= 3*2)
+
+            # d = d.add_prefix(f"{name}_")
+            aligned.append(d)
+
+        df_merged = pd.concat(aligned, axis=1).loc[:common_end]  # remove padding
+        df_merged.index.name = "datetime_utc"
+        # print("df_merged:\n", df_merged)
+
+
+        # Save pickle
+        if cache_fname is not None:
+            with open(cache_fname, "wb") as f:
+                pickle.dump((df_merged, dates_df, weights_by_cluster), f)
+            if verbose > 0:
+                print(f"Saved merged input data to: {cache_fname}")
 
 
     # plot statistics
-    if verbose >= 3:
+    if do_plot_statistics:
+        df_eco2mix = load_eco2mix()
+        # df_nuclear = load_nuclear()
+
         plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
                   xlabel="date")
 
+        plot_statistics.production_by_price(
+            df_eco2mix[df_eco2mix.index.year >= 2023],
+            df_merged['price_euro_per_MWh'])
+
+        # sys.exit()
+
         # remove NA from consumption and T°
-        _df_plot = df_merged[['consumption_GW', 'Tavg_degC', 'price_euro_per_MWh',
-                     'EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']].dropna()
+        _df_plot = df_merged[['consumption_GW', 'Tavg_degC', 'price_euro_per_MWh'
+                            ]].dropna()
 
         # plot_statistics.thermosensitivity_regions(
         #     dfs['consumption_by_region'], dfs['temperature'])
@@ -241,16 +249,16 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
 
         plot_statistics.production_function_price(
-             _df_plot[['EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']],
-             _df_plot[ 'consumption_GW'],
-             _df_plot[ 'price_euro_per_MWh'],
+             df_eco2mix[['EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']],
+             _df_plot   ['consumption_GW'],
+             _df_plot   ['price_euro_per_MWh'],
              min_year = 2023,
              range_prices = [-20, 260] # euro/MWh
         )
 
 
 
-        sys.exit()
+        # sys.exit()
 
 
 
@@ -1077,7 +1085,7 @@ def load_eco2mix(
     if os.path.exists(path_monthly):
         if verbose >= 1:
             print(f"Loading {path_monthly}...")
-        df_monthly = pd.read_csv(path_monthly, sep=';')
+        df_monthly = pd.read_csv(path_monthly, sep=';', na_values='ND')
     else:
         # Load from URL
         if verbose >= 1:
@@ -1129,17 +1137,23 @@ def load_eco2mix(
                            .str.replace(' ', '_').str.replace('+', 'et')
     # print(df.columns)
 
+    # rename hydro
+
+    df.rename(columns={'Hydraulique__Fil_de_leau_et_éclusée_MW': "fil de l\'eau_MW",
+                       'Hydraulique__Lacs_MW': 'lacs_MW',
+                       'Hydraulique__STEP_turbinage_MW': 'turbinage_STEP_MW',
+                       'Pompage_MW': 'pompage_STEP_MW'}, inplace=True)
+    # print(df.columns)
+
     # non-dispatchable renewables, net charge
-    df['EnR_MW'] = df[['Hydraulique__Fil_de_leau_et_éclusée_MW',
-                       'Solaire_MW', 'Eolien_MW']].mean(1)
-    df['net_charge_MW'] = df[['Hydraulique__Lacs_MW',
-                'Hydraulique__STEP_turbinage_MW', 'Pompage_MW',
+    df['EnR_MW'] = df[["fil de l\'eau_MW", 'Solaire_MW', 'Eolien_MW']].mean(1)
+    df['net_charge_MW'] = df[['lacs_MW', 'turbinage_STEP_MW', 'pompage_STEP_MW',
                 'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(1)
     # print( df[['Hydraulique__STEP_turbinage_MW', 'Pompage_MW',
     #             'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(0))
 
     # remove breakdowns
-    df = df.loc[:, ~df.columns.str.contains(r'^Ech_comm_.*_MW$')]
+    # df = df.loc[:, ~df.columns.str.contains(r'^Ech_comm_.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Fioul__.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Gaz__.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Bioénergies__.*_MW$')]
@@ -1171,17 +1185,21 @@ def load_eco2mix(
         df['timeofday']= df.index.hour + df.index.minute/60
 
         plt.figure(figsize=(10,6))
-        df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #'Eolien_offshore_GW'
-            'Ech_physiques_GW', 'Pompage_GW']].rolling(2*24*7*4).mean().plot()
-        plt.ylabel("production [GW], weekly moving average")
+        df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+            # 'Ech_physiques_GW',
+            'turbinage_STEP_GW']].\
+                rolling(2*24*365, min_periods=2*24*350).mean().\
+                    loc[df.index.year>=2013].plot()
+        plt.ylabel("production [GW], annual moving average")
         plt.xlabel("year")
+        plt.ylim(bottom= 0.)
         plt.legend()
         plt.show()
 
         y_lim_GW = [-10, 15]
         # plt.figure(figsize=(10,6))
         # df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
-        #     'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        #     'Ech_physiques_GW', 'pompage_STEP_GW', 'timeofday']].groupby('timeofday').mean().plot()
         # plt.xlabel('time of day (UTC)')
         # plt.ylabel("production [GW]")
         # plt.ylim(y_lim_GW)
@@ -1191,8 +1209,8 @@ def load_eco2mix(
         # seasons
         df_summer = df.loc[df.index.month.isin([6, 7, 8])]
         plt.figure(figsize=(10,6))
-        df_summer[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
-            'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        df_summer[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+            'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].groupby('timeofday').mean().plot()
         plt.xlabel('time of day (UTC)')
         plt.ylabel("summer production [GW]")
         plt.ylim(y_lim_GW)
@@ -1201,8 +1219,8 @@ def load_eco2mix(
 
         df_winter = df.loc[df.index.month.isin([12, 1, 2])]
         plt.figure(figsize=(10,6))
-        df_winter[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', #♦ 'Eolien_offshore_GW',
-            'Ech_physiques_GW', 'Pompage_GW', 'timeofday']].groupby('timeofday').mean().plot()
+        df_winter[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+            'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].groupby('timeofday').mean().plot()
         plt.xlabel('time of day (UTC)')
         plt.ylabel("winter production [GW]")
         plt.ylim(y_lim_GW)
@@ -1212,21 +1230,24 @@ def load_eco2mix(
 
         # as fraction of consumption
         df_norm_pc = df.div(df['Consommation_GW'], axis=0) * 100
-        df_norm_pc.columns = df.columns.str.replace('GW', 'pc')
+        df_norm_pc.columns = df.columns.str.replace('_GW', '')
         df_norm_pc['timeofday'] = df['timeofday']
         print(df_norm_pc.mean(axis=0).round(2))
 
         plt.figure(figsize=(10,6))
-        df_norm_pc[['Hydraulique_pc', 'Solaire_pc', 'Eolien_pc', #'Eolien_offshore_pc'
-            'Ech_physiques_pc', 'Pompage_pc']].rolling(2*24*7*4).mean().plot()
-        plt.ylabel("production [%], weekly moving average")
+        df_norm_pc[['Hydraulique', 'Solaire', 'Eolien',
+                    'Eolien_offshore', 'turbinage_STEP']].\
+            rolling(2*24*365, min_periods=2*24*350).mean().\
+                loc[df.index.year>=2013].plot()
+        plt.ylabel("production [%], annual moving average")
         plt.xlabel("year")
+        plt.yscale('log')
         plt.legend()
         plt.show()
 
         plt.figure(figsize=(10,6))
-        df_norm_pc[['Hydraulique_pc', 'Solaire_pc', 'Eolien_pc', #♦ 'Eolien_offshore_pc',
-            'Ech_physiques_pc', 'Pompage_pc', 'timeofday']].groupby('timeofday').mean().plot()
+        df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', #♦ 'Eolien_offshore',
+            'Ech_physiques', 'turbinage_STEP', 'timeofday']].groupby('timeofday').mean().plot()
         plt.ylabel("production [%]")
         plt.xlabel('time of day (UTC)')
         plt.legend()
