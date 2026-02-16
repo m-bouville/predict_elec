@@ -34,6 +34,38 @@ colors_seasons = {'spring': 'green', 'summer': 'orange',
                   'all': 'black',    'mid'   : 'grey'
                   }
 
+# plot sources of production
+colors_production = {
+    # Renewables
+    'Solaire':        'orange',
+    'Eolien':         'greenyellow',
+    'Bioénergies':    'tab:green',
+
+    # hydroelectricity
+    # 'Hydraulique':    'tab:blue',
+    'fil de l\'eau':   'blue',
+    'pompage STEP':   'deepskyblue',
+    'lacs':           'cyan',
+    'turbinage STEP': 'skyblue',
+
+    # Storage / exchanges
+    'Stockage_batterie':  'red',
+    'Déstockage_batterie': 'darkorange',
+    'STEP_net':           'red',
+    'interconnexions':    'fuchsia',
+    'interconn All Belg': 'pink',
+
+    # Low-carbon, non-renewable
+    'Nucléaire':      'purple',
+
+    # Demand
+    'Consommation':   'navy',
+
+    # Fossil fuels
+    'Gaz':            'grey',
+    'Fioul':          'saddlebrown',
+    'Charbon':        'black',
+}
 
 
 
@@ -47,6 +79,7 @@ def drift_with_time(
      num_steps_per_day: int,
      )   -> None:
 
+    T_model = _year_annual * model_T.coef_[0] + model_T.intercept_
     # print("consumption:", consumption)
     # print("temperature:", temperature)
 
@@ -209,13 +242,12 @@ def prices_per_season(
              price: pd.Series,
         ) -> None:
 
-    print("from", price.index.date.min(), "to", price.index.date.max())
+    print("prices from", price.index.date.min(), "to", price.index.date.max())
 
-    winter = price[price.index.month.isin([12, 1, 2])]
+    winter = price[price.index.month.isin([12, 1, 2])].dropna().to_frame()
     winter['year_as_January'] = (winter.index + pd.DateOffset(months=2)).year.astype(int)
-    # winter['year_pair']= winter.apply(lambda row:f"{row['year_as_January']-1}-"
-    #                                              f"{row['year_as_January']-2000}",axis=1)
-    # print(winter)
+    #winter['year_pair']=winter.apply(lambda row:f"{row['year_as_January']-1}-"
+    #                                            f"{row['year_as_January']-2000}",axis=1)
 
     summer = price[price.index.month.isin([ 6, 7, 8])]
 
@@ -237,7 +269,7 @@ def prices_per_season(
     plt.figure(figsize=(10,6))
     for _year in ranges['winter']:
         _winter = winter[winter['year_as_January'] == _year].\
-            drop(columns=['year_as_January'])
+                  drop(columns=['year_as_January'])
         _winter = _winter.groupby(_winter.index.hour).mean()
 
         _dict_stats['avg_winter'  ].append(float(_winter.mean().iloc[0]))
@@ -266,19 +298,19 @@ def prices_per_season(
         _summer = summer[summer.index.year == _year]
         _summer = _summer.groupby(_summer.index.hour).mean()
 
-        _dict_stats['avg_summer'  ].append(float(_summer.mean().iloc[0]))
+        _dict_stats['avg_summer'  ].append(float(_summer.mean()))
         # _dict_stats['std_summer'  ].append(float(_summer.std ().iloc[0]))
-        _dict_stats['range_summer'].append(float((_summer.max()-_summer.min()).iloc[0]))
+        _dict_stats['range_summer'].append(float((_summer.max()-_summer.min())))
 
         _summer = _summer.rename(lambda x: x + 2).rename_axis('hour_local')
-        _summer.loc[0] = _summer.loc[24]
-        _summer.loc[1] = _summer.loc[25]
+        _summer[0] = _summer[24]
+        _summer[1] = _summer[25]
         _summer.drop(index=[25], inplace=True)
         _summer.sort_index(inplace=True)
         # print(_year, _summer)
 
         if _year >= 2020:
-            plt.plot(_summer.index, _summer['price_euro_per_MWh'].values,
+            plt.plot(_summer.index, _summer.values,
                      color=colors[_year], label=_year)
 
     plt.ylabel("summer spot price [€/MWh]")
@@ -349,16 +381,23 @@ def prices_per_season(
 def production_function_price(
      production:    pd.DataFrame,
      consumption:   pd.Series,
+     CO2:           pd.Series,
      price:         pd.Series,
      min_year:      int   = 2023,
      range_prices:  Tuple = [-20, 260] # euro/MWh
 ) -> None:
 
-        _production = production [(production.index.year >= min_year)].\
-            resample('h').mean().dropna()
-        _consumption= consumption[(consumption.index.year>= min_year)].\
-            resample('h').mean().dropna()
-        _price = price[(price.index.year >= min_year)].resample('h').mean().dropna()
+        # align
+        _df = pd.concat([production, consumption, CO2, price], axis=1)
+        _df = _df[(_df.index.year >= min_year)].resample('h').mean().dropna()
+        # print(_df.columns)
+
+        # _production = production [(production.index.year >= min_year)].\
+        #     resample('h').mean().dropna()
+        # _consumption= consumption[(consumption.index.year>= min_year)].\
+        #     resample('h').mean().dropna()
+        # _CO2  = CO2  [(CO2  .index.year >= min_year)].resample('h').mean().dropna()
+        # _price= price[(price.index.year >= min_year)].resample('h').mean().dropna()
 
         _size  = 10
         _alpha =  0.05
@@ -368,8 +407,9 @@ def production_function_price(
                   'Ech_physiques_GW': 'red'}
 
 
+        # scatter plot: production as function of price
         for _col in production.columns:
-            plt.scatter(_price, _production[_col],
+            plt.scatter(_df['price_euro_per_MWh'], _df[_col],
                         s=_size, alpha=_alpha,
                         color=_colors[_col], label=_labels[_col])
         plt.xlim(range_prices)
@@ -382,8 +422,10 @@ def production_function_price(
         plt.show()
 
 
+        # scatter plot: production (as fraction of consumption) as function of price
         for _col in production.columns:
-            plt.scatter(_price, _production[_col] / _consumption * 100,
+            plt.scatter(_df['price_euro_per_MWh'],
+                        _df[_col] / _df[consumption.name] * 100,
                         s=_size, alpha=_alpha,
                         color=_colors[_col], label=_labels[_col])
         plt.xlim(range_prices)
@@ -393,6 +435,35 @@ def production_function_price(
         _legend  = plt.legend(loc='upper right')
         for handle in _legend.legend_handles:
             handle.set_alpha(1)
+        plt.show()
+
+
+        # CO2 as function of price, with regressions
+        _threshold = 52
+        _df_sat0= _df[['price_euro_per_MWh', 'Taux_de_CO2_g/kWh']]\
+                    [(_df['price_euro_per_MWh'] <= _threshold)]
+        _df_sat = _df[['price_euro_per_MWh', 'Taux_de_CO2_g/kWh']]\
+                    [(_df['price_euro_per_MWh'].between(_threshold, 300))]
+        # linear regression to quantify thermosensitivity in winter
+        model_CO2 = LinearRegression()
+        model_CO2.fit(_df_sat['price_euro_per_MWh'].to_frame(),
+                      _df_sat['Taux_de_CO2_g/kWh' ])
+        _const = float(_df_sat0['Taux_de_CO2_g/kWh'].mean())
+        print("fit:  ", round(model_CO2.intercept_, 1), "kg/MWh +",
+              round(float(model_CO2.coef_[0]), 2), "kg/€ * price")
+        print("const:", round(_const, 1), "kg/MWh => intersect:",
+              round((_const - model_CO2.intercept_) / model_CO2.coef_[0], 1), "€/MWh")
+        _df_sat['pred'] = model_CO2.predict(_df_sat['price_euro_per_MWh'].to_frame())
+
+        plt.scatter(_df['price_euro_per_MWh'],
+                    _df['Taux_de_CO2_g/kWh' ],
+                    s=_size, alpha=0.025)
+        plt.hlines(_const, 0, _threshold, color="black")
+        plt.plot(_df_sat['price_euro_per_MWh'], _df_sat['pred'], color='black')
+        plt.xlim(range_prices)
+        plt.ylim(0, 100)
+        plt.xlabel("price [€/MWh]")
+        plt.ylabel("CO2 [kg/MWh]")
         plt.show()
 
 
@@ -628,7 +699,7 @@ def thermosensitivity_per_time_of_day(
         # /!\ quantiles are meaningless
         #   they are slopes of quantiles, not quantiles of slopes
 
-        print(list(sensitivity_df.columns))
+        # print(list(sensitivity_df.columns))
         _sign = (-1) ** (_threshold_degC[0] == '<=')
         plots.curves(
              sensitivity_df['true'] * _sign,
@@ -901,7 +972,7 @@ def threshold_temp_sensitivity(
     T_degC              : pd.Series,
     dates               : pd.DatetimeIndex,
     name_col            : str,
-    thresholds          : Sequence[float | None],
+    thresholds          : Sequence[float] | None,
     direction           : str,  # '<=', '>=' or '=='
     num_steps_per_day   : int,
     width               : float | pd.Timedelta,
@@ -1240,12 +1311,12 @@ def thermosensitivity_per_date_discrete(
         "DJU15":      round(ratios['DJU15']      * _factor, 2),
         "sensitivity":round(ratios['sensitivity']* _factor, 2)
         }
-    print("breakdown [GW]:", breakdown_GW)
+    # print("breakdown [GW]:", breakdown_GW)
 
     breakdown_pc = {
         k: round(100 * v / (avg_consumption_per_range[1]-avg_consumption_per_range[0]), 1)
                  for (k, v) in breakdown_GW.items()}
-    print("breakdown [%]:", breakdown_pc)
+    # print("breakdown [%]:", breakdown_pc)
 
     # plt.figure(figsize=(8, 6))
 
@@ -1271,8 +1342,10 @@ def thermosensitivity_per_date_discrete(
 
 
 def production_by_price(production: pd.DataFrame,
-                        prices    : pd.DataFrame) -> None:
+                        prices    : pd.DataFrame,
+                        SMA_hours : int = 0) -> None:
     _df_GW = production.copy()
+    SMA_str = "" if SMA_hours == 0 else f", moyenne {SMA_hours} h"
 
     # interconnections
     _df_GW['export_Ech_comm_total_GW'] = 0.
@@ -1301,13 +1374,13 @@ def production_by_price(production: pd.DataFrame,
                          (_abs_prod*24*365.25/1000).round(1)
                          ], axis=1)
     _df_cost.columns= ["cost_euro_per_MWh", "prod_TWh_per_year", "abs_prod"]
-    _df_cost.index  = [e[:-3] for e in _df_cost.index]
+    _df_cost.index  = [e[:-3] for e in _df_cost.index]  # remove '_GW'
     _df_cost.rename(index={'Ech_physiques' : 'interconnexions',
                            'pompage_STEP'  : 'pompage STEP',
                            'turbinage_STEP': 'turbinage STEP'},
                     inplace=True)
-    print("average price [€/MWh]:\n", _df_cost.sort_values(
-        "cost_euro_per_MWh", ascending=False))
+    # print("average price [€/MWh]:\n", _df_cost.sort_values(
+    #     "cost_euro_per_MWh", ascending=False))
     # print(_df_cost.index)
     # _df_cost = _df_cost.reindex(['Charbon', 'Gaz', 'Fioul',
     #        'Hydraulique', 'lacs', 'turbinage STEP', 'fil de l\'eau', 'pompage STEP',
@@ -1317,37 +1390,6 @@ def production_by_price(production: pd.DataFrame,
     #        'Déstockage_batterie', 'Stockage_batterie'])
 
 
-    # plot sources of production
-    dict_colors = {
-        # Renewables
-        'Solaire':        'orange',
-        'Eolien':         'greenyellow',
-        'Bioénergies':    'tab:green',
-
-        # hydroelectricity
-        # 'Hydraulique':    'tab:blue',
-        'fil de l\'eau':   'blue',
-        'pompage STEP':   'deepskyblue',
-        'lacs':           'cyan',
-        'turbinage STEP': 'skyblue',
-
-        # Storage / exchanges
-        'Stockage_batterie':  'red',
-        'Déstockage_batterie': 'darkorange',
-        'interconnexions':    'fuchsia',
-        'interconn All Belg': 'pink',
-
-        # Low-carbon, non-renewable
-        'Nucléaire':      'purple',
-
-        # Demand
-        'Consommation':   'navy',
-
-        # Fossil fuels
-        'Gaz':            'grey',
-        'Fioul':          'saddlebrown',
-        'Charbon':        'black',
-    }
 
     plt.figure(figsize=(10, 6))
     # plt.scatter(_df_cost['power_GW'], _df_cost['cost_euro_per_MWh'])
@@ -1362,8 +1404,8 @@ def production_by_price(production: pd.DataFrame,
     for _idx in _indices_plot:
         plt.scatter(_df_cost.loc[_idx]['prod_TWh_per_year'],
                     _df_cost.loc[_idx]['cost_euro_per_MWh'],
-                    label=_idx, s=120, color=dict_colors[_idx])
-    plt.title("Prix de la production par filière, 2023–25")
+                    label=_idx, s=120, color=colors_production[_idx])
+    plt.title(f"Prix de la production par filière, 2023–25{SMA_str}")
     plt.xlabel('production [TWh/an]')
     plt.ylabel('prix moyen [€/MWh]')
     plt.xlim(-10,  60)
@@ -1386,7 +1428,7 @@ def production_by_price(production: pd.DataFrame,
                     str.replace('AllemagneBelgique', 'All Belg').\
                     str.replace('Ech_comm_', '')
                     # str.replace('Ech_physiques', 'total')
-    print(_df_interconnect)
+    # print(_df_interconnect)
 
     values = {}
     for _direction in ['export', 'import']:
@@ -1431,7 +1473,7 @@ def production_by_price(production: pd.DataFrame,
                         _df_interconnect.loc['import_'+_idx]['cost_euro_per_MWh'],
                         label='import '+_idx, s=120, marker='s',
                         color=dict_colors_countries[_idx])
-    plt.title("interconnexions, 2023–25")
+    plt.title(f"interconnexions, 2023–25{SMA_str}")
     plt.xlabel('énergie échangée [TWh/an]')
     plt.ylabel('prix moyen [€/MWh]')
     plt.xlim(-25, 15)

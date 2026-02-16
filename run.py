@@ -53,13 +53,14 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
                        pred_length        : int,
                        num_steps_per_day  : int,
                        minutes_per_step   : int,
+                       do_plot_statistics : Optional[bool] = None,
                        verbose            : int  = 0) \
         -> Tuple[pd.DataFrame, Dict[str, List[str]],
                  pd.Series, pd.Series, pd.Series, List[float]]:
 
     df, dates_df, weights_regions = utils.df_features(
             dict_input_csv_fnames, cache_fname, pred_length,
-            num_steps_per_day, minutes_per_step, verbose)
+            num_steps_per_day, minutes_per_step, do_plot_statistics, verbose)
 
     # ---- Identify columns ----
     col_y_nation = "consumption_GW"
@@ -114,7 +115,7 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     df = df.reset_index(drop=True)
 
 
-    return (df, {"features": cols_features,  "Y_regions": cols_Y_regions,
+    return (df, {"features":  cols_features,  "Y_regions": cols_Y_regions,
                  "y_nation": [col_y_nation]},
             dates, Tavg_full, holidays_full, weights_regions, dates_df)
 
@@ -287,6 +288,8 @@ def run_model_once(
         save_cache_baselines  : bool,
         save_cache_NNTQ       : bool,
 
+        do_run_model          : bool,  # False: just statistics
+
         # XXX_EVERY (in epochs)
         validate_every        : int,
         display_every         : int,
@@ -297,9 +300,11 @@ def run_model_once(
         # trials_csv_path       : str   = 'parameter_search.csv',
         num_worst_days        : int   = 20,
         split_diagnostics     : Split = Split.test,
+
+        do_plot_statistics    : Optional[bool] = None,
         verbose               : int   = 0
     ) -> Tuple[containers.DatasetBundle, Dict[str, Any], pd.DataFrame, \
-               Dict[str, float], Dict[str, float], float, float]:
+               Dict[str, float], Dict[str, float], float, float] | None:
 
     np.   random.seed(seed)
     torch.manual_seed(seed)
@@ -317,17 +322,20 @@ def run_model_once(
 
 
     # load data from csv and create pd.DataFrame
+    _cache_fname = os.path.join(cache_dir, 'input_data.pkl')
+                # 'input_data_full.pkl' if do_plot_statistics else 'input_data.pkl')
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, names_cols, dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
-            dict_input_csv_fnames, os.path.join(cache_dir, 'input_data.pkl'),
-            NNTQ_parameters['pred_length'],
-            num_steps_per_day, minutes_per_step, verbose)
+            dict_input_csv_fnames, _cache_fname, NNTQ_parameters['pred_length'],
+            num_steps_per_day, minutes_per_step, do_plot_statistics, verbose)
     # print("Tavg_full:", Tavg_full)
 
     # print(f"num cols: cols_Y_regions {len(cols_Y_regions)}, "
     #       f"cols_features {len(cols_features)}, df.shape {df.shape}")
 
+    if ~do_run_model:
+        return
 
     num_time_steps = df.shape[0]
 
@@ -580,7 +588,8 @@ def run_model_once(
 # ============================================================
 
 def run_model(
-        mode                : str,  # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta']
+        mode                : str,  # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta',
+                                    #     'statistics', 'stats_only']
         num_trials          : Optional[int],
 
         # configuration bundles
@@ -606,10 +615,11 @@ def run_model(
         cache_dir           : str  = "cache",
         num_worst_days      : int  = 20,
         verbose             : Optional[int]  = 0
-    ) -> Tuple[Dict[str, Any], pd.DataFrame, \
-               Dict[str, float], Dict[str, float], float, float]:
+    ) -> None:
+    # Tuple[Dict[str, Any], pd.DataFrame, \
+    #            Dict[str, float], Dict[str, float], float, float]:
 
-    if mode == 'once' or 'stat' in mode:  # single run
+    if mode == 'once' or 'stat' in mode:  # single model run (or none)
         if num_trials in locals() and num_trials > 1:
             warnings.warn(f"num_runs ({num_trials}) will not be used")
 
@@ -619,9 +629,7 @@ def run_model(
             _split_diagnostics   = Split.test
 
 
-        data, dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
-            (num_worst_days, avg_abs_worst_days_test_NN_median), \
-            (_loss_NNTQ, _loss_meta) = \
+        _returned = \
                 run_model_once(
                 # configuration bundles
                 baseline_parameters= baseline_parameters,
@@ -642,6 +650,8 @@ def run_model(
                 save_cache_baselines= True,
                 save_cache_NNTQ     = True,
 
+                do_run_model        = mode != 'stats_only',
+
                 # XXX_EVERY (in epochs)
                 validate_every    = validate_every,
                 display_every     = display_every,
@@ -650,8 +660,20 @@ def run_model(
 
                 cache_dir         = cache_dir,
                 split_diagnostics = _split_diagnostics,
+
+                do_plot_statistics= 'stat' in mode,
                 verbose           = verbose
             )
+
+        if mode == 'stats_only':
+            assert _returned is None
+            return
+
+        # model ran
+        assert _returned is not None
+        data, dict_row, test_metrics, avg_weights_meta_NN, quantile_delta_coverage, \
+            (num_worst_days, avg_abs_worst_days_test_NN_median), \
+            (_loss_NNTQ, _loss_meta) = _returned
 
         df_row = pd.DataFrame([dict_row])
         df_row.to_csv(
@@ -687,17 +709,17 @@ def run_model(
                  num_steps_per_day=num_steps_per_day
             )
 
-            plot_statistics.thermosensitivity_per_temperature_model(
-                 data_split = data.train,
-                 thresholds_degC= np.arange(-1., 26.5, step=0.1),
-                 # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
-                 num_steps_per_day=num_steps_per_day
-            )
-            # plot_statistics.drift_with_time(
-            #      dfs['consumption']['consumption_GW'],
-            #      dfs['temperature']["Tavg_degC"],
+            # plot_statistics.thermosensitivity_per_temperature_model(
+            #      data_split = data.train,
+            #      thresholds_degC= np.arange(-1., 26.5, step=0.1),
+            #      # np.arange(-1.2, 13+6, step=0.1),  np.arange(19-6, 26.7, step=0.1)],
             #      num_steps_per_day=num_steps_per_day
             # )
+            # # plot_statistics.drift_with_time(
+            # #      dfs['consumption']['consumption_GW'],
+            # #      dfs['temperature']["Tavg_degC"],
+            # #      num_steps_per_day=num_steps_per_day
+            # # )
 
 
 

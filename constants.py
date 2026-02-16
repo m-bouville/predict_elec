@@ -75,7 +75,7 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           : 24,   # Number of training epochs  # Bayes: 20
+    'epochs'           : 21,   # Number of training epochs  # Bayes: 20
     'batch_size'       : 96,   # Training batch size
 
     # architecture size

@@ -290,6 +290,8 @@ def run_Monte_Carlo_search(
                   save_cache_baselines= False,  # these parameters
                   save_cache_NNTQ     = False,  #   will never be seen again
 
+                  do_run_model      = True,
+
                   # XXX_EVERY (in epochs)
                   validate_every    = 1,
                   display_every     = 1,  # dummy
@@ -297,6 +299,7 @@ def run_Monte_Carlo_search(
                   run_id            = run_id,
 
                   cache_dir         = cache_dir,
+                  do_plot_statistics= verbose >= 3,
                   verbose           = verbose
         )
 

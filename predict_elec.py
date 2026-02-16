@@ -27,8 +27,9 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'Bayes_meta'
-        # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', 'stats']
+    MODE = 'stats_only'
+        # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all',
+        #     'statistics', 'stats_only']
 
     VERBOSE:    int =  1
         # 0: no display, 1: normal, 2: more info, 3+: debugging
@@ -40,7 +41,7 @@ if __name__ == "__main__":
 
 
 
-    if MODE in ['once'] or 'stat' in MODE:
+    if MODE in ['once', 'statistics']:
         NUM_TRIALS = 1
 
         # METAMODEL_NN_PARAMETERS['epochs'] =  2
@@ -55,13 +56,16 @@ if __name__ == "__main__":
             valid_ratio          = 0.01
 
 
-    elif MODE in ['Bayes_NNTQ']:
+    elif 'Bayes' in MODE:
         NUM_TRIALS = 15
         VERBOSE    = 0
 
-    elif MODE in ['Bayes_meta']:
-        NUM_TRIALS = 15
-        VERBOSE    = 0
+    elif MODE in ['stats_only']:
+        NUM_TRIALS = 0  # no NNTQ model, just statistics
+
+    else:
+        raise ValueError(f"`{MODE}` is not a valid mode")
+
 
     # if 'Bayes' in MODE:
     #     assert not RUN_FAST, "fast parameters are outside Bayesian distributions"

@@ -355,7 +355,7 @@ def run_Bayes_search(
             # multi-run for best candidtes (robustness)
             num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 7, Stage.meta:5},
             min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:40, Stage.meta:20},
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.03},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.08},
 
             verbose             : int  = 0
         ):
@@ -425,6 +425,8 @@ def run_Bayes_search(
                       save_cache_baselines= stage == Stage.NNTQ,  # baselines not sampled
                       save_cache_NNTQ     = stage == Stage.meta,  # NNTQ      not sampled
 
+                      do_run_model      = True,
+
                       # XXX_EVERY (in epochs)
                       validate_every    =   1,
                       display_every     = 999,  # dummy
@@ -432,6 +434,8 @@ def run_Bayes_search(
 
                       run_id            = trial.number,
                       cache_dir         = cache_dir,
+
+                      do_plot_statistics= verbose >= 3,
                       verbose           = verbose
                 )
             # print(trial.number, i, num_runs,

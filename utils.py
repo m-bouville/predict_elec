@@ -141,11 +141,12 @@ def df_features_past_consumption(consumption: pd.Series,
 
 
 def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
-        lag: int, num_steps_per_day: int, minutes_per_step: int, verbose: int = 0) \
+        lag: int, num_steps_per_day: int, minutes_per_step: int,
+        do_plot_statistics: Optional[bool] = None, verbose: int = 0) \
             -> Tuple[pd.DataFrame, pd.DataFrame]:
     df, dates_df, weights_regions = IO.load_data(dict_input_csv_fnames, cache_fname,
             num_steps_per_day=num_steps_per_day, minutes_per_step=minutes_per_step,
-            verbose=verbose)
+            do_plot_statistics=do_plot_statistics, verbose=verbose)
     assert isinstance(df.index, pd.DatetimeIndex)
 
     # Fourier-like sine waves, weekends

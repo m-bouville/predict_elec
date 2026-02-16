@@ -24,6 +24,8 @@ import pickle
 import numpy  as np
 import pandas as pd
 
+from   sklearn.linear_model import LinearRegression
+
 import matplotlib.pyplot as plt
 
 
@@ -54,7 +56,10 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         if verbose > 0:
             print(f"Loading input data from: {cache_fname}...")
         with open(cache_fname, "rb") as f:
-            (df_merged, dates_df, weights_by_cluster) = pickle.load(f)
+            if do_plot_statistics:
+                (df_merged, df_eco2mix, dates_df, weights_by_cluster)= pickle.load(f)
+            else:
+                (df_merged, _,          dates_df, weights_by_cluster)= pickle.load(f)
         # return (df_merged, dates_df, weights_by_cluster)
 
     # ... or compute
@@ -63,7 +68,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         # print("weights_regions:", weights_regions)
 
 
-        consumption_nation_recent, consumption_region_recent = load_consumptions_recent()
+        consumption_nation_recent, consumption_region_recent = \
+            load_consumptions_recent()
 
         # Load both CSVs
         dfs = {}
@@ -95,7 +101,6 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
             # print(name, dfs[name].index)
 
-
         # check datetime indices (duplicates, missing)
         if verbose >= 3:
             analyze_datetime(dfs["consumption"],
@@ -115,13 +120,20 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         # print("Tmax_regions", Tmax_regions)
 
 
-
         starts = {name: df.index.tz_convert('UTC').min() for name, df in dfs.items()}
         ends   = {name: df.index.tz_convert('UTC').max() for name, df in dfs.items()}
+
+        df_eco2mix = load_eco2mix(do_plot_statistics=do_plot_statistics,
+                                  verbose=verbose)
+        # df_nuclear = load_nuclear(verbose=verbose)
+        starts['eco2mix'] = df_eco2mix.index.tz_convert('UTC').min()
+        ends  ['eco2mix'] = df_eco2mix.index.tz_convert('UTC').max()
         dates_df = pd.DataFrame({
             "start": pd.to_datetime(pd.Series(starts)),
             "end":   pd.to_datetime(pd.Series(ends  )),
         })
+
+
 
         # # Common range
         # starts = [df.index.min() for df in dfs.values()]
@@ -189,16 +201,13 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         # Save pickle
         if cache_fname is not None:
             with open(cache_fname, "wb") as f:
-                pickle.dump((df_merged, dates_df, weights_by_cluster), f)
+                pickle.dump((df_merged, df_eco2mix, dates_df, weights_by_cluster), f)
             if verbose > 0:
                 print(f"Saved merged input data to: {cache_fname}")
 
 
     # plot statistics
     if do_plot_statistics:
-        df_eco2mix = load_eco2mix()
-        # df_nuclear = load_nuclear()
-
         plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
@@ -208,7 +217,13 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             df_eco2mix[df_eco2mix.index.year >= 2023],
             df_merged['price_euro_per_MWh'])
 
-        # sys.exit()
+        for _hour in [8, 24]:
+            plot_statistics.production_by_price(
+                df_eco2mix[df_eco2mix.index.year >= 2023].resample('h').mean().\
+                    rolling(_hour, min_periods=(_hour*3)//4).mean(),
+                df_merged['price_euro_per_MWh'          ].resample('h').mean().\
+                    rolling(_hour, min_periods=(_hour*3)//4).mean(),
+                _hour)
 
         # remove NA from consumption and T°
         _df_plot = df_merged[['consumption_GW', 'Tavg_degC', 'price_euro_per_MWh'
@@ -217,10 +232,10 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         # plot_statistics.thermosensitivity_regions(
         #     dfs['consumption_by_region'], dfs['temperature'])
 
-        plot_statistics.drift_with_time(
-             _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
-             num_steps_per_day=num_steps_per_day
-        )
+        # plot_statistics.drift_with_time(
+        #      _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
+        #      num_steps_per_day=num_steps_per_day
+        # )
 
         plot_statistics.thermosensitivity_per_temperature_by_season(
              _df_plot['consumption_GW'], _df_plot['Tavg_degC'],
@@ -234,9 +249,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
              num_steps_per_day=num_steps_per_day
         )
 
-        plot_statistics.prices_per_season(
-             dfs['price'][['price_euro_per_MWh']],
-        )
+        plot_statistics.prices_per_season(df_merged['price_euro_per_MWh'])
 
 
         # print(dfs['temperature']['Tavg_degC'])
@@ -251,11 +264,13 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         plot_statistics.production_function_price(
              df_eco2mix[['EnR_GW', 'net_charge_GW', 'Ech_physiques_GW']],
              _df_plot   ['consumption_GW'],
+             df_eco2mix ['Taux_de_CO2_g/kWh'],
              _df_plot   ['price_euro_per_MWh'],
-             min_year = 2023,
-             range_prices = [-20, 260] # euro/MWh
+             min_year    = 2023,
+             range_prices= [-20, 260] # euro/MWh
         )
 
+        load_eco2mix(do_plot_statistics=do_plot_statistics, verbose=verbose)
 
 
         # sys.exit()
@@ -1077,6 +1092,7 @@ def load_eco2mix(
     url_recent:  str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                       'datasets/eco2mix-national-tr/exports/csv?'
                       'timezone=UTC&use_labels=true&delimiter=%3B',
+    do_plot_statistics: bool = False,
     verbose:    int = 0) -> pd.DataFrame:
 
 
@@ -1146,9 +1162,13 @@ def load_eco2mix(
     # print(df.columns)
 
     # non-dispatchable renewables, net charge
-    df['EnR_MW'] = df[["fil de l\'eau_MW", 'Solaire_MW', 'Eolien_MW']].mean(1)
+    df['EnR_MW'] = df[["fil de l\'eau_MW", 'Solaire_MW', 'Eolien_MW']].sum(1)
     df['net_charge_MW'] = df[['lacs_MW', 'turbinage_STEP_MW', 'pompage_STEP_MW',
-                'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(1)
+                'Stockage_batterie_MW', 'Déstockage_batterie_MW']].sum(1)
+    df['STEP_net_MW'] = df['turbinage_STEP_MW'] + df['pompage_STEP_MW']
+    df['batterie_net_MW'] = df['Stockage_batterie_MW'] + df['Déstockage_batterie_MW']
+
+    df['fossiles_MW'] = df[['Gaz_MW', 'Fioul_MW', 'Charbon_MW']].sum(1)
     # print( df[['Hydraulique__STEP_turbinage_MW', 'Pompage_MW',
     #             'Stockage_batterie_MW', 'Déstockage_batterie_MW']].mean(0))
 
@@ -1159,10 +1179,11 @@ def load_eco2mix(
     df = df.loc[:, ~df.columns.str.contains(r'^Bioénergies__.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Hydraulique__.*_MW$')]
 
-    df =df.resample('30min').mean()  # older dat are on this freq
+    df =df.resample('30min').mean()  # older data are on this freq
 
     # convert to GW
-    df = (df / 1000).round(2)
+    _cols_MW = [c for c in df.columns if 'MW' in c]
+    df[_cols_MW] = (df[_cols_MW] / 1000).round(2)
     df.columns = df.columns.str.replace('MW', 'GW')
 
 
@@ -1175,8 +1196,38 @@ def load_eco2mix(
 
 
 
-    if verbose >= 3:
-        print(df.mean(axis=0).round(2))
+    if verbose >= 3 or do_plot_statistics:
+        # print(df.mean(axis=0).round(2))
+
+
+        # Fourier transform
+        df_num = df[['lacs_GW', 'Solaire_GW', 'Eolien_GW',
+                      'turbinage_STEP_GW', 'Nucléaire_GW']].dropna()
+        # df_num = df[['Solaire_GW']].dropna()
+
+        n = len(df_num)
+        freqs_days  = np.fft.fftfreq(n, d=1 / (2*24))  # period of data: 30 min
+        periods_days= 1 / freqs_days
+
+        plt.figure()
+        for col in df_num.columns:
+            fft_vals  = np.fft.fft(df_num[col].values)
+            amplitude = np.abs(fft_vals) / n
+
+            plt.plot(periods_days, amplitude, label=col[:-3])
+
+        plt.xlabel("periods [days]")
+        # plt.plot(freqs_days[mask], amplitude[mask])
+        # plt.xlabel("Frequency (cycles per day)")
+        plt.ylabel("Amplitude")
+        # plt.title(f"FFT of {col[:-3]}")
+        plt.xlim(0.1, 1000)
+        plt.xscale('log')
+        plt.grid(True)
+        plt.legend()
+        plt.show()
+
+
 
         # df['year']     = df.index.year
         # df['month']    = df.index.month
@@ -1184,11 +1235,31 @@ def load_eco2mix(
         #     year=2000, month=d.month, day=d.day))
         df['timeofday']= df.index.hour + df.index.minute/60
 
+        # prod as function of date
+        _df_log = df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW',
+                      'turbinage_STEP_GW']].apply(np.log).\
+            replace([np.inf, -np.inf], np.nan).dropna()
+            # rolling(2*24*7, min_periods=2*24*5).mean().\
+        ref = pd.Timestamp("2021-01-01", tz=_df_log.index.tz)
+        _df_log.index = (_df_log.index - ref).total_seconds()/3600/24/365.25
+        # print(_df_log)
+
+        # exp regression
+        for _col in _df_log.columns:
+            _model = LinearRegression()
+            _model.fit(_df_log.index.to_frame(), _df_log[_col])
+            # print(_col, _model.intercept_, _model.coef_[0])
+            _slope = float(_model.coef_[0])
+            print(f"{_col[:-3]:14s}: {np.exp(_model.intercept_):.2f} GW * "
+                  f"exp({_slope:6.3f} yr-1 * time) "
+                  f"[R² ={_model.score(_df_log.index.to_frame(), _df_log[_col])*100:3.0f}%], "
+                  f"doubles every{np.log(2) / _slope:5.1f} years ")
+
         plt.figure(figsize=(10,6))
         df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
-            # 'Ech_physiques_GW',
-            'turbinage_STEP_GW']].\
-                rolling(2*24*365, min_periods=2*24*350).mean().\
+                # 'Ech_physiques_GW',
+                'turbinage_STEP_GW']].\
+            rolling(2*24*365, min_periods=2*24*350).mean().\
                     loc[df.index.year>=2013].plot()
         plt.ylabel("production [GW], annual moving average")
         plt.xlabel("year")
@@ -1232,7 +1303,7 @@ def load_eco2mix(
         df_norm_pc = df.div(df['Consommation_GW'], axis=0) * 100
         df_norm_pc.columns = df.columns.str.replace('_GW', '')
         df_norm_pc['timeofday'] = df['timeofday']
-        print(df_norm_pc.mean(axis=0).round(2))
+        # print(df_norm_pc.mean(axis=0).round(2))
 
         plt.figure(figsize=(10,6))
         df_norm_pc[['Hydraulique', 'Solaire', 'Eolien',
@@ -1246,12 +1317,140 @@ def load_eco2mix(
         plt.show()
 
         plt.figure(figsize=(10,6))
-        df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', #♦ 'Eolien_offshore',
+        df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', # 'Eolien_offshore',
             'Ech_physiques', 'turbinage_STEP', 'timeofday']].groupby('timeofday').mean().plot()
         plt.ylabel("production [%]")
         plt.xlabel('time of day (UTC)')
         plt.legend()
         plt.show()
+
+
+        # interconnect
+        df_interconnect = df.loc[df.index.year >= 2023] \
+                [['Ech_comm_AllemagneBelgique_GW', 'Ech_comm_Espagne_GW']]. \
+            resample('h').mean()
+        # df_interconnect = df[[e for e in df.columns if 'Ech_comm' in e]]. \
+        #     resample('h').mean()
+        df_interconnect.index = df_interconnect.index.tz_convert('Europe/Paris').sort_values()
+        df_interconnect.columns = df_interconnect.columns.\
+                        str.replace('Ech_comm_', '').str.replace('_GW', '')
+        # print(df_interconnect)
+
+        y_lim_GW = [-5, 3]
+
+        _timeofday= df_interconnect.index.hour + df_interconnect.index.minute/60
+        plt.figure(figsize=(10,6))
+        df_by_timeofday = df_interconnect.groupby(_timeofday).mean()
+        df_by_timeofday.loc[24] = df_by_timeofday.loc[0]
+        df_by_timeofday.plot()
+        plt.hlines(0, 0, 24, color="black")
+        plt.xlabel('local time of day')
+        plt.ylabel("exchange [GW]")
+        plt.xlim( 0, 24)
+        plt.xticks(range(0, 25, 4))
+        plt.ylim(y_lim_GW)
+        plt.legend()
+        plt.show()
+
+        _dateofyear = df_interconnect.index.map(lambda d: pd.Timestamp(
+                year=2000, month=d.month, day=d.day))
+        plt.figure(figsize=(10,6))
+        df_by_dateofyear = df_interconnect.rolling(24*7, min_periods=24*6).mean().\
+            groupby(_dateofyear).mean()
+
+        df_by_dateofyear = df_by_dateofyear[~((df_by_dateofyear.index.month == 2) & \
+                                              (df_by_dateofyear.index.day == 29))]
+        df_by_dateofyear.plot()
+
+        plt.hlines(0, _dateofyear.min(), _dateofyear.max(), color="black")
+        plt.xlabel('date of year')
+        plt.ylabel("exchange [GW]")
+        plt.xlim(_dateofyear.min(), _dateofyear.max())
+        plt.ylim(y_lim_GW)
+        plt.legend()
+        plt.show()
+
+
+
+        # variation
+        colors = {
+            # hydroelectricity
+            'fil de l\'eau':   'blue',
+            'pompage STEP':   'deepskyblue',
+            'lacs':           'cyan',
+            'STEP_net':       'deepskyblue',
+
+            # others
+            'Bioénergies':    'tab:green',
+            'batterie_net':   'darkorange',
+            'interconn.':    'pink',
+            'Nucléaire':      'purple',
+            'conso.':         'chartreuse',
+            'fossiles':       'grey',
+        }
+
+        df_diff = df.drop(columns=['Prévision_J1_GW', 'Prévision_J_GW',
+                                   'Taux_de_CO2_g/kWh']).diff()
+        df_diff = df_diff.where(np.abs(df_diff) <= 8).dropna()  # remove outliers
+        df_diff.columns = df_diff.columns.str.replace('_GW', '')  # for display
+        df_diff.rename(columns={'Ech_physiques': 'interconn.',
+                                'Consommation': 'conso.'}, inplace=True)
+        print(df_diff.columns)
+        # print(df_diff[['Solaire', 'Nucléaire', 'interconnexions', 'STEP_net', 'lacs']])
+        _list_cols_fit = ['Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
+                     'fossiles', 'batterie_net', 'interconn.',
+                     'conso.',
+                     'Bioénergies',  #'Eolien',
+                     'Ech_comm_Angleterre', 'Ech_comm_Espagne',
+                     'Ech_comm_Italie', 'Ech_comm_Suisse', 'Ech_comm_AllemagneBelgique',
+                     ]
+        _list_cols_plot = ['Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
+                     'fossiles', 'interconn.', 'batterie_net',
+                     'conso.', 'Bioénergies',
+                     ]
+        _dict_ref = {'Solaire': "solaire", 'Eolien': "éolienne"}
+
+        # _model = LinearRegression()
+        # _model.fit(df_diff[_list_cols], df_diff[_ref])
+        # print(_model.intercept_,
+        #       {k: float(round(100*v, 1)) for (k, v) in zip(_list_cols, _model.coef_)})
+
+        _dict_corr_pc = {}
+        for (_ref, _ref_str) in _dict_ref.items():
+            _dict_corr_pc[_ref] = {}
+            print(_ref, _ref_str)
+            for _col in _list_cols_fit:
+                _model = LinearRegression()
+                _model.fit(df_diff[[_ref]], df_diff[_col])
+
+                print(f"{_col:20s}{float(_model.coef_[0])*100:4.0f}% "
+                      f"[R² ={_model.score(df_diff[[_ref]], df_diff[_col])*100:3.0f}%]")
+
+                if _col in _list_cols_plot:
+                    # we need >= 0 numbers to plot
+                    _sign = -1 if _col != 'conso.' else 1  # make conventions consistent
+                    _dict_corr_pc[_ref][_col] = float(_sign * _model.coef_[0]) * 100
+                    if _dict_corr_pc[_ref][_col] <= 1:  # exclude tiny values
+                        del _dict_corr_pc[_ref][_col]   #   (they would clutter the plot)
+
+        _df_corr_pc = pd.DataFrame(_dict_corr_pc).fillna(0)
+        _df_corr_pc = _df_corr_pc.div(_df_corr_pc.sum()) * 100  # normalize
+
+        fig, ax = plt.subplots()
+        bottom  = np.zeros(_df_corr_pc.shape[1])
+        for _prod, _series in _df_corr_pc.iterrows():
+            ax.bar(_series.index, _series.values, 0.5, label=_prod, bottom=bottom,
+                   color=colors[_prod])
+            bottom += _series.values
+        ax.set_title("modulation sur variation de production EnR")
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(reversed(handles), reversed(labels),
+                  title='filière', loc='upper center')
+        plt.show()
+
+        # sys.exit()
+
+
 
 
     return df
