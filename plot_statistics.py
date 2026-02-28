@@ -50,7 +50,7 @@ colors_production = {
 
     # Storage / exchanges
     'Stockage_batterie':  'red',
-    'Déstockage_batterie': 'darkorange',
+    'Déstockage_batterie':'darkorange',
     'STEP_net':           'red',
     'interconnexions':    'fuchsia',
     'interconn All Belg': 'pink',
@@ -238,9 +238,7 @@ def drift_with_time(
 # prices
 # -------------------------------------------------------
 
-def prices_per_season(
-             price: pd.Series,
-        ) -> None:
+def prices_per_season(price: pd.Series) -> None:
 
     print("prices from", price.index.date.min(), "to", price.index.date.max())
 
@@ -251,11 +249,12 @@ def prices_per_season(
 
     summer = price[price.index.month.isin([ 6, 7, 8])]
 
-
+    first_year = 2019
     ranges = {'winter': range(2016, 2027), 'summer': range(2015, 2026)}
     colors = colors_seasons | \
-             {2020: 'blue', 2021: 'cornflowerblue',2022: 'red',   2023: 'hotpink',
-              2024: 'green',2025: 'chartreuse',    2026: 'yellowgreen'}
+             {2019: 'skyblue',2020:'cornflowerblue',2021: 'blue',
+              2022: 'red',    2023: 'hotpink',
+              2024: 'green',  2025: 'chartreuse',   2026: 'yellowgreen'}
     styles = {'avg': 'solid',   'std': 'dotted',  'range': 'dashed'}
     names  = {'avg': "average", 'std': "std dev", 'range': "amplitude"}
     styles.pop('std');  names.pop('std')
@@ -281,12 +280,16 @@ def prices_per_season(
         _winter.sort_index(inplace=True)
         # print(_year, _winter)
 
-        if _year >= 2020:
+        if _year >= first_year:
             plt.plot(_winter.index, _winter.values,
                      color=colors[_year], label=f"{_year-1}-{_year-2000}")
 
-    plt.ylabel("winter spot price [€/MWh]")
+    plt.title("Winter spot price in France (December, January and February)")
+    plt.ylabel("spot price [€/MWh]")
     plt.xlabel("local time of day")
+
+    plt.xlim(0, 24)
+    plt.xticks(range(0, 25, 4))
     plt.ylim(_ylim)
     plt.legend()
     plt.show()
@@ -309,15 +312,22 @@ def prices_per_season(
         _summer.sort_index(inplace=True)
         # print(_year, _summer)
 
-        if _year >= 2020:
+        if _year >= first_year:
             plt.plot(_summer.index, _summer.values,
-                     color=colors[_year], label=_year)
+                     color=colors[_year] if _year!=2021 else 'orange', label=_year)
+            # summer 2021 goes with 2022, whereas 2020-21 winter is like 2020
 
-    plt.ylabel("summer spot price [€/MWh]")
+    plt.title ("Summer spot price in France (June, July and August)")
+    plt.ylabel("spot price [€/MWh]")
     plt.xlabel("local time of day")
+
+    plt.xlim(0, 24)
+    plt.xticks(range(0, 25, 4))
     plt.ylim(_ylim)
     plt.legend()
     plt.show()
+
+    sys.exit()
 
 
     # avg and std dev as functions of year
@@ -389,7 +399,8 @@ def production_function_price(
 
         # align
         _df = pd.concat([production, consumption, CO2, price], axis=1)
-        _df = _df[(_df.index.year >= min_year)].resample('h').mean().dropna()
+        _df = _df[(_df.index.year >= min_year) &
+                  (_df.index.year <= 2025) ].resample('h').mean().dropna()
         # print(_df.columns)
 
         # _production = production [(production.index.year >= min_year)].\
@@ -1232,7 +1243,7 @@ def thermosensitivity_per_date_discrete(
             _consumption_net = (consumption_per_range[i] - \
                         _sensitivity_per_range[i] * _temperature_sat).dropna()
             _avg_consumption_net_per_range.append(round(float(_consumption_net.mean()), 3))
-            _std_consumption_net_per_range.append(round(float(_consumption_net.std()), 3))
+            _std_consumption_net_per_range.append(round(float(_consumption_net.std ()), 3))
 
 
         print(threshold_degC,
@@ -1285,8 +1296,8 @@ def thermosensitivity_per_date_discrete(
                               avg_consumption_net_per_range[0],
         "DJU15": DJU_per_range[1] / DJU_per_range[0],
         "sensitivity": sensitivity_per_range[1] / sensitivity_per_range[0],
-        "consumption, T": (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) / \
-                          (avg_consumption_per_range[0] - avg_consumption_net_per_range[0]),
+        "consumption, T":(avg_consumption_per_range[1] - avg_consumption_net_per_range[1])/ \
+                         (avg_consumption_per_range[0] - avg_consumption_net_per_range[0]),
 
         "consumption, all":  avg_consumption_per_range[1] / avg_consumption_per_range[0],
         }
@@ -1302,8 +1313,8 @@ def thermosensitivity_per_date_discrete(
 
 
     # plotting breakdown
-    _consumption_thermo = (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) - \
-                          (avg_consumption_per_range[0] - avg_consumption_net_per_range[0])
+    _consumption_thermo= (avg_consumption_per_range[1] - avg_consumption_net_per_range[1]) -\
+                         (avg_consumption_per_range[0] - avg_consumption_net_per_range[0])
     _factor = _consumption_thermo / (ratios['DJU15'] + ratios['sensitivity'])
 
     breakdown_GW = {
@@ -1396,7 +1407,7 @@ def production_by_price(production: pd.DataFrame,
 
     _indices_plot = [e for e in _df_cost.index
             if e not in [
-                'Consommation', 'Hydraulique',
+                'Consommation', 'Hydraulique', 'fossiles', 'batterie_net',
                 'Nucléaire', 'interconnexions',
                 'Stockage_batterie', 'Déstockage_batterie'] and
             'Ech_' not in e]
@@ -1492,6 +1503,351 @@ def production_by_price(production: pd.DataFrame,
             plt.annotate('import '+_idx,
                 (_df_interconnect.loc['import_'+_idx]['prod_TWh_per_year'] + x_off,
                  _df_interconnect.loc['import_'+_idx]['cost_euro_per_MWh'] + y_off))
+    plt.show()
+
+
+
+# -------------------------------------------------------
+# eco2mix
+# -------------------------------------------------------
+
+def eco2mix(df: pd.DataFrame) -> None:
+    # print(df.mean(axis=0).round(2))
+
+
+    # df['year']     = df.index.year
+    # df['month']    = df.index.month
+    # df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
+    #     year=2000, month=d.month, day=d.day))
+    df['timeofday']= df.index.hour + df.index.minute/60
+
+
+    colors = colors_production | {
+        # hydroelectricity
+        'fil de l\'eau':   'blue',
+        'pompage STEP':   'deepskyblue',
+        'lacs':           'cyan',
+        'STEP_net':       'deepskyblue',
+        'lacs + STEP (net)':'deepskyblue',
+
+        # others
+        'Bioénergies':    'tab:green',
+        'batterie_net':   'darkorange',
+        'interconn.':     'pink',
+        'Nucléaire':      'purple',
+        'conso.':         'chartreuse',
+        'fossiles':       'grey',
+
+        # clusters
+        'constants':      'tab:green',
+        'modulables':     'purple',
+
+    }
+
+    # prod as function of consumption
+    # ------------------------
+    _df_SMA = df[['Consommation_GW',
+                  'Solaire_GW',
+                  'Eolien_GW',
+                  # 'fil de l\'eau_GW', 'Bioénergies_GW',
+                  # 'Nucléaire_GW',
+                  # 'lacs_GW', 'STEP_net_GW',
+                  # 'fossiles_GW', 'Ech_physiques_GW'
+                  ]]
+    # _df_SMA['lacs + STEP (net)_GW'] = df['lacs_GW'] + df['STEP_net_GW']
+    _df_SMA['modulables_GW'] = df['lacs_GW'] + df['STEP_net_GW'] + df['Nucléaire_GW'] + \
+         df['fossiles_GW'] + df['Ech_physiques_GW']  # + df['batterie_net_GW']
+    _df_SMA['constants_GW'] = df['fil de l\'eau_GW'] + df['Bioénergies_GW']
+
+    _df_SMA.columns = _df_SMA.columns.str.replace('_GW', '')  # for display
+    _df_SMA.rename(columns={'Ech_physiques': 'interconnexions'}, inplace=True)
+    print("_df_SMA:", len(_df_SMA), "\n", _df_SMA.mean(axis=0))
+
+    _df_SMA_old  = _df_SMA.loc[(_df_SMA.index.year>=2016) & (_df_SMA.index.year<=2019)].\
+        set_index('Consommation').sort_index(). \
+        rolling(2*24*60, min_periods=2*24*50).mean().round(3).\
+        replace([np.inf, -np.inf], np.nan).dropna()
+    print("_df_SMA_old:   ", len(_df_SMA_old), "\n", _df_SMA_old.mean(axis=0))
+    _df_SMA_recent=_df_SMA.loc[(_df_SMA.index.year>=2024) & (_df_SMA.index.year<=2025)].\
+        set_index('Consommation').sort_index(). \
+        rolling(2*24*60, min_periods=2*24*50).mean().round(3).\
+        replace([np.inf, -np.inf], np.nan).dropna()
+    print("_df_SMA_recent:", len(_df_SMA_recent), "\n", _df_SMA_recent.mean(axis=0))
+
+    plt.figure(figsize=(10,6))
+    for _col in _df_SMA_old.columns:
+        plt.plot(_df_SMA_recent.index, _df_SMA_recent[_col], color=colors[_col],
+                 label=_col)
+        if _col not in ['Solaire', 'Eolien']:
+            plt.plot(_df_SMA_old   .index, _df_SMA_old   [_col], color=colors[_col],
+                     linestyle='dashed')
+    plt.plot([0, 120], [0, 120], color='black', linestyle='dotted', label='conso.')
+
+    plt.hlines(0, 0, 120, color="black")  # x-axis
+    plt.xlabel("consommation [GW]")
+    plt.ylabel("production [GW]")
+    plt.title ("2016-19 (pointillés), 2024-25 (continu)")
+    plt.xlim(30, 100)
+
+    if 'modulables'  in _df_SMA_old.columns:
+        _y_max = 70
+    elif 'Nucléaire' in _df_SMA_old.columns:
+        _y_max = 60
+    else:
+        _y_max = 10
+    plt.ylim(-15, _y_max)
+    plt.legend()
+    plt.show()
+
+
+    # matching floats will not work: one must round
+    _df_SMA_old   .index = _df_SMA_old   .index.round(1)
+    _df_SMA_recent.index = _df_SMA_recent.index.round(1)
+    _df_SMA_old   = _df_SMA_old   .groupby(_df_SMA_old   .index).mean()
+    _df_SMA_recent= _df_SMA_recent.groupby(_df_SMA_recent.index).mean()
+
+    plt.figure(figsize=(10,6))
+    for _col in _df_SMA_old.columns:
+        # if _col not in ['Solaire', 'Eolien']:
+        _series_variation = (_df_SMA_recent[_col] - _df_SMA_old[_col]).dropna().\
+            rolling(10, min_periods=8).mean()
+        plt.plot(_series_variation.index, _series_variation.values,
+                 color=colors[_col],  label=_col)
+    plt.hlines(0, 0, 120, color="black")  # x-axis
+    plt.xlabel("consommation [GW]")
+    plt.ylabel("variation de production [GW]")
+    plt.title ("variation de la production : 2024-25 par rapport à 2016-19")
+    plt.xlim(35, 90)
+    # plt.ylim(-15, 60 if ('Nucléaire' in _df_SMA_old.columns) else 10)
+    plt.legend()
+    plt.show()
+
+
+
+    # prod as function of date
+    # ------------------------
+    _df_log = df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW',
+                  'turbinage_STEP_GW']].apply(np.log).\
+        replace([np.inf, -np.inf], np.nan).dropna()
+        # rolling(2*24*7, min_periods=2*24*5).mean().\
+    ref = pd.Timestamp("2021-01-01", tz=_df_log.index.tz)
+    _df_log.index = (_df_log.index - ref).total_seconds()/3600/24/365.25
+    # print(_df_log)
+
+    # exp regression
+    for _col in _df_log.columns:
+        _model = LinearRegression()
+        _model.fit(_df_log.index.to_frame(), _df_log[_col])
+        # print(_col, _model.intercept_, _model.coef_[0])
+        _slope = float(_model.coef_[0])
+        print(f"{_col[:-3]:14s}: {np.exp(_model.intercept_):.2f} GW * "
+              f"exp({_slope:6.3f} yr-1 * time) "
+              f"[R² ={_model.score(_df_log.index.to_frame(), _df_log[_col])*100:3.0f}%], "
+              f"doubles every{np.log(2) / _slope:5.1f} years ")
+
+    plt.figure(figsize=(10,6))
+    df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+            # 'Ech_physiques_GW',
+            'turbinage_STEP_GW']].\
+        rolling(2*24*365, min_periods=2*24*350).mean().\
+                loc[df.index.year>=2013].plot()
+    plt.ylabel("production [GW], annual moving average")
+    plt.xlabel("year")
+    plt.ylim(bottom= 0.)
+    plt.legend()
+    plt.show()
+
+
+    # prod as function of time of day
+    # ------------------------
+    y_lim_GW = [-10, 15]
+    # plt.figure(figsize=(10,6))
+    # df[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+    #        'Ech_physiques_GW', 'pompage_STEP_GW', 'timeofday']].\
+    #    groupby('timeofday').mean().plot()
+    # plt.xlabel('time of day (UTC)')
+    # plt.ylabel("production [GW]")
+    # plt.ylim(y_lim_GW)
+    # plt.legend()
+    # plt.show()
+
+    # seasons
+    df_summer = df.loc[df.index.month.isin([6, 7, 8])]
+    plt.figure(figsize=(10,6))
+    df_summer[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+               'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].\
+        groupby('timeofday').mean().plot()
+    plt.xlabel('time of day (UTC)')
+    plt.ylabel("summer production [GW]")
+    plt.ylim(y_lim_GW)
+    plt.legend(loc='upper left')
+    plt.show()
+
+    df_winter = df.loc[df.index.month.isin([12, 1, 2])]
+    plt.figure(figsize=(10,6))
+    df_winter[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
+               'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].\
+        groupby('timeofday').mean().plot()
+    plt.xlabel('time of day (UTC)')
+    plt.ylabel("winter production [GW]")
+    plt.ylim(y_lim_GW)
+    plt.legend(loc='upper left')
+    plt.show()
+
+
+    # as fraction of consumption
+    df_norm_pc = df.div(df['Consommation_GW'], axis=0) * 100
+    df_norm_pc.columns = df.columns.str.replace('_GW', '')
+    df_norm_pc['timeofday'] = df['timeofday']
+    # print(df_norm_pc.mean(axis=0).round(2))
+
+    plt.figure(figsize=(10,6))
+    df_norm_pc[['Hydraulique', 'Solaire', 'Eolien',
+                'Eolien_offshore', 'turbinage_STEP']].\
+        rolling(2*24*365, min_periods=2*24*350).mean().\
+            loc[df.index.year>=2013].plot()
+    plt.ylabel("production [%], annual moving average")
+    plt.xlabel("year")
+    plt.yscale('log')
+    plt.legend()
+    plt.show()
+
+    plt.figure(figsize=(10,6))
+    df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', # 'Eolien_offshore',
+                'Ech_physiques', 'turbinage_STEP', 'timeofday']].\
+        groupby('timeofday').mean().plot()
+    plt.ylabel("production [%]")
+    plt.xlabel('time of day (UTC)')
+    plt.legend()
+    plt.show()
+
+
+    # interconnectors
+    # ------------------------
+    df_interconnect = df.loc[(df.index.year >= 2023) & (df.index.year <= 2025)] \
+            [['Ech_comm_AllemagneBelgique_GW', 'Ech_comm_Espagne_GW']]. \
+        resample('h').mean()
+    # df_interconnect = df[[e for e in df.columns if 'Ech_comm' in e]]. \
+    #     resample('h').mean()
+    df_interconnect.index = df_interconnect.index.tz_convert('Europe/Paris').sort_values()
+    df_interconnect.columns = df_interconnect.columns.\
+                    str.replace('Ech_comm_', '').str.replace('_GW', '')
+    # print(df_interconnect)
+
+    y_lim_GW = [-5, 3]
+
+    _timeofday= df_interconnect.index.hour + df_interconnect.index.minute/60
+    plt.figure(figsize=(10,6))
+    df_by_timeofday = df_interconnect.groupby(_timeofday).mean()
+    df_by_timeofday.loc[24] = df_by_timeofday.loc[0]
+    df_by_timeofday.plot()
+    plt.hlines(0, 0, 24, color="black")
+    plt.xlabel('local time of day')
+    plt.ylabel("exchange [GW]")
+    plt.xlim( 0, 24)
+    plt.xticks(range(0, 25, 4))
+    plt.ylim(y_lim_GW)
+    plt.legend()
+    plt.show()
+
+    _dateofyear = df_interconnect.index.map(lambda d: pd.Timestamp(
+            year=2000, month=d.month, day=d.day))
+    plt.figure(figsize=(10,6))
+    df_by_dateofyear = df_interconnect.rolling(24*7, min_periods=24*6).mean().\
+        groupby(_dateofyear).mean()
+
+    df_by_dateofyear = df_by_dateofyear[~((df_by_dateofyear.index.month == 2) & \
+                                          (df_by_dateofyear.index.day == 29))]
+    df_by_dateofyear.plot()
+
+    plt.hlines(0, _dateofyear.min(), _dateofyear.max(), color="black")
+    plt.xlabel('date of year')
+    plt.ylabel("exchange [GW]")
+    plt.xlim(_dateofyear.min(), _dateofyear.max())
+    plt.ylim(y_lim_GW)
+    plt.legend()
+    plt.show()
+
+
+    # variation
+    # ------------------------
+
+
+    df_diff = df.loc[(df.index.year >= 2023) & (df.index.year <= 2025)].\
+        drop(columns=['Prévision_J1_GW', 'Prévision_J_GW',
+                      'Taux_de_CO2_g/kWh']).diff()
+    df_diff = df_diff.where(np.abs(df_diff) <= 8).dropna()  # remove outliers
+    df_diff.columns = df_diff.columns.str.replace('_GW', '')  # for display
+    df_diff.rename(columns={'Ech_physiques': 'interconn.',
+                            'Consommation': 'conso.'}, inplace=True)
+    _list_cols_fit = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
+            'fossiles', 'batterie_net', 'interconn.', 'Bioénergies',  #'Eolien',
+            'Ech_comm_Angleterre', 'Ech_comm_Espagne',
+            'Ech_comm_Italie', 'Ech_comm_Suisse', 'Ech_comm_AllemagneBelgique',
+            ]
+    _list_cols_plot = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
+            'fossiles', 'interconn.', 'batterie_net', 'Bioénergies']
+    _dict_ref = {'Solaire': "solaire", 'Eolien': "éolienne"}
+
+    _dict_corr_pc = {}
+    for (_ref, _ref_str) in _dict_ref.items():
+        _dict_corr_pc[_ref] = {}
+        print(_ref, _ref_str)
+        for _col in _list_cols_fit:
+            _model = LinearRegression()
+            _model.fit(df_diff[[_ref]], df_diff[_col])
+            print(f"{_col:20s}{float(_model.coef_[0])*100:4.0f}% "
+                  f"[R² ={_model.score(df_diff[[_ref]], df_diff[_col])*100:3.0f}%]")
+
+            if _col in _list_cols_plot:
+                # we need >= 0 numbers to plot
+                _sign = -1 if _col != 'conso.' else 1  # make conventions consistent
+                _dict_corr_pc[_ref][_col] = float(_sign * _model.coef_[0]) * 100
+                if _dict_corr_pc[_ref][_col] <= 1:  # exclude tiny values
+                    del _dict_corr_pc[_ref][_col]   #   (they would clutter the plot)
+
+    _df_corr_pc = pd.DataFrame(_dict_corr_pc).fillna(0)
+    _df_corr_pc = _df_corr_pc.div(_df_corr_pc.sum()) * 100  # normalize
+
+    fig, ax = plt.subplots()
+    bottom  = np.zeros(_df_corr_pc.shape[1])
+    for _prod, _series in _df_corr_pc.iterrows():
+        ax.bar(_series.index, _series.values, 0.5, label=_prod, bottom=bottom,
+               color=colors[_prod])
+        bottom += _series.values
+    ax.set_title("modulation sur variation de production EnR, 2023-25")
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(reversed(handles), reversed(labels),
+              title='filière', loc='upper center')
+    plt.show()
+
+
+    # Fourier transform
+    # ------------------------
+    df_num = df[['lacs_GW', 'Solaire_GW', 'Eolien_GW',
+                  'turbinage_STEP_GW', 'Nucléaire_GW']].dropna()
+    # df_num = df[['Solaire_GW']].dropna()
+
+    n = len(df_num)
+    freqs_days  = np.fft.fftfreq(n, d=1 / (2*24))  # period of data: 30 min
+    periods_days= 1 / freqs_days
+
+    plt.figure()
+    for col in df_num.columns:
+        fft_vals  = np.fft.fft(df_num[col].values)
+        amplitude = np.abs(fft_vals) / n
+
+        plt.plot(periods_days, amplitude, label=col[:-3])
+
+    plt.xlabel("periods [days]")
+    # plt.plot(freqs_days[mask], amplitude[mask])
+    # plt.xlabel("Frequency (cycles per day)")
+    plt.ylabel("Amplitude")
+    # plt.title(f"FFT of {col[:-3]}")
+    plt.xlim(0.1, 1000)
+    plt.xscale('log')
+    plt.grid(True)
+    plt.legend()
     plt.show()
 
 
