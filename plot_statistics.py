@@ -327,7 +327,6 @@ def prices_per_season(price: pd.Series) -> None:
     plt.legend()
     plt.show()
 
-    sys.exit()
 
 
     # avg and std dev as functions of year

@@ -200,7 +200,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         # Save pickle
         if cache_fname is not None:
             with open(cache_fname, "wb") as f:
-                pickle.dump((df_merged, df_eco2mix, starts, ends, dates_df,
+                pickle.dump((df_merged, df_eco2mix, dates_df, starts, ends,
                              weights_by_cluster), f)
             if verbose > 0:
                 print(f"Saved merged input data to: {cache_fname}")
