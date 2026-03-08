@@ -28,8 +28,10 @@ if __name__ == "__main__":
 
 
     MODE = 'stats_only'
-        # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all',
-        #     'statistics', 'stats_only']
+        # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', # no stats, model
+        #     'statistics', #    stats,    model
+        #     'stats_only', #    stats, no model
+        #     'load_input'  # no stats, no model]
 
     VERBOSE:    int =  1
         # 0: no display, 1: normal, 2: more info, 3+: debugging
@@ -60,8 +62,8 @@ if __name__ == "__main__":
         NUM_TRIALS = 15
         VERBOSE    = 0
 
-    elif MODE in ['stats_only']:
-        NUM_TRIALS = 0  # no NNTQ model, just statistics
+    elif MODE in ['stats_only', 'load_input']:
+        NUM_TRIALS = 0  # no NNTQ model, perhaps statistics
 
     else:
         raise ValueError(f"`{MODE}` is not a valid mode")

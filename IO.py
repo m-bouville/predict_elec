@@ -208,6 +208,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
     # plot statistics
     if do_plot_statistics:
+
         plots.data(df_merged.drop(columns=['year', 'month', 'timeofday'])\
                     .resample('D').mean()\
                     .groupby('dateofyear').mean().sort_index(),
@@ -273,6 +274,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         )
 
         load_eco2mix(do_plot_statistics=do_plot_statistics, verbose=verbose)
+
+        load_temperature_world()
 
 
     # remove padding
@@ -880,6 +883,92 @@ def load_temperature(
     # print(list(out.columns))
 
     return out, Tavg_full, Tmin_full, Tmax_full
+
+
+
+def load_temperature_world(
+        path   : str = 'data/Complete_TAVG_complete.csv',
+        url    : str = 'https://berkeley-earth-temperature.s3.us-west-1.amazonaws.com/'
+                       'Global/Complete_TAVG_complete.txt',
+        verbose: int = 0) -> pd.DataFrame:
+
+    # data description from the file header:
+    """
+    This file contains a detailed summary of the land-surface average
+    results produced by the Berkeley Averaging method.  Temperatures are
+    in Celsius and reported as anomalies relative to the Jan 1951-Dec 1980
+    average.  Uncertainties represent the 95confidence interval for
+    statistical and spatial undersampling effects.
+
+    Estimated Jan 1951-Dec 1980 absolute temperature (C): 8.59 +/- 0.04
+
+    As Earth's land is not distributed symmetrically about the equator, there
+    exists a mean seasonality to the global land-average.
+
+    Estimated Jan 1951-Dec 1980 monthly absolute temperature:
+         Jan   Feb   Mar   Apr   May   Jun   Jul   Aug   Sep   Oct   Nov   Dec
+         2.56  3.19  5.29  8.29 11.28 13.43 14.31 13.84 12.05  9.20  6.05  3.60
+    +/-  0.07  0.05  0.05  0.06  0.07  0.07  0.06  0.04  0.04  0.05  0.06  0.08
+    """
+
+    # load local file if it exists, otherwise get it online
+    if os.path.exists(path):
+        if verbose >= 1:
+            print(f"Loading {path}...")
+        df = pd.read_csv(path, sep=';', index_col=0)
+    else:
+        # Load from URL
+        if verbose >= 1:
+            print(f"Downloading {url}...")
+
+        cols = [
+            "year", "month",
+            "monthly_diff_K","monthly_uncertainty_K",
+            "annual_diff_K", "annual_uncertainty_K",
+             "5yr_diff_K",    "5yr_uncertainty_K",
+            "10yr_diff_K",   "10yr_uncertainty_K",
+            "20yr_diff_K",   "20yr_uncertainty_K",
+        ]
+
+        df = pd.read_csv(
+            url,
+            delim_whitespace=True,
+            comment  = '%',
+            names    = cols,
+            na_values= ['***', 'NaN']
+        )
+
+        df["year"] = df.year + df.month/12 - 1/24
+        df = df.set_index("year").drop(columns=["month"])
+
+        df.to_csv(path, sep=';')
+
+    # plotting recent decades
+    _df = df.loc[df.index > 1970]
+    # print(df)
+
+    _slope = 0.03  # K/yr
+    year_ref = 1975
+
+    plt.figure(figsize=(10,6))
+    plt.plot(_df.index, _df["annual_diff_K"]- (_df.index-year_ref) * _slope,
+             label="annual moving average", color="grey")
+    plt.plot(_df.index, _df["5yr_diff_K" ]  - (_df.index-year_ref) * _slope,
+             label="5-year moving average", color="black")
+    plt.plot(_df.index, _df["20yr_diff_K"]  - (_df.index-year_ref) * _slope,
+             label="20-year moving average", color="blue")
+    plt.title ("global land-surface temperature change w.r.t. 1951-80")
+    plt.ylabel("temperature change" +
+               (f", tilted by {_slope*10} K/decade" if _slope != 0 else "") + " [K]")
+    plt.xlabel("year")
+    plt.legend()
+    plt.show()
+
+    # sys.exit()
+
+    return df
+
+
 
 
 

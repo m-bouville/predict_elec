@@ -311,14 +311,15 @@ def run_model_once(
 
     if verbose > 0:
         print(time.strftime("%d/%m/%Y %H:%M:%S", time.localtime()))
-    if torch.cuda.is_available():
-        if verbose > 0:
-            print(f"GPU: {torch.cuda.get_device_name(0)}, "
-                  f"CUDA version: {torch.version.cuda}, "
-                  f"CUDNN version: {torch.backends.cudnn.version()}")
-    elif verbose > 0:
-        print("CUDA unavailable")
-        print()
+    if do_run_model:  # else: we do not use the GPU
+        if torch.cuda.is_available():
+            if verbose > 0:
+                print(f"GPU: {torch.cuda.get_device_name(0)}, "
+                      f"CUDA version: {torch.version.cuda}, "
+                      f"CUDNN version: {torch.backends.cudnn.version()}")
+        elif verbose > 0:
+            print("CUDA unavailable")
+            print()
 
 
     # load data from csv and create pd.DataFrame
@@ -589,7 +590,7 @@ def run_model_once(
 
 def run_model(
         mode                : str,  # in ['once', 'random', 'Bayes_NNTQ', 'Bayes_meta',
-                                    #     'statistics', 'stats_only']
+                                    #     'statistics', 'stats_only', 'load_input']
         num_trials          : Optional[int],
 
         # configuration bundles
@@ -619,11 +620,13 @@ def run_model(
     # Tuple[Dict[str, Any], pd.DataFrame, \
     #            Dict[str, float], Dict[str, float], float, float]:
 
-    if mode == 'once' or 'stat' in mode:  # single model run (or none)
+
+    if mode in ['once', 'load_input', 'stats_only', 'statistics']:
+            # single model run (or none)
         if num_trials in locals() and num_trials > 1:
             warnings.warn(f"num_runs ({num_trials}) will not be used")
 
-        if 'stat' in mode:    # works for `stats` and `statistics
+        if 'stat' in mode:    # `stats_only` or `statistics`
             _split_diagnostics   = Split.complete
         else:
             _split_diagnostics   = Split.test
@@ -650,7 +653,7 @@ def run_model(
                 save_cache_baselines= True,
                 save_cache_NNTQ     = True,
 
-                do_run_model        = mode != 'stats_only',
+                do_run_model        = mode not in ['stats_only', 'load_input'],
 
                 # XXX_EVERY (in epochs)
                 validate_every    = validate_every,
@@ -661,11 +664,11 @@ def run_model(
                 cache_dir         = cache_dir,
                 split_diagnostics = _split_diagnostics,
 
-                do_plot_statistics= 'stat' in mode,
+                do_plot_statistics= 'stat' in mode,  # ['statistics',  'stats_only']
                 verbose           = verbose
             )
 
-        if mode == 'stats_only':
+        if mode in ['stats_only', 'load_input']: # no model
             assert _returned is None
             return
 
@@ -720,7 +723,6 @@ def run_model(
             # #      dfs['temperature']["Tavg_degC"],
             # #      num_steps_per_day=num_steps_per_day
             # # )
-
 
 
     else:   # search for hyperparameters
