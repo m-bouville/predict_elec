@@ -238,9 +238,10 @@ def drift_with_time(
 # prices
 # -------------------------------------------------------
 
-def prices_per_season(price: pd.Series) -> None:
+def prices_per_season(price:   pd.Series,
+                      country: str) -> None:
 
-    print("prices from", price.index.date.min(), "to", price.index.date.max())
+    print(country, "prices from", price.index.date.min(), "to", price.index.date.max())
 
     winter = price[price.index.month.isin([12, 1, 2])].dropna().to_frame()
     winter['year_as_January'] = (winter.index + pd.DateOffset(months=2)).year.astype(int)
@@ -271,20 +272,24 @@ def prices_per_season(price: pd.Series) -> None:
                   drop(columns=['year_as_January'])
         _winter = _winter.groupby(_winter.index.hour).mean()
 
-        _dict_stats['avg_winter'  ].append(float(_winter.mean().iloc[0]))
-        # _dict_stats['std_winter'  ].append(float(_winter.std ().iloc[0]))
-        _dict_stats['range_winter'].append(float((_winter.max()-_winter.min()).iloc[0]))
+        # print(country, _year, len(_winter))
+        if len(_winter) > 0:  # if df not empty
+            _dict_stats['avg_winter'  ].append(float(_winter.mean().iloc[0]))
+            # _dict_stats['std_winter'  ].append(float(_winter.std ().iloc[0]))
+            _dict_stats['range_winter'].append(float((_winter.max()-_winter.min()).iloc[0]))
 
-        _winter = _winter.rename(lambda x: x + 1).rename_axis('hour_local')
-        _winter.loc[0] = _winter.loc[24]
-        _winter.sort_index(inplace=True)
-        # print(_year, _winter)
+            _winter = _winter.rename(lambda x: x + 1).rename_axis('hour_local')
+            _winter.loc[0] = _winter.loc[24]
+            _winter.sort_index(inplace=True)
+            # print(_year, _winter)
 
-        if _year >= first_year:
-            plt.plot(_winter.index, _winter.values,
-                     color=colors[_year], label=f"{_year-1}-{_year-2000}")
+            if _year >= first_year:
+                plt.plot(_winter.index, _winter.values,
+                         color=colors[_year], label=f"{_year-1}-{_year-2000}")
+        else:
+            ranges['winter'] = [e for e in ranges['winter'] if e != _year]
 
-    plt.title("Winter spot price in France (December, January and February)")
+    plt.title(f"Winter spot price in {country} (December, January and February)")
     plt.ylabel("spot price [€/MWh]")
     plt.xlabel("local time of day")
 
@@ -317,7 +322,7 @@ def prices_per_season(price: pd.Series) -> None:
                      color=colors[_year] if _year!=2021 else 'orange', label=_year)
             # summer 2021 goes with 2022, whereas 2020-21 winter is like 2020
 
-    plt.title ("Summer spot price in France (June, July and August)")
+    plt.title (f"Summer spot price in {country} (June, July and August)")
     plt.ylabel("spot price [€/MWh]")
     plt.xlabel("local time of day")
 
@@ -337,7 +342,7 @@ def prices_per_season(price: pd.Series) -> None:
                      label = names[_stat] + ", " + _season,
                      color=colors[_season], linestyle=styles[_stat])
     plt.xlabel('year (winter: year of January)')
-    plt.ylabel('spot price [€/MWh]')
+    plt.ylabel(f'{country} spot price [€/MWh]')
     plt.xlim(2014, 2027)
     plt.ylim(_ylim)
     plt.legend(ncols=2)
@@ -356,7 +361,7 @@ def prices_per_season(price: pd.Series) -> None:
                      label = names[_stat] + ", " + _season,
                      color=colors[_season], linestyle=styles[_stat])
     plt.xlabel('year (winter: year of January)')
-    plt.ylabel('spot price, normalized')
+    plt.ylabel(f'{country} spot price, normalized')
     plt.xlim(2014, 2027)
     plt.ylim(0, 6)
     plt.legend(ncols=2)
@@ -379,7 +384,7 @@ def prices_per_season(price: pd.Series) -> None:
         plt.plot(ranges[_season], normalized_amplitude[_season],
                  label=_season, color=colors[_season])
     plt.xlabel('year (winter: year of January)')
-    plt.ylabel('spot price: (max - min) / average')
+    plt.ylabel(f'{country} spot price: (max - min) / average')
     plt.xlim(2014, 2027)
     plt.ylim(0, 2)
     plt.legend(loc='upper left')
@@ -1419,7 +1424,7 @@ def production_by_price(production: pd.DataFrame,
     plt.xlabel('production [TWh/an]')
     plt.ylabel('prix moyen [€/MWh]')
     plt.xlim(-10,  60)
-    plt.ylim( 40, 120)
+    plt.ylim( 30, 120)
 
     # Annotate each point with its key
     for _idx in _indices_plot:
@@ -1486,8 +1491,8 @@ def production_by_price(production: pd.DataFrame,
     plt.title(f"interconnexions, 2023–25{SMA_str}")
     plt.xlabel('énergie échangée [TWh/an]')
     plt.ylabel('prix moyen [€/MWh]')
-    plt.xlim(-25, 15)
-    plt.ylim( 60, 95)
+    plt.xlim(-30, 15)
+    plt.ylim( 55, 95)
 
     # Annotate each point with its key
     for _idx in _indices_plot:
@@ -1775,24 +1780,42 @@ def eco2mix(df: pd.DataFrame) -> None:
     df_diff = df.loc[(df.index.year >= 2023) & (df.index.year <= 2025)].\
         drop(columns=['Prévision_J1_GW', 'Prévision_J_GW',
                       'Taux_de_CO2_g/kWh']).diff()
+
+    # these are not found in older data, which messes with dropna
+    # TODO find workaround?
+    df_diff.drop(columns=['Eolien_terrestre_GW', 'Eolien_offshore_GW', 'Stockage_batterie_GW',
+                          'Déstockage_batterie_GW', 'batterie_net_GW'], inplace=True)
+
+    # print(df_diff.shape)
+    # print(df_diff.index[-100])
+    # # print(df_diff[['Eolien_terrestre_GW', 'Eolien_offshore_GW', 'Stockage_batterie_GW',
+    # #                'Déstockage_batterie_GW', 'batterie_net_GW']].iloc[-100:-97])
+    print(df_diff.iloc[-100])
+
     df_diff = df_diff.where(np.abs(df_diff) <= 8).dropna()  # remove outliers
+    print(df_diff.shape)
+    print(df_diff.iloc[-100])
+
     df_diff.columns = df_diff.columns.str.replace('_GW', '')  # for display
     df_diff.rename(columns={'Ech_physiques': 'interconn.',
                             'Consommation': 'conso.'}, inplace=True)
     _list_cols_fit = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
-            'fossiles', 'batterie_net', 'interconn.', 'Bioénergies',  #'Eolien',
+            'fossiles', 'interconn.', 'Bioénergies',  #'Eolien',
             'Ech_comm_Angleterre', 'Ech_comm_Espagne',
             'Ech_comm_Italie', 'Ech_comm_Suisse', 'Ech_comm_AllemagneBelgique',
-            ]
+            ]  # 'batterie_net',
     _list_cols_plot = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
-            'fossiles', 'interconn.', 'batterie_net', 'Bioénergies']
+            'fossiles', 'interconn.', 'Bioénergies']  # 'batterie_net',
     _dict_ref = {'Solaire': "solaire", 'Eolien': "éolienne"}
 
     _dict_corr_pc = {}
+    print(df_diff.shape)
     for (_ref, _ref_str) in _dict_ref.items():
         _dict_corr_pc[_ref] = {}
         print(_ref, _ref_str)
+        print(df_diff[[_ref]])
         for _col in _list_cols_fit:
+            print(_col, df_diff[_col])
             _model = LinearRegression()
             _model.fit(df_diff[[_ref]], df_diff[_col])
             print(f"{_col:20s}{float(_model.coef_[0])*100:4.0f}% "

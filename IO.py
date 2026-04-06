@@ -100,7 +100,14 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                 # dfs[name] = load_solar(path, verbose=verbose)
 
             elif name == 'price':
-                dfs[name] = load_price(path, verbose=verbose)
+                for _country in ['France', 'Switzerland']:
+                    _price_df = load_price(country=_country, verbose=verbose)
+                    # print(dfs[name + "_" + _country])
+                    if do_plot_statistics:
+                        plot_statistics.prices_per_season(
+                            _price_df['price_euro_per_MWh'], _country)
+                    if _country == 'France':   # all other data are for France
+                        dfs[name] = _price_df
 
             # print(name, dfs[name].index)
 
@@ -112,9 +119,9 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                         freq=f"{minutes_per_step}min", name="consumption_by_region")
             analyze_datetime(dfs['temperature'], freq="D", name="temperature")
             # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
-            analyze_datetime(dfs['price'], freq="h", name="price")
-            analyze_datetime(load_nuclear(), freq="h",   name="nuclear")
-            analyze_datetime(load_eco2mix(), freq="30min", name="eco2mix")
+            analyze_datetime(dfs['price'],   freq="h",    name="price")
+            analyze_datetime(load_nuclear(), freq="h",    name="nuclear")
+            analyze_datetime(load_eco2mix(), freq="30min",name="eco2mix")
 
 
         # print("dfs['temperature']", dfs['temperature'])
@@ -206,6 +213,10 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                 print(f"Saved merged input data to: {cache_fname}")
 
 
+    # print("df_merged.columns:", df_merged.columns)
+    # print(df_merged['price_euro_per_MWh'])
+
+
     # plot statistics
     if do_plot_statistics:
 
@@ -251,8 +262,6 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
              ranges_years = [[2016, 2019], [2023, 2025]],
              num_steps_per_day=num_steps_per_day
         )
-
-        plot_statistics.prices_per_season(df_merged['price_euro_per_MWh'])
 
 
         # print(dfs['temperature']['Tavg_degC'])
@@ -1017,11 +1026,13 @@ def load_temperature_world(
 # depth of historical data: 2015 to today
 
 def load_price(
-        path_csv:str = 'data/wholesale_electricity_price_hourly.csv',
+        country: str = 'France',
         path_zip:str = 'data/european_wholesale_electricity_price_data_hourly.zip',
         url    : str = 'https://files.ember-energy.org/public-downloads/price/'
                        'outputs/european_wholesale_electricity_price_data_hourly.zip',
         verbose: int = 0) -> pd.DataFrame:
+
+    path_csv: str = 'data/' + country + '_wholesale_electricity_price_hourly.csv'
 
     # load local file if it exists, otherwise get it online
     if not os.path.exists(path_csv):   # we don't have the csv file locally
@@ -1037,18 +1048,18 @@ def load_price(
 
         with zipfile.ZipFile(path_zip, 'r') as zip_ref:
             if verbose >= 1:
-                print(f"Extracting csv from {path_zip}...")
+                print(f"Extracting {country} csv from {path_zip}...")
 
             # List all files in the zip archive
             file_list = zip_ref.namelist()
             # print("Files in the zip archive:", file_list)
-            assert 'France.csv' in file_list, file_list
+            assert f'{country}.csv' in file_list, file_list
 
             # extract and rename csv
             _dir   = os.path.dirname (path_csv)
             # _fname = os.path.basename(path_csv)
-            zip_ref.extract('France.csv', path=_dir)
-            os.rename(os.path.join(_dir, 'France.csv'), path_csv)
+            zip_ref.extract(f'{country}.csv', path=_dir)
+            os.rename(os.path.join(_dir, f'{country}.csv'), path_csv)
     # we have the csv file locally
 
 
@@ -1084,7 +1095,8 @@ def load_price(
         plots.data(_df[~((_df.index.month == 2) & (_df.index.day == 29))]\
                       .groupby('dateofyear').median().sort_index(),
                    enforce_0_on_y = True,
-                   xlabel="date", ylabel="price [€/MWh], weekly moving median")
+                   xlabel="date",
+                   ylabel = country + " price [€/MWh], weekly moving median")
 
 
         # by time of day
@@ -1101,7 +1113,7 @@ def load_price(
                      .drop(columns=['year', 'month', 'dateofyear']),
                   xlabel="time of day (UTC)", ylabel="median price [€/MWh]",
                   enforce_0_on_y = True,
-                  title ="seasonal consumption")
+                  title = country + " seasonal consumption")
 
 
         # pivot to date and time of day
@@ -1150,7 +1162,7 @@ def load_price(
             plt.ylim(0, 24)
             plt.yticks(np.arange(25, step=3))
 
-            plt.title(f"spot price, {_range[0]}-{_range[1]-2000}")
+            plt.title(f"{country} spot price, {_range[0]}-{_range[1]-2000}")
 
             plt.show()
 
@@ -1229,14 +1241,16 @@ def load_nuclear(
 
 # January 1st 2025 to January 26th 2026
 def load_eco2mix(
-    path_monthly:str= 'data/archives/eco2mix-national-cons-def.csv',
+    path_monthly:str= 'data/eco2mix-national-cons-def.csv',
     url_monthly: str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                       'datasets/eco2mix-national-cons-def/exports/csv?'
                       'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
+
     path_recent: str= 'data/eco2mix-national-tr.csv',
     url_recent:  str= 'https://odre.opendatasoft.com/api/explore/v2.1/catalog/'
                       'datasets/eco2mix-national-tr/exports/csv?'
                       'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
+
     do_plot_statistics: bool = False,
     verbose:    int = 0) -> pd.DataFrame:
 
@@ -1257,6 +1271,9 @@ def load_eco2mix(
     df_monthly['Date et Heure'] = pd.to_datetime(df_monthly['Date et Heure'], utc=True)
     df_monthly = df_monthly.set_index('Date et Heure').sort_index()
     df_monthly.index.name = "datetime_utc"
+    # if verbose >= 1:
+    #     print("eco2mix (consolidated): from", df_monthly.index.min(),
+    #                                   "to",   df_monthly.index.max())
 
     # print("monthly:", df_monthly.shape, df_monthly.index.min(), df_monthly.index.max())
     # df_monthly.dropna(inplace=True)  # data are not really per 15 min but rather 30 min
@@ -1278,25 +1295,29 @@ def load_eco2mix(
     df_recent.index.name = "datetime_utc"
 
     df_recent.dropna(inplace=True)  # rows of NA for the most recent time steps
-
+    # if verbose >= 1:
+    #     print("eco2mix (real time):    from", df_recent.index.min(),
+    #                                   "to",   df_recent.index.max())
 
     # analyze_datetime(df_recent, freq="15min", name="eco2mix recent")
 
-
-
     # merge
     df = pd.concat([df_monthly, df_recent], axis=0)
-
     df.drop(columns=['Périmètre', 'Nature', 'Date', 'Heure'], inplace=True)
+    df = df.resample('30min').mean().sort_index()  # older data are on this freq
 
-    print("eco2mix (merged): from", df.index.min(), "to", df.index.max())
+    if verbose >= 1:
+        print("eco2mix (merged):       from", df.index.min(), "to", df.index.max())
 
     # df = df[~df.index.duplicated(keep="first")]
 
     # cleaning names: eg "Bioénergies - Déchets (MW)" -> "Bioénergies_Déchets_MW"
     df.columns = df.columns.str.replace(r"[()\-.']", '', regex=True) \
                            .str.replace(' ', '_').str.replace('+', 'et')
-    # print(df.columns)
+    # print("eco2mix:", df.columns)
+    # print(df[['Eolien_terrestre_MW', 'Eolien_offshore_MW', 'Stockage_batterie_MW',
+    #           'Déstockage_batterie_MW']].iloc[-100:-97].to_string())
+
 
     # rename hydro
 
@@ -1324,7 +1345,6 @@ def load_eco2mix(
     df = df.loc[:, ~df.columns.str.contains(r'^Bioénergies__.*_MW$')]
     df = df.loc[:, ~df.columns.str.contains(r'^Hydraulique__.*_MW$')]
 
-    df =df.resample('30min').mean()  # older data are on this freq
 
     # convert to GW
     _cols_MW = [c for c in df.columns if 'MW' in c]
@@ -1333,18 +1353,23 @@ def load_eco2mix(
 
 
     if verbose >= 2:
-        print("monthly:", df_monthly.shape, df_monthly.index.min(), df_monthly.index.max())
-        print("recent:  ",df_recent .shape, df_recent .index.min(), df_recent .index.max())
+        print("monthly:", df_monthly.shape, df_monthly.index.min(), df_monthly.index.max(),
+                          df_monthly.index[ 1] - df_monthly.index[ 0],
+                          df_monthly.index[-1] - df_monthly.index[-2])
+        print("recent:    ",df_recent .shape, df_recent .index.min(), df_recent .index.max(),
+                          df_recent .index[ 1] - df_recent .index[ 0],
+                          df_recent .index[-1] - df_recent .index[-2])
         print("all:    ", df.shape, df.index.min(), df.index.max())
 
-    # print(df)
-
+        print(df)
 
 
     if verbose >= 3 or do_plot_statistics:
         plot_statistics.eco2mix(df.copy())
 
-    # print("eco2mix (merged): from", df.index.min(), "to", df.index.max())
+    print("eco2mix (merged): from", df.index.min(), "to", df.index.max())
+
+
 
     return df
 
