@@ -241,6 +241,8 @@ def drift_with_time(
 def prices_per_season(price:   pd.Series,
                       country: str) -> None:
 
+    # TODO avoid code duplication
+
     print(country, "prices from", price.index.date.min(), "to", price.index.date.max())
 
     winter = price[price.index.month.isin([12, 1, 2])].dropna().to_frame()
@@ -248,10 +250,14 @@ def prices_per_season(price:   pd.Series,
     #winter['year_pair']=winter.apply(lambda row:f"{row['year_as_January']-1}-"
     #                                            f"{row['year_as_January']-2000}",axis=1)
 
+    spring = price[price.index.month.isin([ 3, 4, 5])]
+
     summer = price[price.index.month.isin([ 6, 7, 8])]
 
     first_year = 2019
-    ranges = {'winter': range(2016, 2027), 'summer': range(2015, 2026)}
+    ranges = {'winter': range(2016, 2027),
+              'spring': range(2015, 2027),
+              'summer': range(2015, 2026)}
     colors = colors_seasons | \
              {2019: 'skyblue',2020:'cornflowerblue',2021: 'blue',
               2022: 'red',    2023: 'hotpink',
@@ -262,6 +268,7 @@ def prices_per_season(price:   pd.Series,
 
     _ylim = [0, 150]
     _dict_stats = {'avg_winter': [], 'std_winter': [], 'range_winter': [],
+                   'avg_spring': [], 'std_spring': [], 'range_spring': [],
                    'avg_summer': [], 'std_summer': [], 'range_summer': []}
 
 
@@ -298,6 +305,40 @@ def prices_per_season(price:   pd.Series,
     plt.ylim(_ylim)
     plt.legend()
     plt.show()
+
+
+    # spring
+    plt.figure(figsize=(10,6))
+    for _year in ranges['spring']:
+        _spring = spring[spring.index.year == _year]
+        _spring = _spring.groupby(_spring.index.hour).mean()
+
+        _dict_stats['avg_spring'  ].append(float(_spring.mean()))
+        # _dict_stats['std_spring'  ].append(float(_spring.std ().iloc[0]))
+        _dict_stats['range_spring'].append(float((_spring.max()-_spring.min())))
+
+        _spring = _spring.rename(lambda x: x + 2).rename_axis('hour_local')
+        _spring[0] = _spring[24]
+        _spring[1] = _spring[25]
+        _spring.drop(index=[25], inplace=True)
+        _spring.sort_index(inplace=True)
+        # print(_year, _spring)
+
+        if _year >= first_year:
+            plt.plot(_spring.index, _spring.values,
+                     color=colors[_year] if _year!=2021 else 'orange', label=_year)
+            # spring 2021 goes with 2022, whereas 2020-21 winter is like 2020
+
+    plt.title (f"Spring spot price in {country} (March, April and May)")
+    plt.ylabel("spot price [€/MWh]")
+    plt.xlabel("local time of day")
+
+    plt.xlim(0, 24)
+    plt.xticks(range(0, 25, 4))
+    plt.ylim(_ylim)
+    plt.legend()
+    plt.show()
+
 
 
     # summer
@@ -1800,10 +1841,10 @@ def eco2mix(df: pd.DataFrame) -> None:
     df_diff.rename(columns={'Ech_physiques': 'interconn.',
                             'Consommation': 'conso.'}, inplace=True)
     _list_cols_fit = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
-            'fossiles', 'interconn.', 'Bioénergies',  #'Eolien',
+            'fossiles', 'interconn.', 'Bioénergies',  #'Eolien', # 'batterie_net',
             'Ech_comm_Angleterre', 'Ech_comm_Espagne',
             'Ech_comm_Italie', 'Ech_comm_Suisse', 'Ech_comm_AllemagneBelgique',
-            ]  # 'batterie_net',
+            ]
     _list_cols_plot = ['conso.', 'Nucléaire', 'STEP_net', 'lacs', 'fil de l\'eau',
             'fossiles', 'interconn.', 'Bioénergies']  # 'batterie_net',
     _dict_ref = {'Solaire': "solaire", 'Eolien': "éolienne"}

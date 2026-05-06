@@ -93,14 +93,16 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
             elif name == 'temperature':
                 dfs[name], Tavg_regions, Tmin_regions, Tmax_regions = \
-                    load_temperature(path, weights_by_region, verbose=verbose)
+                    load_temperature(path, weights_by_region,
+                            do_plot_statistics=do_plot_statistics, verbose=verbose)
 
             # elif name == 'solar':
                 # BUG: The whole of September 2021 is missing
                 # dfs[name] = load_solar(path, verbose=verbose)
 
             elif name == 'price':
-                for _country in ['France', 'Switzerland']:
+                for _country in ['France']:
+                        #, 'Germany', 'Spain', 'Italy', 'Switzerland']:
                     _price_df = load_price(country=_country, verbose=verbose)
                     # print(dfs[name + "_" + _country])
                     if do_plot_statistics:
@@ -694,6 +696,7 @@ def load_temperature(
                        'datasets/temperature-quotidienne-regionale/exports/csv?'
                        'lang=en&timezone=UTC&use_labels=true&delimiter=%3B',
         # noise_std: float or Tuple[float] = 0.,# realistic forecast error
+        do_plot_statistics: bool = False,
         verbose: int = 0) -> [pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
     # 4. Weighted aggregation helpers
@@ -883,11 +886,50 @@ def load_temperature(
 
     #     plots.data(df, xlabel="date_local", ylabel="temperature (°C)")
 
-    if verbose >= 3:
+    if verbose >= 3 or do_plot_statistics:
         plots.data(out.groupby('dateofyear').mean().sort_index()\
-                    .drop(columns=['year','month']),
-                  xlabel="date of year", ylabel="temperature (°C)",
-                  title ="seasonal temperature")
+                   .drop(columns=['year','month']),
+                   xlabel="date of year", ylabel="temperature (°C)",
+                   title ="seasonal temperature")
+
+        df_plots = out[['Tavg_degC', 'dateofyear', 'year']]
+        df_plots['Tavg_sma'] = df_plots['Tavg_degC' ].\
+            rolling(30, min_periods=25, center=True).mean()
+
+        # 29th February is not always there, messes with `groupby`
+        df_plots = df_plots[~((df_plots.index.month == 2) & (df_plots.index.day == 29))]
+
+
+        df_plots['Tavg_diff'] = df_plots['Tavg_sma'] - \
+                          df_plots.groupby('dateofyear')['Tavg_sma'].transform('mean')
+
+        # Map years -> 3 periods
+        def map_period(y):
+            if 2016 <= y <= 2020:
+                return '2016–20'
+            if y <= 2025:
+                return '2021–25'
+            if y == 2026:
+                return '2026'
+            return None  # drop anything outside
+
+        df_plots['period'] = df_plots['year'].map(map_period)
+
+        plots.data(df_plots[['Tavg_degC']].sort_index()
+                   .rolling(365, min_periods=360).mean(),
+                   xlabel="year", ylabel="temperature [°C]",
+                   title ="temperature in France, running annual average")
+
+        # 3 curves: 2016-20, 2021-25, 2026
+        plots.data(df_plots.groupby(['dateofyear', 'period'])['Tavg_sma'].mean()
+                   .unstack('period').sort_index(),
+                   xlabel="date of year", ylabel="temperature [°C]",
+                   title ="seasonal temperature in France")
+
+        # T(year) - T(avg all years)
+        plots.data(df_plots.pivot(index='dateofyear', columns='year', values='Tavg_diff'),
+                   xlabel="date of year", ylabel="temperature - avg over years [K]",
+                   title ="seasonal temperature in France")
 
     # print(list(out.columns))
 
