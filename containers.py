@@ -43,7 +43,8 @@ class DataSplit:
     dates:            pd.DatetimeIndex
     Tavg_degC:        np.ndarray
 
-    true_nation_GW:   Optional[np.ndarray]
+    true_nation_GW:   Optional[np.ndarray]    = None
+        # filled later by prediction_day_ahead()
     X_columns:        Optional[List[str]]     = None
 
     # Torch plumbing
@@ -63,8 +64,8 @@ class DataSplit:
     def __post_init__(self):
         len_index = [self.X.shape[0], self.y_nation.shape[0], self.Y_regions.shape[0], \
              self.dates.shape[0], self.Tavg_degC.shape[0]]
-        if self.X_columns is not None:
-            len_index.append(self.dict_preds_ML.shape[0])
+        if self.dict_preds_ML:   # dict of {model: {date: value}}
+            len_index.append(len(next(iter(self.dict_preds_ML.values()))))
         assert min(len_index) == max(len_index), len_index
 
         if self.X_columns is not None:
@@ -595,7 +596,7 @@ class NeuralNet:
 
                 if verbose >= 2:
                     print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
-            avg_valid_loss_quantile = valid_loss_quantile_h_scaled.mean()
+                avg_valid_loss_quantile = valid_loss_quantile_h_scaled.mean()
 
             # display evolution of losses
             (list_of_min_losses, list_of_lists) = \
@@ -609,7 +610,7 @@ class NeuralNet:
 
             # plotting convergence
             if ((epoch+1 == plot_conv_every) | ((epoch+1) % plot_conv_every == 0))\
-                    & (epoch < num_epochs-2) & verbose > 0:
+                    & (epoch < num_epochs-2) & (verbose > 0):
                 plots.convergence_quantile(list_of_lists[0], list_of_lists[1],
                                   list_of_lists[2], list_of_lists[3],
                                   partial=True, verbose=verbose)

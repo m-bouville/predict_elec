@@ -51,7 +51,8 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     # sine waves
     for _hours in [6, 8, 12, 24]:  # several periods per day
         df['sin_'+str(_hours)+'h'] = np.sin(24/_hours * 2*np.pi * df['hour_norm'])
-    df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
+        df['cos_'+str(_hours)+'h'] = np.cos(24/_hours * 2*np.pi * df['hour_norm'])
+            # /!\ this line was outside the loop: only cos_24h was created
 
     for _days, _name in zip([1.75, 3.5, 7], ["1_75", "3_5", "7"]): # several per week
         df['sin_'+_name+'day'] = np.sin(7/_days * 2*np.pi * df['dow_norm'])
@@ -59,6 +60,9 @@ def df_features_calendar(dates: pd.DatetimeIndex,
 
     for _months in [3, 4, 6, 12]:  # several periods per year
         df['cos_'+str(_months)+'mo'] = np.cos(12/_months * 2*np.pi * df['doy_norm'])
+    df['sin_12mo'] = np.sin(2*np.pi * df['doy_norm'])
+        # cos alone is symmetric about 1 January (March == October);
+        # the fundamental sine breaks that ambiguity
 
 
     # remove temporary variables
@@ -345,7 +349,7 @@ def compare_models(true_series:     pd.Series,
                 .groupby("month")
                 .apply(lambda d: rmse(d[name], d["true"]), include_groups=False)
             )
-            for name in df_eval.columns if name not in ['true', 'month']
+            for name in df_eval.columns if name not in ['true', 'month', 'hour']
         })
         print(df_rmse_month.round(2))
 

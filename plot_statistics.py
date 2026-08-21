@@ -257,7 +257,7 @@ def prices_per_season(price:   pd.Series,
     first_year = 2019
     ranges = {'winter': range(2016, 2027),
               'spring': range(2015, 2027),
-              'summer': range(2015, 2026)}
+              'summer': range(2015, 2027)}
     colors = colors_seasons | \
              {2019: 'skyblue',2020:'cornflowerblue',2021: 'blue',
               2022: 'red',    2023: 'hotpink',

@@ -514,7 +514,10 @@ def load_consumption_by_region(
 
     # identify csv file by size and date
     _dict_csv  = {"file_size"        : os.path.getsize (path),
-                  "modification_time": os.path.getmtime(path)}
+                  "modification_time": os.path.getmtime(path),
+                  "tz"               : "Europe/Paris"}
+        # "tz" versions the cache key: pickles built with the old fixed
+        # +02:00 localization must not be reloaded
     _dict_csv['recent'] = df_recent.index.min().strftime('%Y-%m-%d %H:%M:%S') \
         if df_recent is not None else ""
 
@@ -541,10 +544,19 @@ def load_consumption_by_region(
             df = pd.read_csv(url, sep=';')
             df.to_csv(path, sep=';')
 
-        # See comment in `load_consumption`
+        # `Date` + `Heure` are Paris LOCAL (wall-clock) time.
+        # /!\ was tz_localize('+02:00'): a constant summer-time offset, which
+        #     shifted every winter timestamp by one hour vs the (UTC) national
+        #     consumption, temperatures and features.
         df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Heure'],
                                         format='%Y-%m-%d %H:%M')
-        df['Datetime'] = df['Datetime'].dt.tz_localize('+02:00')
+        df['Datetime'] = df['Datetime'].dt.tz_localize(
+            'Europe/Paris',
+            ambiguous ='NaT',   # fall-back hour exists twice per year: cannot
+                                #   tell which UTC instant each copy is -> drop
+            nonexistent='NaT')  # spring-forward hour should not appear at all
+        df = df.dropna(subset=['Datetime'])
+            # cost: <= 2 wall-clock hours per year (the DST transitions)
         # df['UTC Datetime'] = df['Datetime'].dt.tz_convert('UTC')
 
         # col_datetime = 'Date - Heure'  # given as pseudo-local

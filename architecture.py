@@ -335,25 +335,26 @@ def make_X_and_y(array           : np.ndarray,
     names_models = [e.split('_')[1] for e in names_cols['ML_preds']]
     train = containers.DataSplit(Split.train, "training",
             idx_train, X_train_GW, y_nation_train_GW, Y_regions_train_GW,
-            train_dates, train_Tavg_degC, names_cols['features'],
+            train_dates, train_Tavg_degC, X_columns=names_cols['features'],
+                # /!\ was positional: it landed in `true_nation_GW`
             dict_preds_ML=pd.DataFrame(preds_ML_train, index=train_dates,
                                        columns=names_models).to_dict(),
             loader=train_loader, dataset_scaled=train_dataset_scaled)
     valid = containers.DataSplit(Split.valid, "validation",
             idx_valid, X_valid_GW, y_nation_valid_GW, Y_regions_valid_GW,
-            valid_dates, valid_Tavg_degC, names_cols['features'],
+            valid_dates, valid_Tavg_degC, X_columns=names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML_valid, index=valid_dates,
                                        columns=names_models).to_dict(),
             loader=valid_loader, dataset_scaled=valid_dataset_scaled)
     test  = containers.DataSplit(Split.test,  "testing",
             idx_test,  X_test_GW,  y_nation_test_GW,  Y_regions_test_GW,
-            test_dates,  test_Tavg_degC, names_cols['features'],
+            test_dates,  test_Tavg_degC, X_columns=names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML_test, index=test_dates,
                                        columns=names_models).to_dict(),
             loader=test_loader,  dataset_scaled=test_dataset_scaled)
     complete=containers.DataSplit(Split.complete,  "all data",
             idx_all,  X_GW,   y_nation_GW,  Y_regions_GW,
-            dates,  temperatures, names_cols['features'],
+            dates,  temperatures, X_columns=names_cols['features'],
             dict_preds_ML=pd.DataFrame(preds_ML, index=dates,
                                        columns=names_models).to_dict(),
             loader=complete_loader,  dataset_scaled=complete_dataset_scaled)
@@ -385,8 +386,11 @@ class TransformerEncoderLayerWithAttn(nn.Module):
             self.eps = eps
             self.weight = nn.Parameter(torch.ones(dim))
         def forward(self, x):
-            norm = x.norm(2, dim=-1, keepdim=True)
-            return x * self.weight / (norm / (x.shape[-1]**0.5 + self.eps))
+            # RMS = ||x|| / sqrt(dim); eps guards the division (a zero vector
+            # would give inf/NaN). /!\ eps was previously added to sqrt(dim),
+            # where it protected nothing.
+            rms = x.norm(2, dim=-1, keepdim=True) / (x.shape[-1] ** 0.5)
+            return x * self.weight / (rms + self.eps)
 
 
     def __init__(self, d_model, nhead, dropout, ffn_mult):
@@ -595,17 +599,27 @@ class TimeSeriesTransformer(nn.Module):
 
 
 def lr_warmup_cosine(step, warmup_steps, epochs, num_steps) -> float:
+    """
+    `step` and `warmup_steps` are in optimizer steps (batches);
+    `num_steps` is the number of batches per epoch.
+    """
+    total_steps = max(1, epochs * num_steps)
+
     # No warmup: pure cosine decay
     if warmup_steps is None or warmup_steps == 0:
-        progress = step / max(1, epochs * num_steps)
+        progress = min(step / total_steps, 1.)
         return 0.5 * (1 + np.cos(np.pi * progress))
 
-    # Warmup phase
-    if step < warmup_steps:
-        return step / warmup_steps
+    # a warmup longer than 25% of the run would never let the LR reach its
+    # nominal value (this is what happened with warmup expressed per epoch)
+    warmup_steps = min(warmup_steps, total_steps // 4)
 
-    # Cosine decay after warmup
-    progress = (step - warmup_steps) / max(1, (epochs * num_steps - warmup_steps))
+    # Warmup phase ((step+1) so that the very first batch does not get LR = 0)
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
+
+    # Cosine decay after warmup (progress clipped: cosine must not rebound)
+    progress = min((step - warmup_steps) / max(1, total_steps - warmup_steps), 1.)
     return 0.5 * (1 + np.cos(np.pi * progress))
 
 
@@ -837,7 +851,8 @@ def subset_evolution_torch(
         #                for t in origin_unix.tolist()].to(device)
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
-        # model_NN.optimizer).zero_grad(set_to_none=True)
+        model_NN.optimizer.zero_grad(set_to_none=True)
+            # /!\ without this, gradients accumulate over every batch of the epoch
 
         with torch.amp.autocast(device_type=device.type): # mixed precision
             (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
@@ -867,9 +882,15 @@ def subset_evolution_torch(
                 loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
         amp_scaler.scale(loss_scaled_h_batch.mean()).backward()  # full precision
+        amp_scaler.unscale_(model_NN.optimizer)
+            # /!\ clipping must see the true (unscaled) gradients; clipping the
+            #     scaled gradients to 1. effectively clipped at 1/scale (~1e-5)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         amp_scaler.step(model_NN.optimizer)
         amp_scaler.update()
+        model_NN.scheduler.step()
+            # warmup/cosine schedule advances per optimizer step (batch),
+            # not per epoch: `warmup_steps` is expressed in batches
 
         loss_quantile_scaled_h += loss_scaled_h_batch
         dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
@@ -877,7 +898,7 @@ def subset_evolution_torch(
 
         # loss_quantile_scaled += loss_quantile_scaled_dev.item()
 
-    model_NN.scheduler.step()
+    # (scheduler.step() now happens once per batch, inside the loop above)
 
     loss_quantile_scaled_h      /= len(subset_loader)
     dict_losses_h = {key: value /  len(subset_loader)

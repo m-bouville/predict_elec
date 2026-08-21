@@ -89,7 +89,10 @@ NNTQ_PARAMETERS: dict = {
     'learning_rate'    : 0.0036,  # Optimizer learning rate
     'weight_decay'     : 1.5e-7,
     'dropout'          : 0.38,
-    'warmup_steps'     : 3000,
+    'warmup_steps'     : 40,
+        # [optimizer steps = batches]. With ~23 batches/epoch and 21 epochs
+        # (~480 steps total), 40 steps ~ 8% of the run.
+        # /!\ was 3000, which exceeded the entire run: the LR never left warmup
 
     # early stopping
     'patience'         : 5,

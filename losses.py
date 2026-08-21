@@ -29,9 +29,8 @@ import numpy  as np
 def penalty_nation_cold_torch(
         saturation_cold_degC: float,
         threshold_cold_degC : float,
-        Tavg_current        : torch.Tensor,
-            # /!\ assumes a single one (correct for a single day)
-    ) -> torch.Tensor:  # returns shape (B,)
+        Tavg_current        : torch.Tensor,  # (B, V): temperature per sample/horizon
+    ) -> torch.Tensor:  # returns the same shape as Tavg_current
 
     # linear ramp
     penalty = (Tavg_current - threshold_cold_degC) / \
@@ -56,8 +55,7 @@ def quantile_with_crossing_torch(
     saturation_cold_degC:float,
     threshold_cold_degC: float,
     lambda_cold     : float,
-    Tavg_current    : torch.Tensor,  # (B, V, 1)
-            # /!\ assumes a single one (correct for a single day)
+    Tavg_current    : torch.Tensor,  # (B, V): per-sample temperatures
 
 ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
@@ -71,13 +69,22 @@ def quantile_with_crossing_torch(
     loss_coverage_h = torch.zeros(V, device=device)
     loss_crossing_h = torch.zeros(V, device=device)
 
-    _penalty_nation_cold = lambda_cold * penalty_nation_cold_torch(
-            saturation_cold_degC, threshold_cold_degC, Tavg_current.to(device)).mean()
+    # one weight per SAMPLE (= per forecast day), from that day's mean temperature
+    # /!\ was `.mean()` over the whole (shuffled) batch: a near-constant scalar,
+    #     identical for cold and mild days, which neutralized the cold weighting
+    _penalty_per_day = lambda_cold * penalty_nation_cold_torch(
+            saturation_cold_degC, threshold_cold_degC, Tavg_current.to(device))
+    if _penalty_per_day.dim() == 1:                              # (B,)
+        _penalty_per_day = _penalty_per_day.unsqueeze(-1)        # (B, 1)
+    else:                                                        # (B, V)
+        _penalty_per_day = _penalty_per_day.mean(dim=-1, keepdim=True)  # (B, 1)
+
+    w_cold = 1. + _penalty_per_day                               # (B, 1)
 
     for i, tau in enumerate(quantiles):
         diff = y_nation_true - y_nation_pred[..., i]
         pin = torch.maximum(tau * diff, -(1 - tau) * diff)
-        loss_pinball_h += ((1 + _penalty_nation_cold) * pin).mean(dim=0)
+        loss_pinball_h += (w_cold * pin).mean(dim=0)   # cold days weigh more
 
         # Coverage penalty
         if lambda_coverage > 0.:
@@ -88,7 +95,10 @@ def quantile_with_crossing_torch(
             z = -diff / tau_smooth   # broadcast over B
             z = torch.clamp(z, -20., 20.)  # preventing overflow
             soft_ind   = torch.sigmoid(z)         # (B, V)
-            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(dim=0) # (V,)
+            coverage_h = (w_cold * soft_ind).mean(dim=0) / w_cold.mean(dim=0) # (V,)
+                # weighted (normalized) coverage: cold days count more, but a
+                # perfectly calibrated forecast still yields coverage == tau
+                # (the previous, unnormalized product biased coverage upward)
 
             err  = coverage_h - tau
             w    = torch.where(err > 0,  tau,  1 - tau)
@@ -110,9 +120,8 @@ def quantile_with_crossing_torch(
 def penalty_nation_cold_numpy(
         saturation_cold_degC: float,
         threshold_cold_degC : float,
-        Tavg_current        : np.ndarray,
-            # /!\ assumes a single one (correct for a single day)
-    ) -> np.ndarray:  # returns shape (B,)
+        Tavg_current        : np.ndarray,  # (B, V): temperature per sample/horizon
+    ) -> np.ndarray:  # returns the same shape as Tavg_current
 
     # linear ramp
     penalty = (Tavg_current - threshold_cold_degC) / \
@@ -138,8 +147,7 @@ def quantile_with_crossing_numpy(
         saturation_cold_degC:float,
         threshold_cold_degC: float,
         lambda_cold     : float,
-        Tavg_current    : np.ndarray,
-                # /!\ assumes a single one (correct for a single day)
+        Tavg_current    : np.ndarray,    # (B, V): per-sample temperatures
 
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
 
@@ -149,8 +157,16 @@ def quantile_with_crossing_numpy(
     loss_coverage_h = np.zeros(V)
     loss_crossing_h = np.zeros(V)
 
-    _penalty_nation_cold = lambda_cold * penalty_nation_cold_numpy(
-                saturation_cold_degC, threshold_cold_degC, Tavg_current).mean()
+    # one weight per SAMPLE (= per forecast day). MUST match the torch version.
+    # /!\ was `.mean()` over the whole batch: see quantile_with_crossing_torch
+    _penalty_per_day = lambda_cold * penalty_nation_cold_numpy(
+                saturation_cold_degC, threshold_cold_degC, Tavg_current)
+    if _penalty_per_day.ndim == 1:                               # (B,)
+        _penalty_per_day = _penalty_per_day[:, np.newaxis]       # (B, 1)
+    else:                                                        # (B, V)
+        _penalty_per_day = _penalty_per_day.mean(axis=-1, keepdims=True)  # (B, 1)
+
+    w_cold = 1. + _penalty_per_day                               # (B, 1)
 
     def sigmoid(x: float) -> float:
         return 1. / (1. + np.exp(-x))
@@ -163,7 +179,7 @@ def quantile_with_crossing_numpy(
         # print(f"[quantile_loss_with_crossing_numpy] {tau} diff.shape = {diff.shape}"
 
         pin = np.maximum(tau * diff, -(1 - tau) * diff)
-        loss_pinball_h += ((1 + _penalty_nation_cold) * pin).mean(axis=0)     # (V,)
+        loss_pinball_h += (w_cold * pin).mean(axis=0)     # (V,)  cold days weigh more
 
         # Coverage penalty
         if lambda_coverage > 0.:
@@ -174,7 +190,8 @@ def quantile_with_crossing_numpy(
             z = -diff / tau_smooth                # (B, V)
             z = np.clip(z, -20., 20.)  # preventing overflow
             soft_ind   = sigmoid(z)              # (B, V)
-            coverage_h = ((1 + _penalty_nation_cold) * soft_ind).mean(axis=0) # (V,)
+            coverage_h = (w_cold * soft_ind).mean(axis=0) / w_cold.mean(axis=0) # (V,)
+                # weighted (normalized) coverage: see torch version
 
             err  = coverage_h - tau              # (V,)
             w    = np.where(err > 0,  tau,  1 - tau)
@@ -333,8 +350,7 @@ def quantile_torch(
         saturation_cold_degC:float,
         threshold_cold_degC:float,
         lambda_cold       : float,
-        Tavg_current      : torch.Tensor,   # (B, V, 1)
-            # /!\ assumes a single one (correct for a single day)
+        Tavg_current      : torch.Tensor,   # (B, V): per-sample temperatures
     ) -> Tuple[torch.tensor, Dict[str, torch.tensor]]:
     """
     Torch loss wrapper for quantile forecasts.
@@ -398,8 +414,7 @@ def quantile_numpy(
         saturation_cold_degC:float,
         threshold_cold_degC:float,
         lambda_cold       : float,
-        Tavg_current      : np.ndarray,     # (B, V)
-                # /!\ assumes a single one (correct for a single day)
+        Tavg_current      : np.ndarray,     # (B, V): per-sample temperatures
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     NumPy loss wrapper for quantile forecasts.

@@ -164,6 +164,21 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     raise ValueError(f"Invalid column: {col}.")
 
 
+def _prepare_series(series:         pd.Series,
+                    moving_average: Optional[int] = None,
+                    date_range:     Optional[Tuple[pd.Timestamp, pd.Timestamp]] = None,
+                    groupby:        Optional[str] = None) -> pd.Series:
+    """
+    Shared pipeline so every curve of a figure is processed identically:
+    1. moving average on the full series (no edge effects at range boundaries),
+    2. date range (must precede groupby: a grouped index is no longer datetimes),
+    3. groupby.
+    """
+    s = _apply_moving_average(series, moving_average)
+    s = _apply_range         (s,      date_range)
+    return _apply_groupby    (s,      groupby)
+
+
 
 # --------------------------------------------------------
 # Individual plots
@@ -184,8 +199,10 @@ def curves( true_series        : Optional[pd.Series],
 
     # true value
     if true_series is not None:
-        _true_series  = _apply_range(_apply_groupby(_apply_moving_average(
-            true_series,  moving_average), groupby), date_range)
+        _true_series = _prepare_series(true_series,
+                                       moving_average, date_range, groupby)
+            # /!\ was MA -> groupby -> range, while predictions used
+            #     MA -> range -> groupby: the curves could diverge
         plt.plot(_true_series.index, _true_series.values,
                  label="actual", color=_color_others['true'])
 
@@ -194,10 +211,8 @@ def curves( true_series        : Optional[pd.Series],
     if dict_pred_series is not None:
         _dict_pred_series = {}
         for quantile, series in dict_pred_series.items():
-            s = _apply_moving_average(series, moving_average)
-            s = _apply_range  (s, date_range)
-            s = _apply_groupby(s, groupby)
-            _dict_pred_series[quantile] = s
+            _dict_pred_series[quantile] = _prepare_series(
+                series, moving_average, date_range, groupby)
 
         # get median and/or ribbon
         if len(_dict_pred_series) == 1 or 'q50' in _dict_pred_series.keys():
@@ -224,9 +239,7 @@ def curves( true_series        : Optional[pd.Series],
     # baselines
     if dict_baseline_series is not None:
         for name, series in dict_baseline_series.items():
-            s = _apply_moving_average(series, moving_average)
-            s = _apply_range  (s, date_range)
-            s = _apply_groupby(s, groupby)
+            s = _prepare_series(series, moving_average, date_range, groupby)
 
             plt.plot(s.index, s.values,
                      color=_color_baseline[name], alpha=0.7, label=name)
@@ -235,9 +248,7 @@ def curves( true_series        : Optional[pd.Series],
     # metamodels
     if dict_meta_series is not None:
         for name, series in dict_meta_series.items():
-            s = _apply_moving_average(series, moving_average)
-            s = _apply_range  (s, date_range)
-            s = _apply_groupby(s, groupby)
+            s = _prepare_series(series, moving_average, date_range, groupby)
 
             plt.plot(s.index, s.values,
                      color=_color_meta    [name], alpha=0.7, label=f"meta {name}")

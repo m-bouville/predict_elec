@@ -65,6 +65,15 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     # ---- Identify columns ----
     col_y_nation = "consumption_GW"
 
+    # columns that are NOT model inputs even though they are numeric.
+    # /!\ the wholesale price is the OUTPUT of the noon day-ahead auction this
+    #     forecast feeds: using it (esp. its D+1 value, with features_in_future)
+    #     would leak the target. It is loaded and plotted for statistics inside
+    #     df_features()/load_data(), which already ran above, so dropping it here
+    #     costs no statistics but removes both the leak and the range-clipping
+    #     its NAs would cause in the dropna() below.
+    cols_non_model = ["year", 'month', 'timeofday', 'price_euro_per_MWh']
+
     # Select numeric columns
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 
@@ -73,10 +82,10 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
           if ('consumption' in c) and (c != col_y_nation) and \
               ('consumption_SMA' not in c)]
 
-    # All features except the target and date are predictors
+    # All features except the target, the non-model columns and the régions
     cols_features = [
         c for c in numeric_cols
-        if c not in ["year", 'month', 'timeofday', col_y_nation] + cols_Y_regions
+        if c not in [col_y_nation] + cols_non_model + cols_Y_regions
     ]
     # print(len(cols_features), "cols_features:", cols_features)
 
@@ -335,8 +344,8 @@ def run_model_once(
     # print(f"num cols: cols_Y_regions {len(cols_Y_regions)}, "
     #       f"cols_features {len(cols_features)}, df.shape {df.shape}")
 
-    if ~do_run_model:
-        return
+    if not do_run_model:   # /!\ was `~do_run_model`: ~ is bitwise NOT,
+        return             #     ~True == -2 and ~False == -1 are both truthy
 
     num_time_steps = df.shape[0]
 
@@ -460,7 +469,10 @@ def run_model_once(
         #    NNTQ_parameters['use_ML_features']*len(dict_series_baselines_GW.keys())
 
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
-                                          len_train_data= len(data.train),
+                                          len_train_data= len(data.train.loader),
+                                              # optimizer steps (batches) per epoch,
+                                              # NOT time steps: the LR schedule
+                                              # advances once per batch
                                           num_features  = data.num_features,
                                           weights_regions= weights_regions)
 
