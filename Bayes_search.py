@@ -73,7 +73,7 @@ DISTRIBUTIONS_NNTQ = {
     'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
     'epochs':      IntDistribution(low=10, high=30, step=1),
-    'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
+    'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128, 192]),
     'learning_rate':FloatDistribution(low=0.0004,high=0.018, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.4, step=0.01),
@@ -89,7 +89,7 @@ DISTRIBUTIONS_NNTQ = {
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
     'lambda_cold':    FloatDistribution(low=0.04,high=0.22, step=0.01),
         # régional consumption
-    'lambda_regions': FloatDistribution(low=0.,   high=0.1, step=0.002),
+    'lambda_regions': FloatDistribution(low=0.,   high=0.12, step=0.002),
     'lambda_regions_sum':FloatDistribution(low=0.,high=0.6, step=0.02),
 
     'model_dim':    IntDistribution(low=100, high=700, step=1),
@@ -99,9 +99,9 @@ DISTRIBUTIONS_NNTQ = {
     'geo_block_ratio':FloatDistribution(low=1., high=1.),  # constant
     'num_geo_blocks': IntDistribution(low=2, high=12, step=1),
 
-    'warmup_steps': IntDistribution(low=1000, high=4000, step=100),
-    'patience':     IntDistribution(low=3, high=6, step=1),
-    'min_delta':    FloatDistribution(low=0.020, high=0.048, step=0.001),
+    'warmup_steps': IntDistribution(low=500, high=4000, step=100),
+    'patience':     IntDistribution(low=3, high=10, step=1),
+    'min_delta':    FloatDistribution(low=0.005, high=0.048, step=0.001),
 }
 
 DISTRIBUTIONS_METAMODEL_NN = {
@@ -203,7 +203,7 @@ def sample_NNTQ_parameters(
 
     # number of steps
     if 'stride' in p:
-        p['stride'       ] = trial.suggest_int  ('stride',       12, 24, step=12)
+        p['stride'       ] = trial.suggest_int  ('stride',        6, 24, step=6)
     if 'patch_length' in p:  # safer if a multiple of stride
         _s = p['stride']
         p['patch_length' ] = trial.suggest_int  (
@@ -212,15 +212,17 @@ def sample_NNTQ_parameters(
         p['input_length' ] = trial.suggest_int  ('input_length',14*48,14*48,step=2*48)
 
     if 'epochs' in p:
-        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 24, step=2)
+        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 28, step=2)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128, 192])
+        if p['batch_size'] == 32:
+            raise optuna.TrialPruned()   # kept in the choices for compatibility with the csv
     if 'learning_rate' in p:
         p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.018,step=0.0004)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
-        p['dropout'       ] = trial.suggest_float('dropout', 0.0, 0.4, step=0.02)
+        p['dropout'       ] = trial.suggest_float('dropout', 0.0, 0.2, step=0.02)
 
     # quantile loss weights
     if 'lambda_cross' in p:
@@ -245,15 +247,15 @@ def sample_NNTQ_parameters(
 
         # régional consumption
     if 'lambda_regions' in p:
-        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.072,step=0.008)
+        p['lambda_regions'   ]= trial.suggest_float('lambda_regions', 0.0, 0.096,step=0.008)
     if 'lambda_regions_sum' in p:
-        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.32,0.6,step=0.04)
+        p['lambda_regions_sum']=trial.suggest_float('lambda_regions_sum',0.04,0.6,step=0.04)
 
     # Architecture
     if 'ffn_size' in p:
         p['ffn_size'   ] = trial.suggest_int('ffn_size',  2, 7)
     if 'num_heads' in p:
-        p['num_heads'  ] = trial.suggest_int('num_heads', 4, 7)
+        p['num_heads'  ] = trial.suggest_int('num_heads', 4, 8)
     if 'model_dim' in p:  # must be a multiiple of num_heads
         _step = 4 * p['num_heads']
         p['model_dim'  ] = trial.suggest_int(
@@ -262,15 +264,15 @@ def sample_NNTQ_parameters(
         p['num_layers' ] = trial.suggest_int('num_layers',3, 7)
 
     if 'num_geo_blocks' in p:
-        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 5, 12)
+        p['num_geo_blocks'] = trial.suggest_int('num_geo_blocks', 2, 10)
 
     # Early stopping
     if 'warmup_steps' in p:
-        p['warmup_steps'] = trial.suggest_int  ('warmup_steps', 1500,4000,step=100)
+        p['warmup_steps'] = trial.suggest_int  ('warmup_steps', 500,4000,step=100)
     if 'patience' in p:
-        p['patience'    ] = trial.suggest_int  ('patience', 3, 6)
+        p['patience'    ] = trial.suggest_int  ('patience', 3, 10)
     if 'min_delta' in p:
-        p['min_delta'   ] = trial.suggest_float('min_delta', 0.028, 0.048, step=0.002)
+        p['min_delta'   ] = trial.suggest_float('min_delta', 0.012, 0.048, step=0.002)
 
 
     # derived
@@ -398,8 +400,18 @@ def run_Bayes_search(
             metamodel_parameters['epochs'] = 1  # for speed
 
 
-        _threshold = trial.study.best_trial.value + wiggle_value
+        # Best loss so far — only used (well) below to decide whether a
+        # promising trial is worth repeating. On a fresh study, trial 0 has no
+        # completed trial yet and best_trial raises; fall back to +inf. The
+        # fallback never actually gates anything: the block that reads
+        # _threshold runs only once trial.number > min_num_trials[stage], by
+        # which point trials have completed.
+        try:
+            _threshold = trial.study.best_trial.value + wiggle_value
+        except ValueError:                 # "No trials are completed yet."
+            _threshold = float('inf')
         _stop_now  = False
+
 
         # print(stage, trial.number, num_runs)
 
@@ -426,6 +438,8 @@ def run_Bayes_search(
                       save_cache_NNTQ     = stage == Stage.meta,  # NNTQ      not sampled
 
                       do_run_model      = True,
+                      do_metamodel      = stage != Stage.NNTQ,
+                          # NNTQ search: loss_NNTQ does not depend on it
 
                       # XXX_EVERY (in epochs)
                       validate_every    =   1,

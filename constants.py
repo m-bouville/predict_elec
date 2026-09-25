@@ -13,7 +13,8 @@ __all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME',
            'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
-           'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS']
+           'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS',
+           'DATALOADER_PARAMETERS']
 
 
 from   typing import Dict, Any  # Tuple, List, Sequence  #, Optional
@@ -66,7 +67,7 @@ FORECAST_HOUR:int = 12          # 12: noon
 _patch_length = days_to_steps(0.5)
 
 NNTQ_PARAMETERS: dict = {
-    'use_ML_features'  : 0,  # Boolean as int for compatibility with Optuna
+    'use_ML_features'  :   0,  # Boolean as int for compatibility with Optuna
     'device'           : DEVICE,
 
     'input_length'     : days_to_steps(14),  # How many half-hours the model sees
@@ -75,35 +76,35 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           : 21,   # Number of training epochs  # Bayes: 20
-    'batch_size'       : 96,   # Training batch size
+    'epochs'           :  21,   # Number of training epochs  # Bayes: 20
+    'batch_size'       :  128,   # Training batch size
 
     # architecture size
-    'model_dim'        : 500,  # Transformer embedding dimension
-    'num_layers'       : 5,    # Number of transformer encoder layers
-    'num_heads'        : 5,    # Number of attention heads
-    'ffn_size'         : 7,    # expansion factor
-    'num_geo_blocks'   : 6,    # Number of geometric blocks
+    'model_dim'        : 520,  # Transformer embedding dimension
+    'num_layers'       :   5,    # Number of transformer encoder layers
+    'num_heads'        :   5,    # Number of attention heads
+    'ffn_size'         :   7,    # expansion factor
+    'num_geo_blocks'   :   6,    # Number of geometric blocks
 
     # optimizer
-    'learning_rate'    : 0.0036,  # Optimizer learning rate
-    'weight_decay'     : 1.5e-7,
-    'dropout'          : 0.38,
-    'warmup_steps'     : 40,
+    'learning_rate'    :   0.0036,  # Optimizer learning rate
+    'weight_decay'     :   1.5e-7,
+    'dropout'          :   0.38,
+    'warmup_steps'     :  40,
         # [optimizer steps = batches]. With ~23 batches/epoch and 21 epochs
         # (~480 steps total), 40 steps ~ 8% of the run.
         # /!\ was 3000, which exceeded the entire run: the LR never left warmup
 
     # early stopping
-    'patience'         : 5,
-    'min_delta'        : 0.038,
+    'patience'         :   5,
+    'min_delta'        :   0.038,
 
     # PatchEmbedding
-    'patch_length'     : 48,  # [half-hours]
-    'stride'           : 24,  # [half-hours]  # max(int(round(_patch_length/2)), 1),
+    'patch_length'     :  48,  # [half-hours]
+    'stride'           :  24,  # [half-hours]  # max(int(round(_patch_length/2)), 1),
 
     # geometric blocks
-    'geo_block_ratio'  : 1,
+    'geo_block_ratio'  :   1,
         # each block is a fraction of the size of the previous (geometric)
 
     # quantile loss

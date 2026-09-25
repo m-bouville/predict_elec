@@ -105,9 +105,8 @@ class DataSplit:
         offset_steps = pred_length - valid_length + 1
         # print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
 
-        records = []  # one record per (origin, horizon)
-        min_origin_time =  np.inf
-        max_origin_time = -np.inf
+        # per-batch arrays, concatenated after the loop
+        list_idx, list_origin, list_y, list_pred = [], [], [], []
 
         # Iterate once: no aggregation
         for (X_scaled, _, y_nation_scaled, T_degC, idx_subset,
@@ -144,43 +143,42 @@ class DataSplit:
                 pred_nation_scaled_cpu.reshape(-1, Q)
             ).reshape(B, V, Q)
 
-            # One prediction per target timestamp
-            for sample in range(B):
-                forecast_origin_time = pd.Timestamp(
-                    forecast_origin_int[sample], unit='s', tz='UTC')
-                # print (f"sample:{sample:3n}, {forecast_origin_time}")
-                min_origin_time = min(min_origin_time, forecast_origin_int[sample])
-                max_origin_time = max(max_origin_time, forecast_origin_int[sample])
+            list_idx   .append(idx_subset)            # (B,)
+            list_origin.append(forecast_origin_int)   # (B,)
+            list_y     .append(y_nation_GW)           # (B, V)
+            list_pred  .append(pred_nation_GW)        # (B, V, Q)
 
-                for h in range(V):
-                        # /!\ after reference: h == 0 <=> offset_steps after noon
-                    idx_subset_current = idx_subset[sample] + h + offset_steps
-                    if idx_subset_current >= self.X.shape[0]:
-                        continue     # otherwise, would be after end of dataset
+        # One prediction per target timestamp: vectorized
+        #   (was a Python loop building one dict per (sample, horizon))
+        idx_origin = np.concatenate(list_idx)                         # (N,)
+        origin_s   = np.concatenate(list_origin).astype(np.int64)     # (N,) [s]
+        y_GW       = np.concatenate(list_y)                           # (N, V)
+        pred_GW    = np.concatenate(list_pred)                        # (N, V, Q)
+        N, V, Q    = pred_GW.shape
 
-                    # target_time = test_dates[target_idx]
+        h          = np.arange(V)                                     # (V,)
+            # /!\ after reference: h == 0 <=> offset_steps after noon
+        idx_current= idx_origin[:, None] + h[None, :] + offset_steps  # (N, V)
+        keep       = idx_current < self.X.shape[0]
+            # otherwise, would be after end of dataset
+        time_ns    = (origin_s[:, None] + 60 * minutes_per_step * \
+                      (h[None, :] + offset_steps)) * 10**9            # (N, V)
 
-                    time_current = forecast_origin_time + \
-                        pd.Timedelta(minutes = minutes_per_step * (h + offset_steps))
-                    # print (f"sample{sample:4n}, h ={h:3n}: "
-                    #        f"idx_subset_current = {idx_subset_current}, "
-                    #        f"time_current = {time_current}")
+        # same time resolution as pd.Timestamp(.., unit='s') + pd.Timedelta, as before
+        _unit = (pd.Timestamp(0, unit='s', tz='UTC') + pd.Timedelta(minutes=1)).unit
 
-                    row = {
-                        "time_current": time_current,
-                        "y_true"      : y_nation_GW[sample, h],  # starts at 12:30
-                    }
+        df = pd.DataFrame(
+            {"y_true": y_GW[keep],
+             **{f"q{int(100*tau)}": pred_GW[:, :, qi][keep]
+                for qi, tau in enumerate(quantiles)},
+             "h": np.broadcast_to(h, (N, V))[keep],
+             "idx_subset_current": idx_current[keep]},
+            index=pd.to_datetime(time_ns[keep], unit='ns', utc=True)\
+                .as_unit(_unit).rename("time_current")
+        ).sort_index()
 
-                    for qi, tau in enumerate(quantiles):
-                        row[f"q{int(100*tau)}"] = pred_nation_GW[sample, h, qi]
-
-                    row['h'] = h
-                    row['idx_subset_current'] = idx_subset_current
-
-                    records.append(row)
-
-        # Build DataFrame
-        df = pd.DataFrame.from_records(records).set_index("time_current").sort_index()
+        min_origin_time = origin_s.min()
+        max_origin_time = origin_s.max()
 
         # print(df.shape, df.columns)
         # print(df.head(10).astype(np.float32).round(2))

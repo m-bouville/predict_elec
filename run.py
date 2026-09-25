@@ -229,6 +229,15 @@ def postprocess(baseline_parameters   : Dict[str, Any],
             key = f"test_{model}_{metric}".replace(" ", "_")
             flat_metrics[key] = float(df_metrics.loc[model, metric])
 
+    # metamodels not run (do_metamodel=False): NaN, so that the csv keeps the
+    #   same columns, in the same order
+    _meta_run = avg_weights_meta_NN is not None
+    if not _meta_run:
+        for model in ['meta_LR', 'meta_NN']:
+            for metric in df_metrics.columns:
+                flat_metrics[f"test_{model}_{metric}"] = np.nan
+        avg_weights_meta_NN = {k: np.nan for k in ['NNTQ_q50', 'LR', 'RF', 'LGBM']}
+
     # learning_rate and weight_decay are small numbers, prone to round-off errors:
     #    save them multiplied by a million (and round to avoid 0.999999)
     for _name in ['learning_rate', 'weight_decay']:
@@ -249,7 +258,8 @@ def postprocess(baseline_parameters   : Dict[str, Any],
 
     _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
                            verbose=verbose), 2)
-    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 5)
+    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 5) \
+        if _meta_run else np.nan
 
     # BUG: this does not do the job
     if baseline_parameters['RF']['max_features'] != 'sqrt':  # is number then
@@ -311,6 +321,9 @@ def run_model_once(
         split_diagnostics     : Split = Split.test,
 
         do_plot_statistics    : Optional[bool] = None,
+        do_metamodel          : bool  = True,
+            # False: no metamodel (e.g. Bayesian search on NNTQ only: loss_NNTQ
+            #   does not depend on it); meta columns of the csv are then NaN
         verbose               : int   = 0
     ) -> Tuple[containers.DatasetBundle, Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float] | None:
@@ -497,12 +510,13 @@ def run_model_once(
     # ============================================================
 
     # metamodel LR
-    data.calculate_metamodel_LR(
-        split_active = Split.valid, min_weight=0.15, verbose=verbose)
+    if do_metamodel:
+        data.calculate_metamodel_LR(
+            split_active = Split.valid, min_weight=0.15, verbose=verbose)
 
-    if verbose > 0:
-        print(f"weights_meta_LR [%]: "
-          f"{ {k: round(v*100, 1) for k, v in data.weights_meta_LR.items()}}")
+        if verbose > 0:
+            print(f"weights_meta_LR [%]: "
+              f"{ {k: round(v*100, 1) for k, v in data.weights_meta_LR.items()}}")
     # t_metamodel_end = time.perf_counter()
     # if verbose >= 2:
     #     print(f"metamodel_LR took: {time.perf_counter() - t_metamodel_start:.2f} s")
@@ -511,13 +525,16 @@ def run_model_once(
     # NN metamodel
     # ============================================================
 
-    data.calculate_metamodel_NN(names_cols['features'], valid_length, Split.valid,
-                                metamodel_NN_parameters, verbose)
-    avg_weights_meta_NN = data.avg_weights_meta_NN
+    if do_metamodel:
+        data.calculate_metamodel_NN(names_cols['features'], valid_length, Split.valid,
+                                    metamodel_NN_parameters, verbose)
+        avg_weights_meta_NN = data.avg_weights_meta_NN
+    else:
+        avg_weights_meta_NN = None   # postprocess writes NaN
 
 
     names_baseline= {}  # if you like it crowded: {'LGBM', 'LR', 'RF'}
-    names_meta    = {'LR', 'NN'}
+    names_meta    = {'LR', 'NN'} if do_metamodel else {}
 
     if verbose > 0:
         data.train.compare_models(unit="GW", verbose=verbose)

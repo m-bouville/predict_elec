@@ -19,6 +19,8 @@ from   torch.utils.data         import DataLoader  # Dataset
 
 from   sklearn.preprocessing   import StandardScaler
 
+import warnings
+
 import numpy  as np
 import pandas as pd
 
@@ -324,6 +326,15 @@ def make_X_and_y(array           : np.ndarray,
     test_loader  = build_loader(test_dataset_scaled,  shuffle=False,drop_last=False)
     complete_loader=build_loader(complete_dataset_scaled,  shuffle=False,drop_last=False)
 
+    # too large a batch: few (or no, because of drop_last) optimizer steps
+    if len(train_loader) == 0:
+        warnings.warn(f"batch_size ({batch_size}) > number of training samples "
+                      f"({len(train_dataset_scaled)}): NO training step (drop_last)")
+    elif len(train_loader) < 10:
+        warnings.warn(f"batch_size ({batch_size}): only {len(train_loader)} "
+                      f"optimizer steps per epoch ({len(train_dataset_scaled)} "
+                      f"training samples)")
+
     # print("len(X_loader):", len(train_loader), len(valid_loader), len(test_loader))
 
     # print(); print("valid_loader:")
@@ -488,11 +499,18 @@ class TimeSeriesTransformer(nn.Module):
 
         if input_length is not None:
             self.features_in_future=int(features_in_future)
-            self.num_patches  = ((input_length+self.features_in_future*pred_length) \
-                                 - patch_length) // stride + 1
+            # length of the sequence seen by the patch embedding: past (+ future)
+            seq_length      = input_length + self.features_in_future*pred_length
 
-            remainder       = (input_length - patch_length) % stride
+            # right padding so that the patches tile the sequence exactly
+            # /!\ was computed from input_length only, while num_patches used
+            #     seq_length: with future features and a stride not dividing
+            #     (seq_length - patch_length), e.g. stride 18, the patch embedding
+            #     returned one patch more than num_patches (AssertionError)
+            remainder       = (seq_length - patch_length) % stride
             self.pad_length = (stride - remainder) % stride
+            self.num_patches= (seq_length + self.pad_length - patch_length) \
+                                 // stride + 1
             # total_covered= ((input_length-patch_length)//stride) * stride + patch_length
             # self.pad_length  = input_length - total_covered
 
@@ -543,7 +561,7 @@ class TimeSeriesTransformer(nn.Module):
         assert L == self.input_length, (L, self.input_length)
         assert F == self.num_features, (F, self.num_features)
 
-        # guaranteeing: last patch ends exactly at t = L
+        # guaranteeing: last patch ends exactly at the end of the (padded) sequence
         if self.pad_length > 0:
             # _old_shape = X.shape
             X = torch.nn.functional.pad(
