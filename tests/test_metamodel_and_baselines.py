@@ -100,3 +100,20 @@ def test_tree_baselines_cached_by_configuration(tmp_path, name, cfg):
 def test_ridge_is_never_cached(tmp_path):
     _tree_baselines(tmp_path, {"LR": {"type": "ridge", "alpha": 1.0}})
     assert not list(tmp_path.glob("LR_preds_*.pkl"))
+
+
+# ---------------------------------------------------------------------------
+# meta-NN: no crash when no epoch improves
+# ---------------------------------------------------------------------------
+def test_meta_NN_runs_when_validation_never_improves():
+    pytest.importorskip("torch", reason="metamodel is a torch module")
+    import metamodel
+    bugs = pytest.importorskip("test_open_bugs")
+    df = bugs._toy_meta_frame(2)
+    valid = df.copy()
+    valid['y_true'] = np.nan                            # NaN loss: never "best"
+    nets, weights = metamodel.train_meta_model(
+        df_train=df, df_valid=valid, cols_features=["Tavg_degC"], valid_length=2,
+        dropout=0., num_cells=[8, 8], epochs=2, learning_rate=1e-2,
+        weight_decay=0., batch_size=8, patience=2, factor=.5, device="cpu")
+    assert len(nets) == 2 and weights.shape[-1] == 4

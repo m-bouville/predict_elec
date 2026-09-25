@@ -192,3 +192,29 @@ def test_variants_built_once_then_reused(tmp_path, monkeypatch):
 def test_variant_out_of_range_is_rejected(tmp_path, monkeypatch):
     with pytest.raises(AssertionError):
         _once(tmp_path, monkeypatch, NNTQ_variant=2, num_NNTQ_variants=2)
+
+
+# ---------------------------------------------------------------------------
+# no autocast / GradScaler on CPU (bfloat16 there, ~3x slower)
+# ---------------------------------------------------------------------------
+def test_no_mixed_precision_on_cpu(tmp_path, monkeypatch):
+    seen = []
+    real = torch.amp.autocast
+
+    def spy(*a, **k):
+        seen.append(k.get('enabled', True))
+        return real(*a, **k)
+    monkeypatch.setattr(torch.amp, "autocast", spy)
+
+    scalers = []
+    real_scaler = torch.amp.GradScaler
+
+    def spy_scaler(*a, **k):
+        s = real_scaler(*a, **k)
+        scalers.append(s)
+        return s
+    monkeypatch.setattr(torch.amp, "GradScaler", spy_scaler)
+
+    _once(tmp_path, monkeypatch, do_metamodel=False)
+    assert seen and not any(seen)                       # autocast disabled
+    assert scalers and not any(s.is_enabled() for s in scalers)

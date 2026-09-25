@@ -35,7 +35,8 @@ def data(df,
         plt.ylim(bottom=0.)
 
     # Display legend only if there is more than one curve
-    if df.shape[1] >= 1:
+    #   (/!\ was `shape[1] >= 1`: always true, and a Series has no shape[1])
+    if getattr(df, 'ndim', 1) == 2 and df.shape[1] > 1:
         plt.legend()
 
     plt.show()
@@ -105,7 +106,7 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
 
 def loss_per_horizon(dict_evolution_loss: Dict[str, np.ndarray],
                      minutes_per_step   : int,
-                     title: Optional[str] = str):
+                     title: Optional[str] = None):   # /!\ was `= str` (the type)
     hours_per_step = minutes_per_step/60.
     x = np.arange(0, len(next(iter(dict_evolution_loss.values()))) * hours_per_step,
                   step=hours_per_step)
@@ -146,6 +147,11 @@ def _apply_moving_average(series: pd.Series, ma: Optional[int] = None) -> pd.Ser
 def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     if col is None:
         return series
+    # calendar groupings in French local time (the data are UTC): otherwise a
+    #   19:00 peak is split between 17:00 and 18:00 UTC depending on DST, and
+    #   days of the week are cut at 01:00 or 02:00 local time
+    if getattr(series.index, 'tz', None) is not None:
+        series = series.tz_convert('Europe/Paris')
     if col in ['year', 'month', 'day', 'hour', 'minute', 'dayofyear']:
         return series.groupby(getattr(series.index, col)).mean()
     if col == 'timeofday':
@@ -215,10 +221,13 @@ def curves( true_series        : Optional[pd.Series],
                 series, moving_average, date_range, groupby)
 
         # get median and/or ribbon
-        if len(_dict_pred_series) == 1 or 'q50' in _dict_pred_series.keys():
-            _median_series = _dict_pred_series.pop('q50')
+        if 'q50' in _dict_pred_series.keys() or len(_dict_pred_series) == 1:
+            # /!\ a single quantile other than q50 used to raise KeyError
+            _q = 'q50' if 'q50' in _dict_pred_series else next(iter(_dict_pred_series))
+            _median_series = _dict_pred_series.pop(_q)
             plt.plot(_median_series.index, _median_series.values,
-                     color=_color_others['NNTQ'],  alpha=0.7,  label="NNTQ (median)")
+                     color=_color_others['NNTQ'],  alpha=0.7,
+                     label="NNTQ (median)" if _q == 'q50' else f"NNTQ ({_q})")
 
         _list_pred_series= list(_dict_pred_series.values())
         _quantiles       = list(_dict_pred_series.keys())
@@ -351,7 +360,8 @@ def scatter(true_series        : Optional[pd.Series],
     if title  is not None:  plt.title (title)
 
     # Display legend only if there is more than one cloud
-    if len(plt.gca().get_lines()) > 1:
+    #   (scatter creates collections, not lines)
+    if len(plt.gca().collections) + len(plt.gca().get_lines()) > 1:
         plt.legend()
 
     plt.show()
@@ -523,4 +533,3 @@ def metrics(df_metrics: pd.DataFrame,
         plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.7)
         plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
-        plt.show()

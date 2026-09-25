@@ -1657,6 +1657,19 @@ def make_school_holidays_indicator(dates: pd.DatetimeIndex, verbose: int = 0) \
         out.loc[mask, f"holiday_{htype}"] += 1
 
 
+    # The calendar is only known up to its last date (e.g. the start of the next
+    #   summer holidays, whose end is not published yet). After it, 0 would mean
+    #   "no holiday" while it means "no data": NaN instead, so that these rows
+    #   are dropped with the other missing data rather than used with wrong values.
+    known_until = max(holidays["start_date"].max(), holidays["end_date"].max())
+    unknown     = dates >= known_until
+    if unknown.any():
+        out = out.astype(np.float32)
+        out.loc[unknown] = np.nan
+        warnings.warn(f"school holidays unknown after {known_until} "
+                      f"({int(unknown.sum())} time steps set to NaN): "
+                      f"update the school calendar csv")
+
     # drop holidays that turn out to be useless in LR and RF
     # out.drop(columns= ['holiday_all_saints','holiday_summer',
     #                    'holiday_February',  'holiday_easter'], inplace=True)

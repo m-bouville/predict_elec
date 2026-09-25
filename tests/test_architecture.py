@@ -210,3 +210,40 @@ class TestForecastWindowConvention:
             np.testing.assert_array_equal(
                 X[:, 0], 1000 + np.arange(i - input_length, i + future * pred_length))
             np.testing.assert_array_equal(y, np.arange(i, i + pred_length))
+
+
+# ---------------------------------------------------------------------------
+# best-model saver: NaN never "best"; restore without save is explicit
+# ---------------------------------------------------------------------------
+def test_best_model_saver_ignores_nan():
+    model = torch.nn.Linear(2, 1)
+    saver = architecture.BestModelSaver(model)
+    for epoch, loss in enumerate([5., float('nan'), 6.]):
+        with torch.no_grad():
+            model.weight.fill_(epoch)
+        saver(loss, model, epoch)
+    assert saver.best_epoch == 0 and saver.best_loss == 5.
+    saver.restore(model)
+    assert (model.weight == 0).all()
+
+
+def test_best_model_saver_restore_without_save():
+    model = torch.nn.Linear(2, 1)
+    saver = architecture.BestModelSaver(model)
+    saver(float('nan'), model, 0)
+    with pytest.raises(RuntimeError, match="No best model"):
+        saver.restore(model)
+
+
+# ---------------------------------------------------------------------------
+# make_X_and_y: the validation split must not be empty
+# ---------------------------------------------------------------------------
+def test_make_X_and_y_rejects_empty_validation():
+    n = 48 * 60
+    dates = pd.date_range("2021-01-01", periods=n, freq="30min", tz="UTC")
+    names_cols = {'y_nation': ['consumption_GW'], 'Y_regions': ['consumption_NE_GW'],
+                  'features': ['f0'], 'ML_preds': ['consumption_LR']}
+    with pytest.raises(AssertionError):
+        architecture.make_X_and_y(
+            np.zeros((n, 4), np.float32), dates, np.zeros(n, np.float32),
+            int(n * .8), 0, names_cols, False, {'NE': 1.}, 30, 144, 72, True, 16)

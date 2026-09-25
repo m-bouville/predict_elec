@@ -106,7 +106,9 @@ def df_features_calendar(dates: pd.DatetimeIndex,
 
 
     # public holidays for France
-    fr_holidays = holidays.France(years=range(2012, 2027))
+    fr_holidays = holidays.France(years=range(min(2012, df.index.year.min()),
+                                              df.index.year.max() + 2))
+        # /!\ was range(2012, 2027): no holiday at all from 2027 on
     dates_holidays = set(fr_holidays.keys())
     df['is_holiday'] = np.isin(df.index.date, list(dates_holidays)).astype(np.int16)
 

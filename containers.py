@@ -546,7 +546,9 @@ class NeuralNet:
 
         self.save_best_model= architecture.BestModelSaver(self.model)
 
-        self.amp_scaler     = torch.amp.GradScaler(device=self.device)
+        _device_type        = torch.device(self.device).type
+        self.amp_scaler     = torch.amp.GradScaler(device=_device_type,
+                                                   enabled=_device_type == 'cuda')
 
 
     def training_loop(self,

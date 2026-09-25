@@ -9,6 +9,7 @@
 ###############################################################################
 
 
+import copy
 import gc
 # import sys
 import inspect
@@ -100,12 +101,15 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
     # print start and end dates
     dates_df.loc["df"]= [df.index.min().date(), df.index.max().date()]
     if verbose >= 1:
-        dates_df["days_ago"] = (pd.Timestamp(datetime.now()) - \
-                                pd.to_datetime(dates_df["end"])).dt.days
-        dates_df["days_ago"] = \
-            dates_df["days_ago"].where(dates_df["days_ago"] >= 0, 0).astype(int)
+        # on a copy: dates_df enters the cache keys (NNTQ, baselines), which
+        #   must depend neither on `verbose` nor on today's date
+        _dates_df_print = dates_df.copy()
+        _dates_df_print["days_ago"] = (pd.Timestamp(datetime.now()) - \
+                                pd.to_datetime(_dates_df_print["end"])).dt.days
+        _dates_df_print["days_ago"] = _dates_df_print["days_ago"]\
+            .where(_dates_df_print["days_ago"] >= 0, 0).astype(int)
 
-        print(dates_df)
+        print(_dates_df_print)
 
     drop = df_len_before - df.shape[0]
     if verbose >= 2:
@@ -222,6 +226,13 @@ def postprocess(baseline_parameters   : Dict[str, Any],
                 run_id                : int,
                 verbose               : int   = 0
                 ) -> [Dict[str, Any], [float, float]]:
+
+    # the dicts are modified below (x1e6, sequences flattened): work on copies,
+    #   the caller's dicts (e.g. constants.NNTQ_PARAMETERS in 'once' mode) must
+    #   stay usable for the next run
+    baseline_parameters = copy.deepcopy(baseline_parameters)
+    NNTQ_parameters     = copy.deepcopy(NNTQ_parameters)
+    metamodel_parameters= copy.deepcopy(metamodel_parameters)
 
     flat_metrics = {}
     for model in df_metrics.index:
@@ -770,7 +781,9 @@ def run_model(
 
     if mode in ['once', 'load_input', 'stats_only', 'statistics']:
             # single model run (or none)
-        if num_trials in locals() and num_trials > 1:
+        if num_trials is not None and num_trials > 1:
+            # /!\ was `num_trials in locals()`: tests the VALUE as a variable
+            #     name, always False
             warnings.warn(f"num_runs ({num_trials}) will not be used")
 
         if 'stat' in mode:    # `stats_only` or `statistics`
@@ -1117,9 +1130,9 @@ def recalculate_loss(csv_path: str,
     # clean up dates
     results_df['timestamp'] = pd.to_datetime(
         results_df['timestamp'],
-        errors   = 'coerce',
-        infer_datetime_format=True,
-        dayfirst = True
+        errors   = 'coerce'
+            # /!\ was also dayfirst=True: the csv timestamps are ISO
+            #     (YYYY-MM-DD, as written by pandas), not day-first
     )
 
     # print(pd.concat([results_df[['timestamp']], dates], axis=1))
@@ -1170,9 +1183,9 @@ def enforce_ranges(csv_path   : str,
     # clean up dates
     results_df['timestamp'] = pd.to_datetime(
         results_df['timestamp'],
-        errors   = 'coerce',
-        infer_datetime_format=True,
-        dayfirst = True
+        errors   = 'coerce'
+            # /!\ was also dayfirst=True: the csv timestamps are ISO
+            #     (YYYY-MM-DD, as written by pandas), not day-first
     )
 
     # Filter rows based on the ranges

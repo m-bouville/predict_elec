@@ -186,6 +186,8 @@ def make_X_and_y(array           : np.ndarray,
     idx_train = idx_all[:train_split]
     idx_test  = idx_all[train_split:]
 
+    assert 0 < n_valid < train_split, (n_valid, train_split)
+        # n_valid == 0: [-0:] would put the whole training set in validation
     idx_valid = idx_train[-n_valid:]
     idx_train = idx_train[:-n_valid]
 
@@ -662,7 +664,7 @@ class EarlyStopping:
 class BestModelSaver:
     def __init__(self, models: List[torch.nn.Module]):
         self.best_loss  = float("inf")
-        self.best_state = models
+        self.best_state = None   # /!\ was the model: restore() then failed
         self.best_epoch = None
 
     def __call__(self, validation_loss, model, epoch: int=None, verbose: int=0
@@ -682,7 +684,8 @@ class BestModelSaver:
         bool
             True if a new best model was saved, False otherwise.
         """
-        if validation_loss >= self.best_loss:
+        if not (validation_loss < self.best_loss):
+            # /!\ was `>=`: False for a NaN loss, which then became the "best"
             if verbose >= 3:
                 print(f"current NNTQ model at epoch {epoch} not saved: "
                       f"{validation_loss:.4f} >= {self.best_loss:.4f}")
@@ -872,7 +875,9 @@ def subset_evolution_torch(
         model_NN.optimizer.zero_grad(set_to_none=True)
             # /!\ without this, gradients accumulate over every batch of the epoch
 
-        with torch.amp.autocast(device_type=device.type): # mixed precision
+        with torch.amp.autocast(device_type=device.type,
+                                enabled=device.type == 'cuda'): # mixed precision
+                # CPU: autocast would mean bfloat16, ~3x slower and less precise
             (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
             pred_nation_scaled_dev = pred_nation_scaled .to(device) # (B, H, Q)
             pred_regions_scaled_dev= pred_regions_scaled.to(device) # (B, H, R)

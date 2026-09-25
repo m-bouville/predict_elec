@@ -634,17 +634,20 @@ def plot_optuna(study,
 
     # Parameter importance
     ######################
-    cols_unusable = ['params_weight_decay', 'LR_max_iter', 'geo_block_ratio']
+    cols_unusable = ['params_weight_decay', 'params_LR_max_iter',
+                     'params_geo_block_ratio']
                      # 'patch_length', 'stride']
     dict_corr = dict()
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     numeric_cols = [col for col in numeric_cols
-                if col not in ['value', 'number', 'best_so_far'] + cols_unusable\
+                if col not in ['value', 'number', 'best_so_far', 'moving_median']
+                               + cols_unusable\
                 and not np.issubdtype(df[col].dtype, np.timedelta64)]
         # `weight_decay` was so small it was initially rounded down to zero
 
     for p in numeric_cols:
-        dict_corr[p[7:]] = -100 * np.corrcoef(df[p], df["value"])[0, 1]
+        dict_corr[p[7:]] = -100 * df[p].corr(df["value"])
+            # pandas: ignores the NaN of conditional parameters (np.corrcoef: NaN)
             # `7:` removes "params_"
     df_corr = pd.Series(dict_corr, name="neg_corr_pc")
 
@@ -740,7 +743,10 @@ def load_frozen_trials(csv_path     : str,
     results_df[['learning_rate', 'weight_decay',
                 'metaNN_learning_rate', 'metaNN_weight_decay']] =\
         (results_df[['learning_rate', 'weight_decay',
-                'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6).round(9)
+                'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6)\
+            .map(lambda x: float(f"{x:.6g}"))
+            # 6 significant digits, not 9 decimals: round(9) turned e.g.
+            #   weight_decay 1.312e-9 into 1e-9
             # learning_rate and weight_decay are small, prone to round-off errors:
             #    save them multiplied by a million (and round to avoid 0.999999)
 

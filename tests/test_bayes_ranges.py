@@ -11,6 +11,8 @@ Compatibility of the ranges in Bayes_search.py.
    does not support dynamic value space"), except when it has a single choice:
    the value is then fixed without consulting the sampler.
    Numeric ranges may differ from DISTRIBUTIONS_* (as long as sampled values fit).
+3. Reloading the csv keeps the significant digits of small values (learning
+   rates, weight decays are saved x1e6).
 
 Bayes_search imports run -> torch, and optuna: skipped without them.
 """
@@ -120,3 +122,29 @@ def test_csv_loads_and_sampling_works(stage):
         trial = study.ask()
         completed = _sample(trial, stage)  # raises on incompatible categorical choices
         _tell(study, trial, completed)
+
+
+# ---------------------------------------------------------------------------
+# 3. reloading keeps the significant digits of small values
+#    (round(9) turned weight_decay 1.312e-9 into 1e-9)
+# ---------------------------------------------------------------------------
+def test_reloaded_weight_decay_keeps_its_significant_digits(tmp_path):
+    import pandas as pd
+    _postprocess_row = pytest.importorskip("test_run")._postprocess_row
+    nntq = copy.deepcopy(constants.NNTQ_PARAMETERS)
+    nntq.update(weight_decay=1.312e-9, learning_rate=0.0032)
+    meta = copy.deepcopy(constants.METAMODEL_NN_PARAMETERS)
+    meta.update(weight_decay=2.3449e-05, learning_rate=0.0045)
+    row, _ = _postprocess_row(nntq, meta)
+    row.update(loss_NNTQ=20., loss_meta=2.3)
+    csv = tmp_path / "search.csv"
+    pd.DataFrame([row]).to_csv(csv, index=False, float_format="%.6f")  # as the search
+
+    trials = bs.load_frozen_trials(
+        str(csv), bs.DISTRIBUTIONS_BASELINES | bs.DISTRIBUTIONS_NNTQ |
+        bs.DISTRIBUTIONS_METAMODEL_NN, Stage.NNTQ)
+    p = trials[0].params
+    assert p['weight_decay'] == pytest.approx(1.312e-9, rel=1e-6)   # was 1e-9
+    assert p['learning_rate'] == 0.0032
+    assert p['metaNN_weight_decay'] == pytest.approx(2.3449e-05, rel=1e-6)
+    assert p['metaNN_learning_rate'] == 0.0045                    # on its grid

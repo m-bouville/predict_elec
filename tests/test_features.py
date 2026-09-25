@@ -10,6 +10,8 @@ Tests for the feature engineering in ``utils``.
 ``utils`` imports ``IO`` -> ``architecture`` -> ``torch`` at import time, so the
 whole module needs torch to import.  It also needs the ``holidays`` package.
 """
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -113,3 +115,72 @@ def test_lag_is_the_prediction_length(monkeypatch):
         run.load_and_create_df({}, "cache", pred_length=72, num_steps_per_day=48,
                                minutes_per_step=30)
     assert captured['lag'] == 72
+
+
+# ---------------------------------------------------------------------------
+# public holidays after 2026
+# ---------------------------------------------------------------------------
+def test_holidays_after_2026():
+    pytest.importorskip("holidays")
+    import utils
+    dates = pd.date_range("2026-12-30", "2028-01-02", freq="30min", tz="UTC")
+    df = utils.df_features_calendar(dates)
+    for day in ("2027-01-01", "2027-07-14", "2027-12-25"):
+        assert df.loc[day + " 12:00", "is_holiday"] == 1, day
+    assert df.loc["2027-01-04 12:00", "is_holiday"] == 0
+
+
+# ---------------------------------------------------------------------------
+# school holidays: after the last date of the calendar, unknown (NaN), not 0
+# ---------------------------------------------------------------------------
+def _toy_calendar():
+    return pd.DataFrame({
+        "start_date": pd.to_datetime(["2026-07-03T22:00:00Z", "2026-10-16T22:00:00Z",
+                                      "2027-07-02T22:00:00Z"]),
+        "end_date":   pd.to_datetime(["2026-08-31T22:00:00Z", "2026-11-01T23:00:00Z",
+                                      "2027-07-02T22:00:00Z"]),   # summer: start only
+        "zones": ["Zone A"] * 3,
+        "name":  ["summer", "all_saints", "summer"]})
+
+
+def test_school_holidays_unknown_after_calendar(monkeypatch):
+    import IO
+    monkeypatch.setattr(IO, "school_holidays", _toy_calendar)
+    dates = pd.date_range("2026-07-01", "2027-07-10", freq="30min", tz="UTC")
+    with pytest.warns(UserWarning, match="school holidays unknown after"):
+        out, _ = IO.make_school_holidays_indicator(dates)
+    assert out.loc["2026-08-01 12:00", "holiday_summer"] == 1      # holiday
+    assert out.loc["2026-09-15 12:00", "holiday_summer"] == 0      # known: none
+    assert out.loc["2027-06-01 12:00"].eq(0).all()                 # still known
+    assert out.loc["2027-07-05 12:00"].isna().all()                # unknown
+    assert out.loc["2027-07-02 21:30"].notna().all()
+
+
+def test_school_holidays_no_nan_within_calendar(monkeypatch):
+    import IO
+    monkeypatch.setattr(IO, "school_holidays", _toy_calendar)
+    dates = pd.date_range("2026-07-01", "2027-06-30", freq="30min", tz="UTC")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                             # no warning
+        out, _ = IO.make_school_holidays_indicator(dates)
+    assert out.notna().all().all()
+
+
+def test_school_holidays_real_calendar():
+    """With the project's csv (skipped when absent): known summer 2026,
+    unknown after the last published date."""
+    import os, IO
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.exists(os.path.join(root, "data", "fr-en-calendrier-scolaire.csv")):
+        pytest.skip("school calendar csv not found")
+    cwd = os.getcwd()
+    os.chdir(root)                                   # the loader uses data/...
+    try:
+        dates = pd.date_range("2026-06-01", "2027-12-31", freq="30min", tz="UTC")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out, (start, end) = IO.make_school_holidays_indicator(dates)
+    finally:
+        os.chdir(cwd)
+    assert out.loc["2026-08-01 12:00", "holiday_summer"] == 3
+    assert out.loc["2027-08-01 12:00"].isna().all()

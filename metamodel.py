@@ -285,6 +285,7 @@ def train_meta_model(
 
     criterion = nn.MSELoss()
 
+    best_state = None;  best_weights = None   # never set if no epoch improves
     best_train_loss = float('inf');   best_valid_loss = float('inf')
     _cols_features = cols_features + ['horizon']
 

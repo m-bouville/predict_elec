@@ -11,6 +11,8 @@
 
 # import sys
 
+import copy
+
 import constants, run
     # containers, architecture, baselines, IO, plots, losses, metamodel,
     # MC_search, Bayes_search,  utils
@@ -27,7 +29,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'stats_only'
+    MODE = 'Bayes_meta'
         # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', # no stats, model
         #     'statistics', #    stats,    model
         #     'stats_only', #    stats, no model
@@ -43,14 +45,21 @@ if __name__ == "__main__":
 
 
 
+    # defaults, possibly overridden below
+    baseline_parameters  = BASELINES_PARAMETERS
+    train_split_fraction = TRAIN_SPLIT_FRACTION
+    valid_ratio          = VALID_RATIO
+
     if MODE in ['once', 'statistics']:
         NUM_TRIALS = 1
 
         # METAMODEL_NN_PARAMETERS['epochs'] =  2
 
         if RUN_FAST:
-            (BASELINE_PARAMS_FAST, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
-                constants.fast_parameters(NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS)
+            # on copies: fast_parameters modifies its arguments in place
+            (baseline_parameters, NNTQ_PARAMETERS, METAMODEL_NN_PARAMETERS) = \
+                constants.fast_parameters(copy.deepcopy(NNTQ_PARAMETERS),
+                                          copy.deepcopy(METAMODEL_NN_PARAMETERS))
 
         if 'stat' in MODE:    # works for `stats` and `statistics`
         # we will plot on the training (nearly complete) data set
@@ -58,8 +67,8 @@ if __name__ == "__main__":
             valid_ratio          = 0.01
 
 
-    elif 'Bayes' in MODE:
-        NUM_TRIALS = 15
+    elif 'Bayes' in MODE:       # 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all'
+        NUM_TRIALS = 20
         VERBOSE    = 0
 
     elif MODE in ['stats_only', 'load_input']:
@@ -79,7 +88,8 @@ if __name__ == "__main__":
         num_trials          = NUM_TRIALS,
 
         # configuration bundles
-        baseline_parameters = BASELINES_PARAMETERS,
+        baseline_parameters = baseline_parameters,
+            # /!\ was BASELINES_PARAMETERS: RUN_FAST did not apply to baselines
         NNTQ_parameters     = NNTQ_PARAMETERS,
         metamodel_NN_parameters= METAMODEL_NN_PARAMETERS,
 
@@ -87,8 +97,9 @@ if __name__ == "__main__":
 
         # statistics of the dataset
         minutes_per_step    = MINUTES_PER_STEP,
-        train_split_fraction= TRAIN_SPLIT_FRACTION,
-        valid_ratio         = VALID_RATIO,
+        train_split_fraction= train_split_fraction,
+        valid_ratio         = valid_ratio,
+            # /!\ were the constants: 'statistics' did not use its 0.99 / 0.01
         forecast_hour       = FORECAST_HOUR,
         seed                = SEED,
         force_calc_baselines= FORCE_CALC_BASELINES,

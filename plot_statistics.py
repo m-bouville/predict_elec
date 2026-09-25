@@ -79,7 +79,6 @@ def drift_with_time(
      num_steps_per_day: int,
      )   -> None:
 
-    T_model = _year_annual * model_T.coef_[0] + model_T.intercept_
     # print("consumption:", consumption)
     # print("temperature:", temperature)
 
@@ -1062,7 +1061,7 @@ def threshold_temp_sensitivity(
 
     rows = dict()
     for _target in thresholds:
-        if _target:
+        if _target is not None:     # /!\ was `if _target:`, False for 0 degC
             _df = apply_threshold(df, name_col, _target, direction, width)
         else:
             _df = df.copy()
