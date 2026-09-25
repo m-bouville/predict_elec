@@ -70,14 +70,6 @@ def create_baselines(df              : pd.DataFrame,
     X_GW: np.ndarray = df[names_cols['features']].values.astype(np.float32)
     y_GW: np.ndarray = df[names_cols['y_nation']].values.astype(np.float32).flatten()
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_GW)
-
-
-    # Define ranges
-    # -------------------------
-    train_idx: np.ndarray = np.arange(0,        train_split-n_valid)
-    X_train_scaled = X_scaled[train_idx];  y_train_GW = y_GW[train_idx]
 
 
     dict_series_baselines_GW, _ = \

@@ -64,7 +64,7 @@ class DataSplit:
     def __post_init__(self):
         len_index = [self.X.shape[0], self.y_nation.shape[0], self.Y_regions.shape[0], \
              self.dates.shape[0], self.Tavg_degC.shape[0]]
-        if self.dict_preds_ML:   # dict of {model: {date: value}}
+        if self.dict_preds_ML:   # dict of {model: Series} (formerly {model: {date: value}})
             len_index.append(len(next(iter(self.dict_preds_ML.values()))))
         assert min(len_index) == max(len_index), len_index
 

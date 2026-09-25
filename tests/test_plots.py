@@ -202,3 +202,27 @@ def test_plot_optuna_importance_table(capsys):
     assert "cond" in names
     cond_line = [l for l in table.splitlines() if l.startswith("cond")][0]
     assert "NaN" not in cond_line.split()[1]
+
+
+# ---------------------------------------------------------------------------
+# date_of_year: vectorized, same result as the former per-row map
+# ---------------------------------------------------------------------------
+def test_date_of_year_matches_per_row_map():
+    idx = pd.date_range("2015-12-30", "2017-03-02", freq="30min", tz="UTC")
+    ref = idx.map(lambda d: pd.Timestamp(year=2000, month=d.month, day=d.day))
+    # pandas < 3 keeps the tz of `idx` through map (2000-mm-dd 00:00 UTC), pandas 3
+    #   does not: compare the dates themselves
+    if ref.tz is not None:
+        ref = ref.tz_localize(None)
+    got = plots.date_of_year(idx)
+    assert (got.as_unit('ns') == ref.as_unit('ns')).all()
+    assert pd.Timestamp("2000-02-29") in got                 # leap day kept
+    assert got.tz is None
+
+
+def test_date_of_year_is_fast():
+    import time
+    idx = pd.date_range("2012-01-01", "2026-01-01", freq="30min", tz="UTC")
+    t0 = time.perf_counter()
+    plots.date_of_year(idx)
+    assert time.perf_counter() - t0 < 0.5      # the per-row map took ~1.4 s

@@ -144,6 +144,14 @@ def _apply_moving_average(series: pd.Series, ma: Optional[int] = None) -> pd.Ser
         return series
     return series.rolling(ma, min_periods=max(ma//2, 1), center=True).mean()
 
+def date_of_year(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Same month and day in year 2000 (a leap year: 29 Feb exists), tz-naive.
+    Vectorized: /!\ was index.map(lambda ...), ~1.4 s per 250k time steps."""
+    out = pd.DatetimeIndex(pd.to_datetime(pd.DataFrame(
+        {'year': 2000, 'month': index.month, 'day': index.day})))
+    return out.as_unit(index.unit) if hasattr(index, 'unit') else out
+
+
 def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     if col is None:
         return series
@@ -164,8 +172,7 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     if col == 'dateofyear':
         # remove February 29th which does not exist every year
         _series = series[~((series.index.month == 2) & (series.index.day == 29))]
-        dateofyear = _series.index.map(lambda d: pd.Timestamp(
-            year=2000, month=d.month, day=d.day))
+        dateofyear = date_of_year(_series.index)
         return _series.groupby(dateofyear).mean()
     raise ValueError(f"Invalid column: {col}.")
 
@@ -533,3 +540,4 @@ def metrics(df_metrics: pd.DataFrame,
         plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.7)
         plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
+        plt.show()

@@ -453,8 +453,7 @@ def load_consumption(
 
     df['year']     = df.index.year
     df['month']    = df.index.month
-    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
-        year=2000, month=d.month, day=d.day))
+    df['dateofyear']=plots.date_of_year(df.index)
     df['timeofday']= df.index.hour + df.index.minute/60
 
 
@@ -605,8 +604,7 @@ def load_consumption_by_region(
 
         out['year']     = out.index.year
         out['month']    = out.index.month
-        out['dateofyear']=out.index.map(lambda d: pd.Timestamp(
-            year=2000, month=d.month, day=d.day))
+        out['dateofyear']=plots.date_of_year(out.index)
         out['timeofday']= out.index.hour + out.index.minute/60
 
         # Save pickle
@@ -886,8 +884,7 @@ def load_temperature(
     # para-dates
     out['year']     = out.index.year
     out['month']    = out.index.month
-    out['dateofyear']=out.index.map(lambda d: pd.Timestamp(
-        year=2000, month=d.month, day=d.day))
+    out['dateofyear']=plots.date_of_year(out.index)
 
     if verbose >= 1:
         print(f"[load_temperature] {len(Tavg.columns)} région clusters,"
@@ -1130,8 +1127,7 @@ def load_price(
 
     df['year']     = df.index.year
     df['month']    = df.index.month
-    df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
-        year=2000, month=d.month, day=d.day))
+    df['dateofyear']=plots.date_of_year(df.index)
     df['timeofday']= df.index.hour + df.index.minute/60
 
     if verbose >= 3:
@@ -1188,8 +1184,7 @@ def load_price(
             #     print(df_range.loc[df_range.index.month == 11][[17, 18]].round())
 
             # use date of year, instead of date, as index
-            df_range['dateofyear'] = df_range.index.map(lambda d: pd.Timestamp(
-                year=2000, month=d.month, day=d.day))
+            df_range['dateofyear'] = plots.date_of_year(df_range.index)
             df_range = df_range.groupby('dateofyear').mean().round(2).sort_index()
             # remove February 29th which does not exist every year
             df_range = df_range[~((df_range.index.month ==  2) &
@@ -1264,8 +1259,7 @@ def load_nuclear(
     if verbose >= 3:
         df['year']     = df.index.year
         df['month']    = df.index.month
-        df['dateofyear']=df.index.map(lambda d: pd.Timestamp(
-            year=2000, month=d.month, day=d.day))
+        df['dateofyear']=plots.date_of_year(df.index)
         df['timeofday']= df.index.hour + df.index.minute/60
 
         plt.figure(figsize=(10,6))

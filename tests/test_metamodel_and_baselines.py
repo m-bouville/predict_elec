@@ -117,3 +117,42 @@ def test_meta_NN_runs_when_validation_never_improves():
         dropout=0., num_cells=[8, 8], epochs=2, learning_rate=1e-2,
         weight_decay=0., batch_size=8, patience=2, factor=.5, device="cpu")
     assert len(nets) == 2 and weights.shape[-1] == 4
+
+
+# ---------------------------------------------------------------------------
+# meta-NN: data per horizon built once, not at every epoch
+# ---------------------------------------------------------------------------
+def test_meta_NN_builds_tensors_once(monkeypatch):
+    pytest.importorskip("torch", reason="metamodel is a torch module")
+    import metamodel
+    bugs = pytest.importorskip("test_open_bugs")
+    df = bugs._toy_meta_frame(3)
+    calls = []
+    real = metamodel.to_tensors
+    monkeypatch.setattr(metamodel, "to_tensors",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    nets, weights = metamodel.train_meta_model(
+        df_train=df, df_valid=df.copy(), cols_features=["Tavg_degC"],
+        valid_length=3, dropout=0., num_cells=[8, 8], epochs=4,
+        learning_rate=1e-2, weight_decay=0., batch_size=8, patience=2,
+        factor=.5, device="cpu")
+    assert len(calls) == 2 * 3                  # train + valid, per horizon
+    assert len(nets) == 3 and np.isfinite(weights).all()
+
+
+def test_meta_NN_reproducible_with_a_seed():
+    """Loaders built once still reshuffle at each epoch: same seed, same result."""
+    torch = pytest.importorskip("torch", reason="metamodel is a torch module")
+    import metamodel
+    bugs = pytest.importorskip("test_open_bugs")
+    df = bugs._toy_meta_frame(2)
+    out = []
+    for _ in range(2):
+        torch.manual_seed(0)
+        _, w = metamodel.train_meta_model(
+            df_train=df, df_valid=df.copy(), cols_features=["Tavg_degC"],
+            valid_length=2, dropout=0., num_cells=[8, 8], epochs=3,
+            learning_rate=1e-2, weight_decay=0., batch_size=8, patience=2,
+            factor=.5, device="cpu")
+        out.append(w)
+    np.testing.assert_array_equal(out[0], out[1])

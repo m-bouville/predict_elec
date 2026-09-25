@@ -618,7 +618,9 @@ def run_model_once(
                 assert list(_old.keys()) == list(_df_ML_new.columns), \
                     (list(_old.keys()), list(_df_ML_new.columns))
                 _dates = list(next(iter(_old.values())).keys())
-                _split.dict_preds_ML = _df_ML_new.loc[_dates].to_dict()
+                _split.dict_preds_ML = {
+                    name: series.astype(np.float64)
+                    for name, series in _df_ML_new.loc[_dates].items()}
 
     # ... or compute
     else:

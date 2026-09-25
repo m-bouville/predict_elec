@@ -290,25 +290,31 @@ def train_meta_model(
     _cols_features = cols_features + ['horizon']
 
 
+    # data per horizon: built once, not at every epoch (they do not change)
+    train_loaders, valid_loaders = [], []
+    for h in range(valid_length):
+        df_train_h = df_train[df_train['horizon']==h].drop(columns=['horizon'])
+        train_loaders.append(DataLoader(
+            TensorDataset(*to_tensors(df_train_h, _cols_features)),
+            batch_size= batch_size,
+            shuffle   = True,      # reshuffled at each epoch (each iteration)
+            drop_last = True
+        ))
+        if df_valid is not None:
+            df_valid_h = df_valid[df_valid['horizon'] == h]
+            valid_loaders.append(DataLoader(
+                TensorDataset(*to_tensors(df_valid_h, _cols_features)),
+                batch_size=batch_size*2, shuffle=False))
+
+
     for epoch in range(epochs):
         epoch_weights    = []
         train_loss_total = 0.;   len_train_dataset = 0.
         valid_loss_total = 0.;   len_valid_dataset = 0.
 
         for h in range(valid_length):
-            df_train_h = df_train[df_train['horizon']==h].drop(columns=['horizon'])
             train_loss_h = 0.;   valid_loss_h = 0.
-
-            preds_train, context_train, y_train = \
-                    to_tensors(df_train_h, _cols_features)
-            train_dataset = TensorDataset(preds_train, context_train, y_train)
-
-            train_loader = DataLoader(
-                train_dataset,
-                batch_size= batch_size,
-                shuffle   = True,
-                drop_last = True
-            )
+            train_loader = train_loaders[h]
 
             net_h = meta_nets [h]
             opt_h = optimizers[h]
@@ -340,12 +346,7 @@ def train_meta_model(
 
             # Validation
             if df_valid is not None:
-                df_valid_h = df_valid[df_valid['horizon'] == h]
-                preds_valid, context_valid, y_valid = \
-                        to_tensors(df_valid_h, _cols_features)
-                valid_dataset= TensorDataset(preds_valid, context_valid, y_valid)
-                valid_loader = DataLoader(valid_dataset,
-                                          batch_size=batch_size*2, shuffle=False)
+                valid_loader = valid_loaders[h]
 
                 net_h.eval()
 

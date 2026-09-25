@@ -1794,8 +1794,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.legend()
     plt.show()
 
-    _dateofyear = df_interconnect.index.map(lambda d: pd.Timestamp(
-            year=2000, month=d.month, day=d.day))
+    _dateofyear = plots.date_of_year(df_interconnect.index)
     plt.figure(figsize=(10,6))
     df_by_dateofyear = df_interconnect.rolling(24*7, min_periods=24*6).mean().\
         groupby(_dateofyear).mean()

@@ -247,3 +247,57 @@ def test_make_X_and_y_rejects_empty_validation():
         architecture.make_X_and_y(
             np.zeros((n, 4), np.float32), dates, np.zeros(n, np.float32),
             int(n * .8), 0, names_cols, False, {'NE': 1.}, 30, 144, 72, True, 16)
+
+
+# ---------------------------------------------------------------------------
+# make_X_and_y: baseline predictions as Series (not dicts of dicts)
+# ---------------------------------------------------------------------------
+def _small_bundle():
+    import copy
+    n = 48 * 60
+    dates = pd.date_range("2021-01-01", periods=n, freq="30min", tz="UTC")
+    names_cols = {'y_nation': ['consumption_GW'], 'Y_regions': ['consumption_NE_GW'],
+                  'features': ['f0', 'f1'],
+                  'ML_preds': ['consumption_LR', 'consumption_RF']}
+    array = np.random.default_rng(0).normal(size=(n, 6)).astype(np.float32)
+    data, _ = architecture.make_X_and_y(
+        array, dates, np.zeros(n, np.float32), int(n * .8), int(n * .8 * .25),
+        copy.deepcopy(names_cols), False, {'NE': 1.}, 30, 144, 72, True, 16)
+    return data, array, dates
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_baseline_predictions_are_series_on_the_split_dates():
+    data, array, dates = _small_bundle()
+    for split in (data.train, data.valid, data.test, data.complete):
+        assert list(split.dict_preds_ML) == ['LR', 'RF']
+        for k, (name, series) in enumerate(split.dict_preds_ML.items()):
+            assert isinstance(series, pd.Series) and series.dtype == np.float64
+            assert series.index.equals(pd.DatetimeIndex(split.dates))
+            # same values as before (float32 inputs, float64 as the former dicts)
+            np.testing.assert_array_equal(
+                series.to_numpy(),
+                array[dates.get_indexer(series.index), 4 + k].astype(np.float64))
+    # the DataFrame used by the metamodels is unchanged in content
+    df = pd.DataFrame(data.test.dict_preds_ML)
+    assert list(df.columns) == ['LR', 'RF'] and len(df) == len(data.test.dates)
+
+
+# ---------------------------------------------------------------------------
+# training loop: the epoch sums of the losses do not keep the autograd graph
+# ---------------------------------------------------------------------------
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_training_loss_sums_are_detached():
+    import constants, containers
+    data, _, _ = _small_bundle()
+    params = dict(constants.NNTQ_PARAMETERS, device=torch.device('cpu'),
+                  input_length=144, pred_length=72, valid_length=48,
+                  model_dim=16, num_heads=2, num_layers=1, ffn_size=2,
+                  num_geo_blocks=2, patch_length=48, stride=24)
+    net = containers.NeuralNet(**params, len_train_data=len(data.train.loader),
+                               num_features=data.num_features,
+                               weights_regions={'NE': 1.})
+    loss_h, dict_losses_h = architecture.subset_evolution_torch(net, data.train.loader)
+    assert loss_h.shape == (48,) and torch.isfinite(loss_h).all()
+    assert not loss_h.requires_grad
+    assert not any(v.requires_grad for v in dict_losses_h.values())

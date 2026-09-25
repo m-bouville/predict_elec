@@ -184,3 +184,16 @@ def test_school_holidays_real_calendar():
         os.chdir(cwd)
     assert out.loc["2026-08-01 12:00", "holiday_summer"] == 3
     assert out.loc["2027-08-01 12:00"].isna().all()
+
+
+# ---------------------------------------------------------------------------
+# is_holiday: vectorized, same result as the former np.isin on dates
+# ---------------------------------------------------------------------------
+def test_is_holiday_matches_isin_on_dates():
+    import holidays
+    dates = pd.date_range("2012-01-01", "2026-12-31 23:30", freq="30min", tz="UTC")
+    df = utils.df_features_calendar(dates)
+    days = set(holidays.France(years=range(2012, 2028)).keys())
+    ref = np.isin(dates.date, list(days)).astype(np.int16)
+    np.testing.assert_array_equal(df['is_holiday'].to_numpy(), ref)
+    assert df['is_holiday'].dtype == np.int16

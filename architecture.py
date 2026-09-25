@@ -346,30 +346,33 @@ def make_X_and_y(array           : np.ndarray,
         # print(batch_idx, x_scaled, y_scaled, origins[0], "to", origins[-1])
 
     names_models = [e.split('_')[1] for e in names_cols['ML_preds']]
+
+    def _dict_of_series(values, index, names) -> Dict[str, pd.Series]:
+        # {model: Series}: /!\ was DataFrame(...).to_dict(), a dict of dicts
+        #   {model: {date: value}} costing ~3 s per run to build and to turn back
+        #   into DataFrames; float64 as the Python floats of to_dict() were
+        _df = pd.DataFrame(values, index=index, columns=names, dtype=np.float64)
+        return {name: _df[name] for name in _df.columns}
     train = containers.DataSplit(Split.train, "training",
             idx_train, X_train_GW, y_nation_train_GW, Y_regions_train_GW,
             train_dates, train_Tavg_degC, X_columns=names_cols['features'],
                 # /!\ was positional: it landed in `true_nation_GW`
-            dict_preds_ML=pd.DataFrame(preds_ML_train, index=train_dates,
-                                       columns=names_models).to_dict(),
+            dict_preds_ML=_dict_of_series(preds_ML_train, train_dates, names_models),
             loader=train_loader, dataset_scaled=train_dataset_scaled)
     valid = containers.DataSplit(Split.valid, "validation",
             idx_valid, X_valid_GW, y_nation_valid_GW, Y_regions_valid_GW,
             valid_dates, valid_Tavg_degC, X_columns=names_cols['features'],
-            dict_preds_ML=pd.DataFrame(preds_ML_valid, index=valid_dates,
-                                       columns=names_models).to_dict(),
+            dict_preds_ML=_dict_of_series(preds_ML_valid, valid_dates, names_models),
             loader=valid_loader, dataset_scaled=valid_dataset_scaled)
     test  = containers.DataSplit(Split.test,  "testing",
             idx_test,  X_test_GW,  y_nation_test_GW,  Y_regions_test_GW,
             test_dates,  test_Tavg_degC, X_columns=names_cols['features'],
-            dict_preds_ML=pd.DataFrame(preds_ML_test, index=test_dates,
-                                       columns=names_models).to_dict(),
+            dict_preds_ML=_dict_of_series(preds_ML_test, test_dates, names_models),
             loader=test_loader,  dataset_scaled=test_dataset_scaled)
     complete=containers.DataSplit(Split.complete,  "all data",
             idx_all,  X_GW,   y_nation_GW,  Y_regions_GW,
             dates,  temperatures, X_columns=names_cols['features'],
-            dict_preds_ML=pd.DataFrame(preds_ML, index=dates,
-                                       columns=names_models).to_dict(),
+            dict_preds_ML=_dict_of_series(preds_ML, dates, names_models),
             loader=complete_loader,  dataset_scaled=complete_dataset_scaled)
 
     data = containers.DatasetBundle(
@@ -915,8 +918,10 @@ def subset_evolution_torch(
             # warmup/cosine schedule advances per optimizer step (batch),
             # not per epoch: `warmup_steps` is expressed in batches
 
-        loss_quantile_scaled_h += loss_scaled_h_batch
-        dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
+        # detached: the sums are only reported, and would otherwise keep the
+        #   autograd graph of every batch of the epoch alive
+        loss_quantile_scaled_h += loss_scaled_h_batch.detach()
+        dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key].detach()
                          for key in dict_losses_h}
 
         # loss_quantile_scaled += loss_quantile_scaled_dev.item()
