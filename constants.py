@@ -13,13 +13,13 @@ __all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME',
            'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
-           'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS',
-           'DATALOADER_PARAMETERS']
+           'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS']
 
 
 from   typing import Dict, Any  # Tuple, List, Sequence  #, Optional
 
 import torch
+import warnings
 
 from enum import Enum
 
@@ -66,6 +66,8 @@ FORECAST_HOUR:int = 12          # 12: noon
 # NN model with Transformer and quantiles
 _patch_length = days_to_steps(0.5)
 
+# defaults: best trial of the Bayesian search (parameter_search_NNTQ.csv, run 142,
+#   loss_NNTQ 17.12, average over 7 runs)
 NNTQ_PARAMETERS: dict = {
     'use_ML_features'  :   0,  # Boolean as int for compatibility with Optuna
     'device'           : DEVICE,
@@ -76,28 +78,27 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           :  21,   # Number of training epochs  # Bayes: 20
-    'batch_size'       :  128,   # Training batch size
+    'epochs'           :  22,   # Number of training epochs
+    'batch_size'       :  96,   # Training batch size
 
     # architecture size
-    'model_dim'        : 520,  # Transformer embedding dimension
-    'num_layers'       :   5,    # Number of transformer encoder layers
-    'num_heads'        :   5,    # Number of attention heads
+    'model_dim'        : 672,  # Transformer embedding dimension (112 per head)
+    'num_layers'       :   4,    # Number of transformer encoder layers
+    'num_heads'        :   6,    # Number of attention heads
     'ffn_size'         :   7,    # expansion factor
-    'num_geo_blocks'   :   6,    # Number of geometric blocks
+    'num_geo_blocks'   :   5,    # Number of geometric blocks
 
     # optimizer
-    'learning_rate'    :   0.0036,  # Optimizer learning rate
-    'weight_decay'     :   1.5e-7,
-    'dropout'          :   0.38,
-    'warmup_steps'     :  40,
-        # [optimizer steps = batches]. With ~23 batches/epoch and 21 epochs
-        # (~480 steps total), 40 steps ~ 8% of the run.
-        # /!\ was 3000, which exceeded the entire run: the LR never left warmup
+    'learning_rate'    :   0.0032,  # Optimizer learning rate
+    'weight_decay'     :   1.312e-9,
+    'dropout'          :   0.14,
+    'warmup_steps'     : 3100,
+        # [optimizer steps = batches], capped at 25% of the run by
+        #   lr_warmup_cosine: with ~25 batches/epoch x 22 epochs, 3100 means 25%
 
     # early stopping
-    'patience'         :   5,
-    'min_delta'        :   0.038,
+    'patience'         :   6,
+    'min_delta'        :   0.048,
 
     # PatchEmbedding
     'patch_length'     :  48,  # [half-hours]
@@ -109,11 +110,11 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.064,   # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.084,
-    'lambda_deriv'     : 0.062,   # derivative weight in loss function
+    'lambda_cross'     : 0.068,   # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.012,
+    'lambda_deriv'     : 0.052,   # derivative weight in loss function
     'lambda_median'    : 0.0,
-    'smoothing_cross'  : 0.044,
+    'smoothing_cross'  : 0.022,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
@@ -121,10 +122,10 @@ NNTQ_PARAMETERS: dict = {
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
     'saturation_cold_degC':-7.6,
     'threshold_cold_degC': -0.2,
-    'lambda_cold'      :    0.22,
+    'lambda_cold'      :    0.17,
 
-    'lambda_regions'   :    0.034,
-    'lambda_regions_sum':   0.32,
+    'lambda_regions'   :    0.048,
+    'lambda_regions_sum':   0.04,
 }
 
 # NNTQ_PARAMETERS['num_patches'] = \
@@ -188,7 +189,7 @@ BASELINES_PARAMETERS = {
         "min_samples_split":12,
         "max_features":   "sqrt",
         "random_state":      0,
-        "n_jobs":            4
+        "n_jobs":           -1    # all cores (nothing else runs meanwhile)
     },
     'LGBM': {
         "type":          "lgbm",
@@ -204,7 +205,7 @@ BASELINES_PARAMETERS = {
         "reg_alpha":         0.09,   # L1 regularization
         "reg_lambda":        0.15,   # L2 regularization
         "random_state":      0,       # Seed for reproducibility
-        "n_jobs":            4,       # Number of parallel jobs
+        "n_jobs":           -1,       # all cores (nothing else runs meanwhile)
         "verbose":          -1        # Suppress output
     }
 }
@@ -236,7 +237,12 @@ assert all([_quantiles[i] + _quantiles[num_quantiles - i - 1] == 1
 assert _quantiles[num_quantiles // 2] == 0.5, "middle quantile must be the median"
     # the code assumes it is
 
-
+_head_dim = NNTQ_PARAMETERS['model_dim'] // NNTQ_PARAMETERS['num_heads']
+if _head_dim % 8 != 0:
+    warnings.warn(f"per-head dimension {_head_dim} (MODEL_DIM "
+                  f"{NNTQ_PARAMETERS['model_dim']} / NUM_HEADS "
+                  f"{NNTQ_PARAMETERS['num_heads']}) is not a multiple of 8: "
+                  f"slower attention on GPU")
 
 
 

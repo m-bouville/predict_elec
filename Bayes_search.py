@@ -321,10 +321,10 @@ def sample_metamodel_NN_parameters(
                          trial.suggest_int('metaNN_num_cells_1',  4, 32, step=4)]
 
     # Early stopping
-    if 'metaNN_patience' in p:
-        p['patience'] = trial.suggest_categorical('patience', [2, 3, 4, 5, 6])
-    if 'metaNN_factor' in p:
-        p['factor'  ] = trial.suggest_float('factor', 0.6, 0.85, step=0.01)
+    if 'patience' in p:
+        p['patience'] = trial.suggest_categorical('metaNN_patience', [2, 3, 4, 5, 6])
+    if 'factor' in p:
+        p['factor'  ] = trial.suggest_float('metaNN_factor', 0.6, 0.85, step=0.01)
 
     return p
 
@@ -356,8 +356,8 @@ def run_Bayes_search(
 
             # multi-run for best candidtes (robustness)
             num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 7, Stage.meta:5},
-            min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:40, Stage.meta:20},
-            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.08},
+            min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:40, Stage.meta:10},
+            wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.03},
 
             verbose             : int  = 0
         ):
@@ -378,6 +378,7 @@ def run_Bayes_search(
 
 
     def objective(trial: optuna.Trial) -> float:
+        print()   # blank line between trials (before, not after, Optuna's log)
         # print(f"** Starting run {trial.number} out of {num_runs}")
 
         baseline_parameters = copy.deepcopy(base_baseline_params)
@@ -434,12 +435,19 @@ def run_Bayes_search(
                       seed              = seed*100 + trial.number*10 + i,
 
                       force_calc_baselines=force_calc_baselines,
-                      save_cache_baselines= stage == Stage.NNTQ,  # baselines not sampled
-                      save_cache_NNTQ     = stage == Stage.meta,  # NNTQ      not sampled
+                      save_cache_baselines= True,
+                          # key includes the baseline parameters: the runs of a
+                          #   trial (same parameters, random_state) reuse them
+                      save_cache_NNTQ     = False,
+                          # meta: NNTQ not sampled -> cached NNTQ variants instead
 
                       do_run_model      = True,
                       do_metamodel      = stage != Stage.NNTQ,
                           # NNTQ search: loss_NNTQ does not depend on it
+                      NNTQ_variant      = i if stage == Stage.meta else None,
+                      num_NNTQ_variants = num_runs,
+                          # meta: each run of a trial uses another NNTQ variant
+                          #   (num_runs variants, from num_runs+2 trainings)
 
                       # XXX_EVERY (in epochs)
                       validate_every    =   1,
@@ -515,8 +523,6 @@ def run_Bayes_search(
             index  = False,
             float_format="%.6f"
         )
-
-        print()
 
         # return the relevant loss
         if stage == Stage.NNTQ:

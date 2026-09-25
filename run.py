@@ -289,6 +289,90 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     return row, (_loss_NNTQ, _loss_meta)
 
 
+# Bayesian search on the metamodel: NNTQ variants
+# ------------------------------------------------------------
+# The NNTQ parameters are frozen, but one training is one random draw (loss_NNTQ
+#   varies a lot with the seed). With N variants (N = number of meta runs per
+#   trial), N+2 trainings with fixed seeds are cached once; the best and worst
+#   are dropped and the middle N kept, so that the metamodel is not tuned to one
+#   lucky or unlucky NNTQ. Variant 0 is the median, then alternately below /
+#   above it.
+SEED_NNTQ_VARIANTS = 1000   # seeds 1000, 1001...: independent of the trial numbers
+
+
+def NNTQ_variants_paths(cache_dir: str, cache_key: str, num_variants: int
+                        ) -> Tuple[List[str], str]:
+    """Paths of the cached variants, and of their json summary."""
+    return ([os.path.join(cache_dir, f"NNTQ_preds_{cache_key}_v{v}.pkl")
+             for v in range(num_variants)],
+            os.path.join(cache_dir, f"NNTQ_variants_{cache_key}.json"))
+
+
+def NNTQ_variants_cached(cache_dir: str, cache_key: str, num_variants: int) -> bool:
+    """True if all the variants exist and were built for this number of variants
+    (the median and the dropped runs depend on it)."""
+    paths, path_summary = NNTQ_variants_paths(cache_dir, cache_key, num_variants)
+    if not all(os.path.exists(p) for p in paths + [path_summary]):
+        return False
+    with open(path_summary) as f:
+        return len(json.load(f)["variants"]) == num_variants
+
+
+def build_NNTQ_variants(train_NNTQ,
+                        paths_variants: List[str],
+                        cache_dir     : str,
+                        cache_key     : str) -> None:
+    """Train the NNTQ len(paths_variants)+2 times, drop the best and the worst,
+    keep the others (sorted by loss_NNTQ) in `paths_variants`, variant 0 being
+    the median.
+    `train_NNTQ()` returns (data, quantile_delta_coverage, avg_abs_worst_days)."""
+    num_drop  = 1
+    num_seeds = len(paths_variants) + 2*num_drop
+
+    results = []   # (loss_NNTQ, seed, path)
+    for k in range(num_seeds):
+        _seed = SEED_NNTQ_VARIANTS + k
+        np.   random.seed(_seed)
+        torch.manual_seed(_seed)
+        _t0   = time.perf_counter()
+        _out  = train_NNTQ()
+        _loss = loss_NNTQ(_out[1], _out[2])
+        _path = os.path.join(cache_dir, f"NNTQ_preds_{cache_key}_seed{_seed}.pkl")
+        with open(_path, "wb") as f:   # on disk: one bundle in memory at a time
+            pickle.dump(_out, f)
+        del _out
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        results.append((_loss, _seed, _path))
+        print(f"NNTQ variants: seed {_seed} ({k+1}/{num_seeds}), "
+              f"loss_NNTQ {_loss:.2f} ({time.perf_counter()-_t0:.0f} s)")
+
+    results.sort()
+    middle = results[num_drop:-num_drop]
+    m      = len(middle) // 2
+    order  = sorted(range(len(middle)), key=lambda j: (abs(j - m), j))
+        # e.g. 5: [2, 1, 3, 0, 4] -> median, then alternately below / above
+    for v, j in enumerate(order):
+        os.replace(middle[j][2], paths_variants[v])
+    for (_, _, _path) in results[:num_drop] + results[-num_drop:]:
+        os.remove(_path)
+
+    summary = {"all"     : [{"seed": s, "loss_NNTQ": round(l, 2)}
+                            for (l, s, _) in results],
+               "variants": [{"variant": v, "seed": middle[j][1],
+                             "loss_NNTQ": round(middle[j][0], 2)}
+                            for v, j in enumerate(order)]}
+    _, path_summary = NNTQ_variants_paths(cache_dir, cache_key, len(paths_variants))
+    with open(path_summary, "w") as f:
+        json.dump(summary, f, indent=2)
+    print("NNTQ variants kept (variant: loss_NNTQ): " +
+          ", ".join(f"{d['variant']}: {d['loss_NNTQ']:.2f}"
+                    for d in summary["variants"]) +
+          f"; dropped: {[round(l, 2) for (l, _, _) in results[:num_drop] + results[-num_drop:]]}")
+
+
+
 def run_model_once(
         # configuration bundles
         baseline_parameters   : Dict[str, Dict[str, Any]],
@@ -324,6 +408,11 @@ def run_model_once(
         do_metamodel          : bool  = True,
             # False: no metamodel (e.g. Bayesian search on NNTQ only: loss_NNTQ
             #   does not depend on it); meta columns of the csv are then NaN
+        NNTQ_variant          : Optional[int] = None,
+        num_NNTQ_variants     : Optional[int] = None,
+            # NNTQ_variant not None: use cached NNTQ variant NNTQ_variant (out of
+            #   num_NNTQ_variants, built on first use), e.g. run i of a
+            #   metamodel Bayesian trial
         verbose               : int   = 0
     ) -> Tuple[containers.DatasetBundle, Dict[str, Any], pd.DataFrame, \
                Dict[str, float], Dict[str, float], float, float] | None:
@@ -440,25 +529,20 @@ def run_model_once(
             "forecast_hour": forecast_hour,
             "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
-            {key: value for key, value in NNTQ_parameters.items() if key!='device'},
-                sort_keys=True)
+            {key: value for key, value in NNTQ_parameters.items() if key!='device'} |
+            # with ML features, the NNTQ depends on the baselines as well
+            ({"baseline_parameters": baseline_parameters}
+                 if NNTQ_parameters['use_ML_features'] else {}),
+                sort_keys=True, default=str)
         cache_key  = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f"NNTQ_preds_{cache_key}.pkl")
 
 
 
-    # either load...
-    if cache_dir is not None and os.path.exists(cache_path):
-        if verbose > 0:
-            print(f"Loading NNTQ predictions from: {cache_path}...")
-        with open(cache_path, "rb") as f:
-            (data, quantile_delta_coverage,
-             avg_abs_worst_days_test_NN_median) = pickle.load(f)
-
-    # ... or compute
-    else:
+    # NNTQ training, with the current random seed
+    def _train_NNTQ():
         # Create splits
-        data, X_test_scaled = normalize_features(df, names_cols,
+        _data, _ = normalize_features(df, names_cols,
             NNTQ_parameters['use_ML_features'], weights_regions,
             minutes_per_step, dates, Tavg_full,
             train_split, n_valid,
@@ -469,32 +553,66 @@ def run_model_once(
             forecast_hour,
             verbose)
 
-        del df  # pd.DataFrame no longer needed, we use np.ndarray now
-        gc.collect()
-
-
-        # print(f"X_test_scaled.shape {X_test_scaled.shape}")
-
         # Create model
-
-        # # for NNTQ: features may include ML preds
-        # _num_features = data.num_features + \
-        #    NNTQ_parameters['use_ML_features']*len(dict_series_baselines_GW.keys())
-
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
-                                          len_train_data= len(data.train.loader),
+                                          len_train_data= len(_data.train.loader),
                                               # optimizer steps (batches) per epoch,
                                               # NOT time steps: the LR schedule
                                               # advances once per batch
-                                          num_features  = data.num_features,
+                                          num_features  = _data.num_features,
                                           weights_regions= weights_regions)
 
         # run training, validation, test
-        (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median) = \
-            NNTQ_model.run(
-                data, Tavg_full, holidays_full,
+        #   -> (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median)
+        return NNTQ_model.run(
+                _data, Tavg_full, holidays_full,
                 minutes_per_step, validate_every, display_every, plot_conv_every,
                 cache_dir, num_worst_days, verbose)
+
+    # metamodel search: one of the cached NNTQ variants (built if missing)
+    if NNTQ_variant is not None:
+        assert cache_dir is not None, "NNTQ variants require a cache_dir"
+        assert num_NNTQ_variants is not None and \
+            0 <= NNTQ_variant < num_NNTQ_variants, (NNTQ_variant, num_NNTQ_variants)
+        _paths_variants, _ = NNTQ_variants_paths(cache_dir, cache_key,
+                                                 num_NNTQ_variants)
+        if not NNTQ_variants_cached(cache_dir, cache_key, num_NNTQ_variants):
+            print(f"Building {num_NNTQ_variants} NNTQ variants "
+                  f"({num_NNTQ_variants + 2} trainings)...")
+            build_NNTQ_variants(_train_NNTQ, _paths_variants, cache_dir, cache_key)
+            np.   random.seed(seed)   # back to this run's seed (metamodel)
+            torch.manual_seed(seed)
+        cache_path = _paths_variants[NNTQ_variant]
+
+    # either load...
+    if cache_dir is not None and os.path.exists(cache_path):
+        if verbose > 0:
+            print(f"Loading NNTQ predictions from: {cache_path}...")
+        with open(cache_path, "rb") as f:
+            (data, quantile_delta_coverage,
+             avg_abs_worst_days_test_NN_median) = pickle.load(f)
+
+        # Without ML features the NNTQ does not depend on the baselines, so the
+        #   cache key ignores them: the cached bundle holds the baseline
+        #   predictions of whichever run created it. Replace them with the ones
+        #   just computed (they vary in the metamodel Bayesian search).
+        if not NNTQ_parameters['use_ML_features']:
+            _df_ML_new = df[names_cols['ML_preds']].astype(np.float32)
+            assert len(_df_ML_new) == len(dates), (len(_df_ML_new), len(dates))
+            _df_ML_new.index = dates   # df has a positional index (reset_index)
+            _df_ML_new.columns = [c.split('_')[1] for c in _df_ML_new.columns]
+                # same naming as in architecture.make_X_and_y
+            for _split in (data.train, data.valid, data.test, data.complete):
+                _old = _split.dict_preds_ML
+                assert list(_old.keys()) == list(_df_ML_new.columns), \
+                    (list(_old.keys()), list(_df_ML_new.columns))
+                _dates = list(next(iter(_old.values())).keys())
+                _split.dict_preds_ML = _df_ML_new.loc[_dates].to_dict()
+
+    # ... or compute
+    else:
+        (data, quantile_delta_coverage, avg_abs_worst_days_test_NN_median) = \
+            _train_NNTQ()
 
         # Save pickle
         if cache_dir is not None and save_cache_NNTQ:
