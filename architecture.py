@@ -593,7 +593,7 @@ class TimeSeriesTransformer(nn.Module):
         assert D == self.dim_model,   (D, self.dim_model)
 
         assert sum(self.block_sizes) == T, \
-            "Geometric block sizes must sum to num_tokens ({T}), not {block_sizes}"
+            f"Geometric block sizes must sum to num_tokens ({T}), not {self.block_sizes}"
 
         # hybrid representation
         h_last = h[:, -1, :]          # (B, D)

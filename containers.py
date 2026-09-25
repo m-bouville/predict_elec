@@ -332,21 +332,15 @@ class DatasetBundle:
     weights_meta_NN:     Optional[str]        = None
 
 
+    def _splits(self) -> Dict[Split, DataSplit]:
+        return {Split.train:   self.train,    Split.valid:   self.valid,
+                Split.test:    self.test,     Split.complete:self.complete}
+
     def items(self):
-        return {
-            Split.train:   self.train,
-            Split.valid:   self.valid,
-            Split.test:    self.test,
-            Split.complete:self.complete
-        }.items()
+        return self._splits().items()
 
     def __getitem__(self, split: Split) -> DataSplit:
-        return {
-            Split.train:   self.train,
-            Split.valid:   self.valid,
-            Split.test:    self.test,
-            Split.complete:self.complete
-        }[split]
+        return self._splits()[split]
 
     def predictions_day_ahead(self, model, scaler_y,
             device, input_length: int, pred_length: int, valid_length: int,

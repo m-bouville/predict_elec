@@ -786,8 +786,10 @@ def thermosensitivity_peak_hour(
 
 
     # switch to local time (time changes at ends of March and October)
-    _consumption.index = _consumption.index.tz_convert('Europe/Paris').sort_values()
-    _temperature.index = _temperature.index.tz_convert('Europe/Paris').sort_values()
+    # /!\ was index.tz_convert(...).sort_values(): sorted the index alone, which
+    #     would have detached values from their timestamps on unsorted input
+    _consumption = plots.to_local_time(_consumption)
+    _temperature = plots.to_local_time(_temperature)
     name_tz = "local"
     # remove duplicates introduced by local time
     _consumption = _consumption[~_consumption.index.duplicated(keep="first")]
@@ -1773,7 +1775,7 @@ def eco2mix(df: pd.DataFrame) -> None:
         resample('h').mean()
     # df_interconnect = df[[e for e in df.columns if 'Ech_comm' in e]]. \
     #     resample('h').mean()
-    df_interconnect.index = df_interconnect.index.tz_convert('Europe/Paris').sort_values()
+    df_interconnect = plots.to_local_time(df_interconnect)   # (was index-only sort)
     df_interconnect.columns = df_interconnect.columns.\
                     str.replace('Ech_comm_', '').str.replace('_GW', '')
     # print(df_interconnect)

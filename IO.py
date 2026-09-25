@@ -34,6 +34,18 @@ import architecture, plots, plot_statistics  # constants
 
 
 
+def add_calendar_columns(df: pd.DataFrame, timeofday: bool = True) -> pd.DataFrame:
+    """Add the bookkeeping columns year, month, dateofyear (and timeofday, in
+    hours) computed from the index, in place; returns df for convenience."""
+    df['year']      = df.index.year
+    df['month']     = df.index.month
+    df['dateofyear']= plots.date_of_year(df.index)
+    if timeofday:
+        df['timeofday'] = df.index.hour + df.index.minute/60
+    return df
+
+
+
 os.makedirs('data',  exist_ok=True)
 os.makedirs('cache', exist_ok=True)
 
@@ -451,10 +463,7 @@ def load_consumption(
         df = df['consumption_GW'].combine_first(df_recent).to_frame()
         # df = df.resample('30min').mean()
 
-    df['year']     = df.index.year
-    df['month']    = df.index.month
-    df['dateofyear']=plots.date_of_year(df.index)
-    df['timeofday']= df.index.hour + df.index.minute/60
+    add_calendar_columns(df)
 
 
     if verbose >= 3:
@@ -602,10 +611,7 @@ def load_consumption_by_region(
         _names_clusters = list(out.columns)
         out.columns = ["consumption_" + c + "_GW" for c in _names_clusters]
 
-        out['year']     = out.index.year
-        out['month']    = out.index.month
-        out['dateofyear']=plots.date_of_year(out.index)
-        out['timeofday']= out.index.hour + out.index.minute/60
+        add_calendar_columns(out)
 
         # Save pickle
         with open(cache_path, "wb") as f:
@@ -882,9 +888,7 @@ def load_temperature(
                 .rolling(duration_days, min_periods=int(duration_days*.8)).mean()
 
     # para-dates
-    out['year']     = out.index.year
-    out['month']    = out.index.month
-    out['dateofyear']=plots.date_of_year(out.index)
+    add_calendar_columns(out, timeofday=False)
 
     if verbose >= 1:
         print(f"[load_temperature] {len(Tavg.columns)} région clusters,"
@@ -1125,10 +1129,7 @@ def load_price(
     df = df[['Price (EUR/MWhe)']]
     df = df.rename(columns={'Price (EUR/MWhe)': 'price_euro_per_MWh'})
 
-    df['year']     = df.index.year
-    df['month']    = df.index.month
-    df['dateofyear']=plots.date_of_year(df.index)
-    df['timeofday']= df.index.hour + df.index.minute/60
+    add_calendar_columns(df)
 
     if verbose >= 3:
         # by day
@@ -1257,10 +1258,7 @@ def load_nuclear(
         # hourly GWh equivalent to GW
 
     if verbose >= 3:
-        df['year']     = df.index.year
-        df['month']    = df.index.month
-        df['dateofyear']=plots.date_of_year(df.index)
-        df['timeofday']= df.index.hour + df.index.minute/60
+        add_calendar_columns(df)
 
         plt.figure(figsize=(10,6))
         df['prod_nuclear_GW'].rolling(24*365).mean().plot()

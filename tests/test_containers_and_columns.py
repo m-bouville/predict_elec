@@ -126,3 +126,20 @@ def test_feature_nan_still_drops_its_row(monkeypatch):
         minutes_per_step=30, verbose=0)
 
     assert len(out_df) == 5        # the Tavg-NaN row is gone
+
+
+# ---------------------------------------------------------------------------
+# DatasetBundle: items() and [] give the same four splits
+# ---------------------------------------------------------------------------
+def test_dataset_bundle_items_and_getitem():
+    import types
+    splits = {s: types.SimpleNamespace(name=s.name) for s in
+              (Split.train, Split.valid, Split.test, Split.complete)}
+    bundle = containers.DatasetBundle.__new__(containers.DatasetBundle)
+    bundle.train, bundle.valid = splits[Split.train], splits[Split.valid]
+    bundle.test,  bundle.complete = splits[Split.test], splits[Split.complete]
+    assert dict(bundle.items()) == splits
+    for s, obj in splits.items():
+        assert bundle[s] is obj
+    with pytest.raises(KeyError):
+        bundle["train"]

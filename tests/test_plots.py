@@ -226,3 +226,18 @@ def test_date_of_year_is_fast():
     t0 = time.perf_counter()
     plots.date_of_year(idx)
     assert time.perf_counter() - t0 < 0.5      # the per-row map took ~1.4 s
+
+
+# ---------------------------------------------------------------------------
+# to_local_time: rows and values converted together
+# ---------------------------------------------------------------------------
+def test_to_local_time_keeps_values_with_their_timestamps():
+    idx = pd.date_range("2024-03-30 22:00", periods=8, freq="h", tz="UTC")
+    s = pd.Series(np.arange(8.), index=idx)
+    shuffled = s.iloc[[3, 0, 7, 1, 6, 2, 5, 4]]              # unsorted input
+    local = plots.to_local_time(shuffled)
+    assert str(local.index.tz) == "Europe/Paris" and local.index.is_monotonic_increasing
+    # each value still at its instant (the former index-only sort broke this)
+    pd.testing.assert_series_equal(local.tz_convert("UTC"), s, check_freq=False)
+    # the DST jump (31/03 02:00 -> 03:00) creates no duplicate
+    assert local.index.is_unique and local.index[4].hour == 4

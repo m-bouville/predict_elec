@@ -144,6 +144,14 @@ def _apply_moving_average(series: pd.Series, ma: Optional[int] = None) -> pd.Ser
         return series
     return series.rolling(ma, min_periods=max(ma//2, 1), center=True).mean()
 
+def to_local_time(data: pd.Series | pd.DataFrame, tz: str = 'Europe/Paris'
+                  ) -> pd.Series | pd.DataFrame:
+    """Same data, indexed in French local time (the data are UTC). Converting a
+    time zone neither reorders nor duplicates instants: sort_index (rows and
+    values together) only guards against unsorted input."""
+    return data.tz_convert(tz).sort_index()
+
+
 def date_of_year(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """Same month and day in year 2000 (a leap year: 29 Feb exists), tz-naive.
     Vectorized: /!\ was index.map(lambda ...), ~1.4 s per 250k time steps."""
@@ -159,7 +167,7 @@ def _apply_groupby(series: pd.Series, col: Optional[str] = None) -> pd.Series:
     #   19:00 peak is split between 17:00 and 18:00 UTC depending on DST, and
     #   days of the week are cut at 01:00 or 02:00 local time
     if getattr(series.index, 'tz', None) is not None:
-        series = series.tz_convert('Europe/Paris')
+        series = to_local_time(series)
     if col in ['year', 'month', 'day', 'hour', 'minute', 'dayofyear']:
         return series.groupby(getattr(series.index, col)).mean()
     if col == 'timeofday':

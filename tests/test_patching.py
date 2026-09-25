@@ -114,3 +114,13 @@ def test_configurations_used_so_far_are_unchanged(stride, patch_length):
     assert model.pad_length == 0
     assert model.num_patches == \
         (INPUT_LENGTH + PRED_LENGTH - patch_length) // stride + 1
+
+
+def test_block_size_assertion_message_is_formatted():
+    """The consistency check on the geometric blocks reports its numbers
+    (the message used to lack its f prefix: '{T}' printed literally)."""
+    model = _model(24, 48, True).eval()
+    model.block_sizes = [1] + list(model.block_sizes)       # sizes now wrong
+    with pytest.raises(AssertionError, match=r"num_tokens \(\d+\)"):
+        with torch.no_grad():
+            model(torch.randn(2, INPUT_LENGTH + PRED_LENGTH, F))

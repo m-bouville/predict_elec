@@ -197,3 +197,21 @@ def test_is_holiday_matches_isin_on_dates():
     ref = np.isin(dates.date, list(days)).astype(np.int16)
     np.testing.assert_array_equal(df['is_holiday'].to_numpy(), ref)
     assert df['is_holiday'].dtype == np.int16
+
+
+# ---------------------------------------------------------------------------
+# IO.add_calendar_columns: the bookkeeping columns, in one place
+# ---------------------------------------------------------------------------
+def test_add_calendar_columns():
+    import IO, plots
+    idx = pd.date_range("2024-02-28 22:00", periods=6, freq="30min", tz="UTC")
+    df = pd.DataFrame({"x": np.arange(6.)}, index=idx)
+    out = IO.add_calendar_columns(df)
+    assert out is df                                        # in place
+    assert df['year'].tolist() == [2024] * 6
+    assert df['month'].tolist() == [2] * 4 + [2] * 2        # 22:00..00:30 UTC
+    assert df['dateofyear'].equals(pd.Series(plots.date_of_year(idx), index=idx,
+                                             name='dateofyear'))
+    assert df['timeofday'].tolist() == [22., 22.5, 23., 23.5, 0., 0.5]
+    df2 = IO.add_calendar_columns(pd.DataFrame(index=idx), timeofday=False)
+    assert list(df2.columns) == ['year', 'month', 'dateofyear']

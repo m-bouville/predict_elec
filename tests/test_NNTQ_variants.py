@@ -74,3 +74,14 @@ def test_run_model_once_default_uses_no_variant():
     import inspect
     params = inspect.signature(run.run_model_once).parameters
     assert params['NNTQ_variant'].default is None
+
+
+def test_rebuild_with_fewer_variants_removes_obsolete_ones(tmp_path, monkeypatch):
+    """A rebuild with fewer variants (smaller num_runs) deletes the extra
+    `_v{k}` files of the earlier build, for the same key only."""
+    _build(tmp_path, monkeypatch, 5)
+    other = tmp_path / "NNTQ_preds_otherkey_v4.pkl"
+    other.write_bytes(b"x")                                  # another key: kept
+    paths, _ = _build(tmp_path, monkeypatch, 3)
+    files = sorted(f for f in os.listdir(tmp_path) if f.endswith(".pkl"))
+    assert files == sorted([os.path.basename(p) for p in paths] + [other.name])

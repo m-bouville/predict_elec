@@ -11,6 +11,7 @@
 
 import copy
 import gc
+import glob
 # import sys
 import inspect
 import os
@@ -56,8 +57,10 @@ def load_and_create_df(dict_input_csv_fnames: Dict[str, str],
                        minutes_per_step   : int,
                        do_plot_statistics : Optional[bool] = None,
                        verbose            : int  = 0) \
-        -> Tuple[pd.DataFrame, Dict[str, List[str]],
-                 pd.Series, pd.Series, pd.Series, List[float]]:
+        -> Tuple[pd.DataFrame, Dict[str, List[str]], pd.DatetimeIndex,
+                 pd.Series, pd.Series, Dict[str, float], pd.DataFrame]:
+        # (df, names_cols, dates, Tavg_full, holidays_full, weights_regions,
+        #  dates_df)
 
     df, dates_df, weights_regions = utils.df_features(
             dict_input_csv_fnames, cache_fname, pred_length,
@@ -368,6 +371,11 @@ def build_NNTQ_variants(train_NNTQ,
         os.replace(middle[j][2], paths_variants[v])
     for (_, _, _path) in results[:num_drop] + results[-num_drop:]:
         os.remove(_path)
+    # variants of an earlier build with more variants (same key): obsolete
+    _keep = {os.path.normcase(os.path.abspath(p)) for p in paths_variants}
+    for _path in glob.glob(os.path.join(cache_dir, f"NNTQ_preds_{cache_key}_v*.pkl")):
+        if os.path.normcase(os.path.abspath(_path)) not in _keep:
+            os.remove(_path)
 
     summary = {"all"     : [{"seed": s, "loss_NNTQ": round(l, 2)}
                             for (l, s, _) in results],
@@ -665,7 +673,7 @@ def run_model_once(
 
 
     names_baseline= {}  # if you like it crowded: {'LGBM', 'LR', 'RF'}
-    names_meta    = {'LR', 'NN'} if do_metamodel else {}
+    names_meta    = {'LR', 'NN'} if do_metamodel else set()
 
     if verbose > 0:
         data.train.compare_models(unit="GW", verbose=verbose)
