@@ -148,3 +148,22 @@ def test_reloaded_weight_decay_keeps_its_significant_digits(tmp_path):
     assert p['learning_rate'] == 0.0032
     assert p['metaNN_weight_decay'] == pytest.approx(2.3449e-05, rel=1e-6)
     assert p['metaNN_learning_rate'] == 0.0045                    # on its grid
+
+
+def test_numeric_rf_max_features_reloads(tmp_path):
+    """A numeric RF max_features (a categorical choice such as '0.4') next to
+    'sqrt' in the csv reloads as its choice (a guard: the column is then written
+    as text, so float_format does not turn 0.4 into 0.400000)."""
+    import pandas as pd
+    _postprocess_row = pytest.importorskip("test_run")._postprocess_row
+    rows = []
+    for max_features in ('sqrt', 0.4):     # mixed column: read back as strings
+        base = copy.deepcopy(constants.BASELINES_PARAMETERS)
+        base['RF']['max_features'] = max_features
+        row, _ = _postprocess_row(base=base)
+        row.update(loss_NNTQ=20., loss_meta=2.3)
+        rows.append(row)
+    csv = tmp_path / "search.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False, float_format="%.6f")
+    trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.meta)
+    assert [t.params['RF_max_features'] for t in trials] == ['sqrt', '0.4']

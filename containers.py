@@ -27,6 +27,17 @@ import architecture, utils, metamodel, plots
 from   constants   import Split
 
 
+def ordered_loader(loader: torch.utils.data.DataLoader
+                   ) -> torch.utils.data.DataLoader:
+    """The same data, every sample, in order: for predictions. The training
+    loader shuffles and drops its last partial batch (about 4% of the days)."""
+    if not loader.drop_last and \
+            isinstance(loader.sampler, torch.utils.data.SequentialSampler):
+        return loader
+    return torch.utils.data.DataLoader(loader.dataset, batch_size=loader.batch_size,
+                                       shuffle=False, drop_last=False)
+
+
 @dataclass
 class DataSplit:
     name:             Split    # Split.train    |Split.valid      |Split.test
@@ -110,7 +121,7 @@ class DataSplit:
 
         # Iterate once: no aggregation
         for (X_scaled, _, y_nation_scaled, T_degC, idx_subset,
-             forecast_origin_int) in self.loader:
+             forecast_origin_int) in ordered_loader(self.loader):
             idx_subset         = idx_subset         .cpu().numpy()   # origin indices
             forecast_origin_int= forecast_origin_int.cpu().numpy()
 
@@ -609,12 +620,15 @@ class NeuralNet:
                                   list_of_lists[2], list_of_lists[3],
                                   partial=True, verbose=verbose)
 
-            # save best model
-            self.save_best_model(avg_valid_loss_quantile,
-                                 self.model, epoch, verbose)
+            # save best model, check early stopping: only when this epoch was
+            #   validated (/!\ with validate_every > 1, the other epochs used to
+            #   count the last loss again, exhausting the patience)
+            _validated = ((epoch+1) % validate_every == 0) | (epoch == 0)
+            if _validated:
+                self.save_best_model(avg_valid_loss_quantile,
+                                     self.model, epoch, verbose)
 
-            # Check for early stopping
-            if self.early_stopping(avg_valid_loss_quantile):
+            if _validated and self.early_stopping(avg_valid_loss_quantile):
                 if verbose > 0:
                     print(f"Early stopping triggered at epoch {epoch+1} "
                           f"(patience {self.patience}, min_delta {self.min_delta:.4f})")

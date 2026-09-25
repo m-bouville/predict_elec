@@ -6,6 +6,7 @@ Tests for ``run`` (outside the model itself) and ``predict_elec``:
   neither on ``verbose`` nor on today's date;
 * ``run_model``: warning when ``num_trials`` would not be used;
 * ``enforce_ranges`` (csv maintenance) works with pandas >= 3;
+* ``append_csv_row`` refuses a row whose columns differ from the file;
 * ``predict_elec``: the 'statistics' split and the RUN_FAST parameters are
   passed on, and the constants are not modified.
 
@@ -131,3 +132,21 @@ def test_predict_elec_passes_its_settings(monkeypatch):
     assert captured['baseline_parameters'] is constants.baseline_params_fast
     assert captured['NNTQ_parameters']['epochs'] == 2            # fast
     assert constants.NNTQ_PARAMETERS == ref                      # untouched
+
+
+# ---------------------------------------------------------------------------
+# append_csv_row: refuses a row whose columns differ from the file
+# ---------------------------------------------------------------------------
+def test_append_csv_row(tmp_path):
+    import run
+    path = str(tmp_path / "s.csv")
+    run.append_csv_row(pd.DataFrame([{"a": 1., "b": 2.}]), path)   # creates
+    run.append_csv_row(pd.DataFrame([{"a": 3., "b": 4.}]), path)   # appends
+    assert pd.read_csv(path).to_dict("list") == {"a": [1., 3.], "b": [2., 4.]}
+    for bad in ({"a": 5., "c": 6.},              # renamed column
+                {"a": 5., "b": 6., "c": 7.},     # new column
+                {"b": 5., "a": 6.}):             # same names, other order
+        with pytest.raises(ValueError, match="Rename the file"):
+            run.append_csv_row(pd.DataFrame([bad]), path)
+    assert len(pd.read_csv(path)) == 2                              # untouched
+

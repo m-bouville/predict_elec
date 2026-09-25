@@ -516,13 +516,7 @@ def run_Bayes_search(
         df_row = pd.DataFrame([dict_row])
         # /_\ with multiple runs, the metrics other than losses are just the last run
 
-        df_row.to_csv(
-            trials_csv_path,
-            mode   = "a",
-            header = not os.path.exists(trials_csv_path),
-            index  = False,
-            float_format="%.6f"
-        )
+        run.append_csv_row(df_row, trials_csv_path)   # checks the columns
 
         # return the relevant loss
         if stage == Stage.NNTQ:

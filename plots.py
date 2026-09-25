@@ -404,9 +404,10 @@ def diagnostics(name:                str,
     # test(true_series, dict_pred_series, lr_series, future_series, name_baseline)
 
     dict_baseline_series= {_name: dict_baseline_series.get(_name)
-            for _name in names_baseline if _name in dict_baseline_series.keys()}
+            for _name in (names_baseline or []) if _name in dict_baseline_series.keys()}
     dict_meta_series    = {_name: dict_meta_series.get(_name)
-            for _name in names_meta     if _name in dict_meta_series    .keys()}
+            for _name in (names_meta     or []) if _name in dict_meta_series    .keys()}
+        # (None: none of them, as the type hint says; used to raise TypeError)
 
     # SMA_consumption = [None, num_steps_per_day]
     # SMA_residual    = [2*2,  num_steps_per_day]

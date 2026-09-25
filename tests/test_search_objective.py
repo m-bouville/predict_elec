@@ -191,3 +191,16 @@ def test_NNTQ_search_no_variant_no_metamodel(search, monkeypatch):
     # same script, scaled by 10 (loss_NNTQ), wiggle 1.0: same decisions
     assert _runs_per_trial(calls) == [1, 1, 1, 1, 4, 3]
     assert values == pytest.approx([10., 20., 9., 15., 7.75, 15.])
+
+
+# ---------------------------------------------------------------------------
+# the search refuses to append to a csv with other columns
+# ---------------------------------------------------------------------------
+def test_search_appends_through_the_checked_writer(search, monkeypatch):
+    import run
+    written = []
+    real = run.append_csv_row
+    monkeypatch.setattr(run, "append_csv_row",
+                        lambda df, path, **k: written.append(path) or real(df, path, **k))
+    calls, df, _ = search(Stage.meta, num_trials=2)
+    assert len(written) == 2 and len(df) == 2

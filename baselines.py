@@ -205,7 +205,9 @@ def regression_and_forest(
             pred_train_GW = y_train_GW
             pred_valid_GW = y[valid_idx]
             pred_test_GW  = y[ test_idx]
-
+            dict_series_pred_GW[name] = pd.Series(   # /!\ was dropped by `continue`
+                np.concatenate([pred_train_GW, pred_valid_GW, pred_test_GW]),
+                index = dates)
             continue
 
 

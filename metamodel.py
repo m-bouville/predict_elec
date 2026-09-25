@@ -208,6 +208,18 @@ def prepare_meta_data(
 # ============================================================
 
 # Prepare tensors
+# predictions (inputs of the metamodel), not context features: with
+#   use_ML_features, the baseline predictions are also NNTQ features
+PREDICTION_COLS = ['consumption_NNTQ', 'consumption_LR', 'consumption_RF',
+                   'consumption_LGBM']
+
+
+def _context_cols(cols: List[str]) -> List[str]:
+    """/!\ the exclusion list used to be lowercase ('consumption_lr', ...), which
+    never matched the actual column names."""
+    return [c for c in cols if c not in PREDICTION_COLS]
+
+
 def to_tensors(df: pd.DataFrame, cols_features: List[str]):
 
     # Predictions
@@ -223,9 +235,7 @@ def to_tensors(df: pd.DataFrame, cols_features: List[str]):
             (df.index.hour*2 + df.index.minute/30).round().astype(np.int16)
             # (df.index.hour + df.index.minute/60) / 24
 
-    context_cols = [c for c in cols_features + ['NNTQ_inter']
-        if c not in ['consumption_nn', 'consumption_lr',
-                     'consumption_rf', 'consumption_gb']]
+    context_cols = _context_cols(cols_features + ['NNTQ_inter'])
     context = torch.tensor(
         df[context_cols].values,
         dtype=torch.float32
@@ -259,9 +269,7 @@ def train_meta_model(
     """
 
     # Initialize meta-model
-    context_cols = [c for c in cols_features
-                    if c not in ['consumption_nn', 'consumption_lr',
-                                 'consumption_rf', 'consumption_gb']]
+    context_cols = _context_cols(cols_features)
 
     meta_nets  = []
     optimizers = []

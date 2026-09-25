@@ -303,6 +303,25 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     return row, (_loss_NNTQ, _loss_meta)
 
 
+def append_csv_row(df_row: pd.DataFrame, path: str,
+                   float_format: str = "%.6f") -> None:
+    """Append one row to a results csv, creating it (with header) if needed.
+    Refuses to append a row whose columns differ from the file's header: pandas
+    would otherwise append the values under the wrong columns, silently."""
+    if os.path.exists(path):
+        header = pd.read_csv(path, nrows=0).columns.tolist()
+        if header != list(df_row.columns):
+            missing = [c for c in header if c not in df_row.columns]
+            extra   = [c for c in df_row.columns if c not in header]
+            raise ValueError(
+                f"{path}: the new row does not have the columns of the file "
+                f"(missing: {missing}, extra: {extra}"
+                f"{', same names in another order' if not missing and not extra else ''}"
+                f"). Rename the file to start a new one.")
+    df_row.to_csv(path, mode="a", header=not os.path.exists(path), index=False,
+                  float_format=float_format)
+
+
 # Bayesian search on the metamodel: NNTQ variants
 # ------------------------------------------------------------
 # The NNTQ parameters are frozen, but one training is one random draw (loss_NNTQ
@@ -648,6 +667,11 @@ def run_model_once(
     # METAMODEL
     # ============================================================
 
+    # same random state for the metamodels whether the NNTQ was just trained
+    #   (which consumed random numbers) or loaded from the cache
+    np.   random.seed(seed)
+    torch.manual_seed(seed)
+
     # metamodel LR
     if do_metamodel:
         data.calculate_metamodel_LR(
@@ -848,14 +872,7 @@ def run_model(
             (num_worst_days, avg_abs_worst_days_test_NN_median), \
             (_loss_NNTQ, _loss_meta) = _returned
 
-        df_row = pd.DataFrame([dict_row])
-        df_row.to_csv(
-            'parameter_search_one-off.csv',
-            mode   = "a",
-            header = not os.path.exists('parameter_search_one-off.csv'),
-            index  = False,
-            float_format="%.6f"
-        )
+        append_csv_row(pd.DataFrame([dict_row]), 'parameter_search_one-off.csv')
 
         if verbose > 0:
             print(f"loss_NNTQ = {_loss_NNTQ:.2f}, loss_meta = {_loss_meta:.2f}")

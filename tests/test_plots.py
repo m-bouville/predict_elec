@@ -241,3 +241,33 @@ def test_to_local_time_keeps_values_with_their_timestamps():
     pd.testing.assert_series_equal(local.tz_convert("UTC"), s, check_freq=False)
     # the DST jump (31/03 02:00 -> 03:00) creates no duplicate
     assert local.index.is_unique and local.index[4].hour == 4
+
+
+# ---------------------------------------------------------------------------
+# plot_statistics / diagnostics: inputs left unchanged, no crash
+# ---------------------------------------------------------------------------
+def _regional_data():
+    idx = pd.date_range("2021-01-01", "2022-12-31 23:30", freq="30min", tz="UTC")
+    t = np.arange(len(idx))
+    T = 12 + 12 * np.sin(2 * np.pi * t / (48 * 365))
+    conso = pd.DataFrame({f"consumption_{r}_GW": 10 - 0.3 * T + k for k, r in
+                          enumerate(["NE", "S"])}, index=idx)
+    temp = pd.DataFrame({r: T for r in ["NE", "S"]}, index=idx).resample('D').mean()
+    return conso, temp
+
+
+def test_thermosensitivity_regions_leaves_its_input_unchanged():
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import plot_statistics
+    conso, temp = _regional_data()
+    cols = list(conso.columns)
+    plot_statistics.thermosensitivity_regions(conso, temp)
+    assert list(conso.columns) == cols          # used to be renamed in place
+    plot_statistics.thermosensitivity_regions(conso, temp)   # 2nd call: no crash
+
+
+def test_diagnostics_accepts_no_baseline_and_no_meta():
+    idx = pd.date_range("2022-01-01", periods=48 * 60, freq="30min", tz="UTC")
+    true = pd.Series(50 + np.sin(np.arange(len(idx)) / 10), index=idx)
+    plots.diagnostics("test", true, {"q50": true + 1}, {"LR": true}, {"NN": true},
+                      None, None, None, 48)             # used to raise TypeError

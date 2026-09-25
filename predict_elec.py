@@ -29,7 +29,7 @@ from   constants import (SEED, TRAIN_SPLIT_FRACTION, VALID_RATIO,
 if __name__ == "__main__":
 
 
-    MODE = 'Bayes_meta'
+    MODE = 'Bayes_NNTQ'
         # in ['once', 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all', # no stats, model
         #     'statistics', #    stats,    model
         #     'stats_only', #    stats, no model
@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
 
     elif 'Bayes' in MODE:       # 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all'
-        NUM_TRIALS = 20
+        NUM_TRIALS = 400
         VERBOSE    = 0
 
     elif MODE in ['stats_only', 'load_input']:

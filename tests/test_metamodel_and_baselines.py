@@ -156,3 +156,22 @@ def test_meta_NN_reproducible_with_a_seed():
             factor=.5, device="cpu")
         out.append(w)
     np.testing.assert_array_equal(out[0], out[1])
+
+
+# ---------------------------------------------------------------------------
+# oracle baseline and metamodel context columns
+# ---------------------------------------------------------------------------
+def test_oracle_baseline_is_returned(tmp_path):
+    with pytest.warns(UserWarning, match="Using the oracle"):   # deliberate
+        series, y = _tree_baselines(tmp_path, {"oracle": {}, "LR": {"type": "ridge",
+                                                                  "alpha": 1.0}})
+    assert set(series) == {"oracle", "LR"}
+    np.testing.assert_array_equal(series["oracle"].to_numpy(), y)
+
+
+def test_metamodel_context_excludes_predictions():
+    pytest.importorskip("torch", reason="metamodel is a torch module")
+    import metamodel
+    cols = ['Tavg_degC', 'consumption_LR', 'consumption_RF', 'consumption_LGBM',
+            'consumption_NNTQ', 'NNTQ_inter']
+    assert metamodel._context_cols(cols) == ['Tavg_degC', 'NNTQ_inter']

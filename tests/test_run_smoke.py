@@ -218,3 +218,31 @@ def test_no_mixed_precision_on_cpu(tmp_path, monkeypatch):
     _once(tmp_path, monkeypatch, do_metamodel=False)
     assert seen and not any(seen)                       # autocast disabled
     assert scalers and not any(s.is_enabled() for s in scalers)
+
+
+# ---------------------------------------------------------------------------
+# metamodels: same result whether the NNTQ was trained or loaded
+# ---------------------------------------------------------------------------
+def test_metamodels_independent_of_the_cache(tmp_path, monkeypatch):
+    """Training the NNTQ consumes random numbers, loading it does not: the
+    metamodels are reseeded, so a cached run gives the same meta results."""
+    _, _, m_fresh, *_ = _once(tmp_path, monkeypatch, save_cache_NNTQ=True)
+    _, _, m_cached, *_ = _once(tmp_path, monkeypatch, save_cache_NNTQ=True)
+    pd.testing.assert_frame_equal(m_fresh, m_cached)
+
+
+# ---------------------------------------------------------------------------
+# early stopping / best model: only on validated epochs
+# ---------------------------------------------------------------------------
+def test_early_stopping_only_on_validated_epochs(tmp_path, monkeypatch):
+    import architecture
+    seen = []
+    real = architecture.EarlyStopping.__call__
+
+    def spy(self, loss):
+        seen.append(loss)
+        return real(self, loss)
+    monkeypatch.setattr(architecture.EarlyStopping, "__call__", spy)
+    _once(tmp_path, monkeypatch, nntq_overrides={'epochs': 5, 'patience': 5},
+          validate_every=3, do_metamodel=False)
+    assert len(seen) == 2              # epochs 1 and 3 (index 0 and 2), not 5

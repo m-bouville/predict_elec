@@ -71,7 +71,7 @@ def reference_prediction(split, model, scaler_y_nation, offset_steps,
     records = []
     min_o, max_o = np.inf, -np.inf
     with torch.no_grad():
-        for (X, _, y, _, idx, origin) in split.loader:
+        for (X, _, y, _, idx, origin) in containers.ordered_loader(split.loader):
             idx, origin = idx.numpy(), origin.numpy()
             pred = model(X)[0][:, -valid_length:].numpy()
             B, V, Q = pred.shape
@@ -105,8 +105,7 @@ def test_vectorized_prediction_matches_former_loop(data_and_model, split_name):
     data, net = data_and_model
     split = getattr(data, split_name)
 
-    # train loader: shuffle + drop_last -> same seed so that both drop the same
-    #   partial batch
+    # predictions use every sample in order (train loader: shuffle + drop_last)
     torch.manual_seed(0)
     split.prediction_day_ahead(net.model, data.scaler_y_nation,
                                torch.device('cpu'), INPUT_LENGTH, PRED_LENGTH,
@@ -184,3 +183,23 @@ def test_csv_row_schema_unchanged_without_metamodel():
         if c not in meta_cols + ['timestamp']:
             assert row_full[c] == row_skip[c] or \
                 (pd.isna(row_full[c]) and pd.isna(row_skip[c])), c
+
+
+# ---------------------------------------------------------------------------
+# predictions: every origin, including the training split
+# ---------------------------------------------------------------------------
+def test_train_predictions_cover_every_origin(data_and_model):
+    """The training loader shuffles and drops its last partial batch:
+    predictions must use every sample anyway."""
+    data, net = data_and_model
+    split = data.train
+    assert split.loader.drop_last          # the case this protects against
+    split.prediction_day_ahead(net.model, data.scaler_y_nation,
+                               torch.device('cpu'), INPUT_LENGTH, PRED_LENGTH,
+                               VALID_LENGTH, MINUTES, QUANTILES)
+    starts = split.loader.dataset.start_indices_subset
+    offset = (split.true_nation_GW.index.min() - split.origin_times[0]) \
+                 // pd.Timedelta(minutes=MINUTES)
+    N = split.X.shape[0]
+    expected = sum(max(0, min(VALID_LENGTH, N - s - offset)) for s in starts)
+    assert len(split.true_nation_GW) == expected    # no origin dropped

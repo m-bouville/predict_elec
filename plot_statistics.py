@@ -533,8 +533,10 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
                               threshold_summer_degC: float = 20.) -> None:
     # df_consumption.drop(columns=['year', 'month', 'dateofyear', 'timeofday'],
     #                     inplace=True)
-    df_consumption.columns = [_col.split("_")[1]
-                              for _col in list(df_consumption.columns)]
+    # (on a copy: /!\ renaming in place changed the caller's DataFrame, and a
+    #   second call then failed on the already short names)
+    df_consumption = df_consumption.rename(
+        columns={_col: _col.split("_")[1] for _col in df_consumption.columns})
     df_consumption = df_consumption.resample('D').mean().dropna()  # half-hour -> day
 
     df_temperature = df_temperature.dropna()
