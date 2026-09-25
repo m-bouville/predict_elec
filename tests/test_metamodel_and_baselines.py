@@ -1,0 +1,102 @@
+"""
+Tests for the baselines (``baselines`` imports lightgbm, not torch):
+
+* Ridge predictions finite;
+* RF and LGBM: finite, better than the mean, deterministic with
+  ``random_state``, cached by configuration; Ridge never cached.
+
+Open bugs (item 4a, scaler fit on train+valid+test; item 4b, meta-NN selection
+on the train split and df_valid=None crash): test_open_bugs.py.
+"""
+import numpy as np
+import pandas as pd
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Ridge (the scaler leak, item 4a, is in test_open_bugs.py)
+# ---------------------------------------------------------------------------
+class TestBaselineScaler:
+    def _fit(self, tmp_path):
+        baselines = pytest.importorskip("baselines",
+                                        reason="needs lightgbm/sklearn")
+        rng = np.random.default_rng(0)
+        F, n_train, n_rest = 4, 200, 100
+        # test rows deliberately drawn from a very different distribution: a
+        # leaked (whole-X) scaler would shift the train block far off zero.
+        X = np.vstack([rng.normal(0, 1, size=(n_train, F)),
+                       rng.normal(50, 5, size=(n_rest, F))]).astype(np.float32)
+        y = (X[:, 0] * 2 + rng.normal(0, 0.1, size=n_train + n_rest)).astype(np.float32)
+        dates = pd.date_range("2020-01-01", periods=len(X), freq="D")
+        dates_df = pd.DataFrame({"start": [], "end": []})
+        series, _ = baselines.regression_and_forest(
+            X=X, y=y, cols_y_nation=["consumption_GW"],
+            cols_features=[f"f{i}" for i in range(F)],
+            dates=dates, dates_df=dates_df, train_end=160, val_end=200,
+            models_cfg={"LR": {"type": "ridge", "alpha": 1.0}},
+            cache_dir=str(tmp_path), save_cache_baselines=False,
+            cache_id_dict={}, force_calculation=True, verbose=0)
+        return series
+
+    def test_predictions_are_finite(self, tmp_path):
+        series = self._fit(tmp_path)
+        assert np.isfinite(series["LR"].values).all()
+
+# ---------------------------------------------------------------------------
+# RF and LGBM baselines
+# ---------------------------------------------------------------------------
+RF_CFG   = {"type": "rf", "n_estimators": 20, "max_depth": 5,
+            "min_samples_leaf": 3, "random_state": 0, "n_jobs": 1}
+LGBM_CFG = {"type": "lgbm", "objective": "regression", "n_estimators": 30,
+            "num_leaves": 7, "learning_rate": 0.1, "random_state": 0,
+            "n_jobs": 1, "verbose": -1}
+
+
+def _tree_baselines(tmp_path, cfg, save=True, force=False):
+    baselines = pytest.importorskip("baselines", reason="needs lightgbm/sklearn")
+    rng = np.random.default_rng(0)
+    n, F = 400, 4
+    X = rng.normal(size=(n, F)).astype(np.float32)
+    y = (3 * X[:, 0] + np.sin(2 * X[:, 1]) + rng.normal(0, .1, n)).astype(np.float32)
+    series, _ = baselines.regression_and_forest(
+        X=X, y=y, cols_y_nation=["consumption_GW"],
+        cols_features=[f"f{i}" for i in range(F)],
+        dates=pd.date_range("2020-01-01", periods=n, freq="h"),
+        dates_df=pd.DataFrame({"start": [], "end": []}),
+        train_end=240, val_end=320, models_cfg=cfg, cache_dir=str(tmp_path),
+        save_cache_baselines=save, cache_id_dict={}, force_calculation=force,
+        verbose=0)
+    return series, y
+
+
+@pytest.mark.parametrize("name, cfg", [("RF", RF_CFG), ("LGBM", LGBM_CFG)])
+def test_tree_baselines_finite_and_better_than_mean(tmp_path, name, cfg):
+    series, y = _tree_baselines(tmp_path, {name: cfg})
+    pred = series[name].to_numpy()
+    assert len(pred) == len(y) and np.isfinite(pred).all()
+    test = slice(320, None)
+    assert np.mean((pred[test] - y[test])**2) < 0.5 * np.var(y[test])
+
+
+@pytest.mark.parametrize("name, cfg", [("RF", RF_CFG), ("LGBM", LGBM_CFG)])
+def test_tree_baselines_cached_by_configuration(tmp_path, name, cfg):
+    s1, _ = _tree_baselines(tmp_path, {name: cfg})
+    files = list(tmp_path.glob(f"{name}_preds_*.pkl"))
+    assert len(files) == 1
+    # same configuration: loaded from the cache, identical
+    s2, _ = _tree_baselines(tmp_path, {name: cfg})
+    pd.testing.assert_series_equal(s1[name], s2[name])
+    assert list(tmp_path.glob(f"{name}_preds_*.pkl")) == files
+    # other configuration: another cache file, other predictions
+    other = dict(cfg, max_depth=2) if name == "RF" else dict(cfg, num_leaves=3)
+    s3, _ = _tree_baselines(tmp_path, {name: other})
+    assert len(list(tmp_path.glob(f"{name}_preds_*.pkl"))) == 2
+    assert not np.allclose(s1[name], s3[name])
+    # forced: recomputed, identical (random_state)
+    s4, _ = _tree_baselines(tmp_path, {name: cfg}, force=True)
+    pd.testing.assert_series_equal(s1[name], s4[name])
+
+
+def test_ridge_is_never_cached(tmp_path):
+    _tree_baselines(tmp_path, {"LR": {"type": "ridge", "alpha": 1.0}})
+    assert not list(tmp_path.glob("LR_preds_*.pkl"))
