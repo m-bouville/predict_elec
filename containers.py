@@ -9,6 +9,7 @@
 ###############################################################################
 
 
+import copy
 import time
 
 from   dataclasses import dataclass, field, InitVar
@@ -362,6 +363,22 @@ class DatasetBundle:
     def _splits(self) -> Dict[Split, DataSplit]:
         return {Split.train:   self.train,    Split.valid:   self.valid,
                 Split.test:    self.test,     Split.complete:self.complete}
+
+    def for_cache(self) -> 'DatasetBundle':
+        """Shallow copy without what is only needed to train the NNTQ, for the
+        NNTQ pickles: the torch datasets and loaders of every split (scaled
+        copies of all the data) and the whole unscaled arrays of the bundle
+        (the splits have their own). Nothing is copied: arrays and predictions
+        are shared with `self`, which is left unchanged.
+        (/!\\ the pickles held all of it: 283 MB each)"""
+        out = copy.copy(self)
+        for name in ('train', 'valid', 'test', 'complete'):
+            _split = copy.copy(getattr(self, name))   # keeps non-field attributes
+            _split.dataset_scaled = None
+            _split.loader         = None
+            setattr(out, name, _split)
+        out.X = out.y_nation = out.Y_regions = None
+        return out
 
     def items(self):
         return self._splits().items()

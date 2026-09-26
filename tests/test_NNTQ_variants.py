@@ -17,6 +17,12 @@ import run
 LOSSES = [25., 17., 31., 22., 40., 19., 28., 35., 12.]
 
 
+class _FakeBundle(dict):
+    """Stands for the DatasetBundle: what is pickled is `for_cache()`."""
+    def for_cache(self):
+        return dict(self, slimmed=True)
+
+
 def _build(tmp_path, monkeypatch, num_variants):
     monkeypatch.setattr(run, "loss_NNTQ", lambda qdc, worst: worst)
     trained = []
@@ -24,7 +30,7 @@ def _build(tmp_path, monkeypatch, num_variants):
     def fake_train():
         seed = torch.initial_seed()                  # set by build_NNTQ_variants
         trained.append(seed)
-        return ({"seed": seed}, None, LOSSES[seed - run.SEED_NNTQ_VARIANTS])
+        return (_FakeBundle(seed=seed), None, LOSSES[seed - run.SEED_NNTQ_VARIANTS])
 
     paths, _ = run.NNTQ_variants_paths(str(tmp_path), "key", num_variants)
     run.build_NNTQ_variants(fake_train, paths, str(tmp_path), "key")
@@ -85,3 +91,11 @@ def test_rebuild_with_fewer_variants_removes_obsolete_ones(tmp_path, monkeypatch
     paths, _ = _build(tmp_path, monkeypatch, 3)
     files = sorted(f for f in os.listdir(tmp_path) if f.endswith(".pkl"))
     assert files == sorted([os.path.basename(p) for p in paths] + [other.name])
+
+
+def test_variants_are_pickled_slimmed(tmp_path, monkeypatch):
+    """What is cached is the bundle's for_cache() copy (no torch loaders)."""
+    paths, _ = _build(tmp_path, monkeypatch, 1)
+    with open(paths[0], "rb") as f:
+        bundle, _, _ = pickle.load(f)
+    assert bundle.get("slimmed") is True

@@ -373,7 +373,8 @@ def build_NNTQ_variants(train_NNTQ,
         _loss = loss_NNTQ(_out[1], _out[2])
         _path = os.path.join(cache_dir, f"NNTQ_preds_{cache_key}_seed{_seed}.pkl")
         with open(_path, "wb") as f:   # on disk: one bundle in memory at a time
-            pickle.dump(_out, f)
+            pickle.dump((_out[0].for_cache(),) + tuple(_out[1:]), f,
+                        protocol=pickle.HIGHEST_PROTOCOL)
         del _out
         gc.collect()
         if torch.cuda.is_available():
@@ -659,8 +660,9 @@ def run_model_once(
         # Save pickle
         if cache_dir is not None and save_cache_NNTQ:
             with open(cache_path, "wb") as f:
-                pickle.dump((data, quantile_delta_coverage,
-                             avg_abs_worst_days_test_NN_median), f)
+                pickle.dump((data.for_cache(), quantile_delta_coverage,
+                             avg_abs_worst_days_test_NN_median), f,
+                            protocol=pickle.HIGHEST_PROTOCOL)
             if verbose > 0:
                 print(f"Saved NNTQ predictions to: {cache_path}")
 

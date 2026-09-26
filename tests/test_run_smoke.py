@@ -163,6 +163,33 @@ def test_fresh_baselines_are_aligned_on_dates(tmp_path, monkeypatch):
             pd.DataFrame(getattr(data_fresh,  name).dict_preds_ML))
 
 
+def test_cache_pickle_is_slim(tmp_path, monkeypatch):
+    """The NNTQ pickle holds neither the torch datasets / loaders nor the whole
+    unscaled arrays; the bundle returned by the run keeps them (shared, not
+    copied); a run from the pickle gives the same results (metamodels
+    included, see test_metamodels_independent_of_the_cache)."""
+    data, *_ = _once(tmp_path, monkeypatch, save_cache_NNTQ=True)
+    path = next(tmp_path.glob("NNTQ_preds_*.pkl"))
+    with open(path, "rb") as f:
+        cached, _, _ = pickle.load(f)
+    for name in ('train', 'valid', 'test', 'complete'):
+        s_cached, s_run = getattr(cached, name), getattr(data, name)
+        assert s_cached.loader is None and s_cached.dataset_scaled is None
+        assert s_run.loader is not None and s_run.dataset_scaled is not None
+        np.testing.assert_array_equal(s_cached.X, s_run.X)
+        assert s_cached.origin_times == s_run.origin_times   # non-field attribute
+    assert cached.X is None and data.X is not None
+
+    # for_cache shares the arrays: no copy in memory
+    slim = data.for_cache()
+    assert slim.train.X is data.train.X
+    assert slim.train.dict_preds_NNTQ is data.train.dict_preds_NNTQ
+
+    # much smaller than the full bundle
+    full = len(pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL))
+    assert path.stat().st_size < 0.8 * full, (path.stat().st_size, full)
+
+
 # ---------------------------------------------------------------------------
 # NNTQ variants (metamodel Bayesian search)
 # ---------------------------------------------------------------------------
