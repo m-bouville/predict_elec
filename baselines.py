@@ -182,8 +182,11 @@ def regression_and_forest(
     valid_idx: np.ndarray = np.arange(train_end,val_end)
     test_idx : np.ndarray = np.arange(val_end,  len(X))
 
-    scaler   = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    # fit on the training rows only (/!\ was fit_transform(X): the scaler saw
+    #   the statistics of the validation and test periods). Only the linear
+    #   models depend on it: trees are invariant to a per-feature affine scaling
+    scaler   = StandardScaler().fit(X[train_idx])
+    X_scaled = scaler.transform(X)
 
     X_train_scaled = X_scaled[train_idx];  y_train_GW = y[train_idx]
     X_valid_scaled = X_scaled[valid_idx]

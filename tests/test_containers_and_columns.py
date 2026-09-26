@@ -143,3 +143,46 @@ def test_dataset_bundle_items_and_getitem():
         assert bundle[s] is obj
     with pytest.raises(KeyError):
         bundle["train"]
+
+
+# ---------------------------------------------------------------------------
+# test period cut in two: search objective / reported
+# ---------------------------------------------------------------------------
+def _test_split_like(days=10):
+    from types import SimpleNamespace
+    start = pd.Timestamp("2025-03-25", tz="Europe/Paris")          # across DST
+    idx  = pd.date_range(start, start + pd.DateOffset(days=days), freq="30min",
+                         inclusive="left").tz_convert("UTC")
+    true = pd.Series(50., index=idx)
+    # error 1 GW in the first half of the days, 3 GW in the second
+    local_day = idx.tz_convert("Europe/Paris").normalize()
+    err  = np.where(local_day < local_day.unique()[days // 2], 1., 3.)
+    q50  = true + err
+    return SimpleNamespace(true_nation_GW=true, name_display="test",
+                           dict_preds_NNTQ={'q50': q50}, dict_preds_ML={},
+                           dict_preds_meta={})
+
+
+def test_search_period_end_is_a_paris_midnight_in_the_middle():
+    split = _test_split_like(10)
+    cut   = containers.search_period_end(split)
+    loc   = cut.tz_convert("Europe/Paris")
+    assert (loc.hour, loc.minute) == (0, 0) and str(cut.tz) == "UTC"
+    idx = split.true_nation_GW.index
+    assert (idx < cut).sum() > 0 and (idx >= cut).sum() > 0
+    # whole days on both sides (DST day included)
+    days_before = pd.Index(idx[idx < cut].tz_convert("Europe/Paris").normalize()).unique()
+    days_after  = pd.Index(idx[idx >= cut].tz_convert("Europe/Paris").normalize()).unique()
+    assert len(days_before) == len(days_after) == 5 and \
+        not set(days_before) & set(days_after)
+
+
+def test_compare_models_on_each_half():
+    split = _test_split_like(10)
+    cut   = containers.search_period_end(split)
+    first  = containers.DataSplit.compare_models(split, period=(None, cut))
+    second = containers.DataSplit.compare_models(split, period=(cut, None))
+    whole  = containers.DataSplit.compare_models(split)
+    assert first .loc['NNTQ', 'MAE'] == pytest.approx(1.)
+    assert second.loc['NNTQ', 'MAE'] == pytest.approx(3.)
+    assert whole .loc['NNTQ', 'MAE'] == pytest.approx(2., abs=.05)

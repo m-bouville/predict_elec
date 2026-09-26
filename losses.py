@@ -9,7 +9,7 @@
 ###############################################################################
 
 
-from   typing import Dict, Tuple  # , List Sequence  #, Optional
+from   typing import Dict, Tuple, Optional  # , List Sequence
 
 import torch
 
@@ -257,11 +257,17 @@ def regions_torch(
         Y_regions_pred    : torch.Tensor,     # (B, V, R)
         Y_regions_true    : torch.Tensor,     # (B, V, R)
         lambda_regions    : float,   # comparing pred and true region by region
-        lambda_regions_sum: float    # comparing pred and true nationally
+        lambda_regions_sum: float,   # comparing pred and true nationally
+        regions_to_nation : Optional[torch.Tensor] = None   # (R,)
     ) -> torch.Tensor:
     """
     Torch loss for régional consumption forecasts.
-    y_nation_pred, y_nation_true: (B, V, R)
+    y_nation_pred, y_nation_true: (B, V, R), each region in its own scaled
+    units. `regions_to_nation` (region std / national std) converts them to
+    national scaled units, so that errors are in GW (up to the national std):
+    the sum over the regions is then the national error.
+    (/!\ without it, as before: errors in each region's own std units, whose
+     sum is not the national error)
     """
     # print(f"shapes Y_regions_pred {Y_regions_pred.shape}, "
     #       f"Y_regions_true {Y_regions_true.shape}")
@@ -269,12 +275,16 @@ def regions_torch(
     if lambda_regions <= 0.:
         return torch.zeros(Y_regions_pred.shape[1]).to(Y_regions_true.device)
 
+    diff = Y_regions_pred - Y_regions_true                           # (B, V, R)
+    if regions_to_nation is not None:
+        diff = diff * regions_to_nation.to(diff)                     # national units
+
     # MAE region by region
-    abs_err= (Y_regions_pred - Y_regions_true).abs().mean(dim=0)     # (V, R)
+    abs_err= diff.abs().mean(dim=0)                                  # (V, R)
     out    = torch.sum(abs_err, dim=1)                               # (V)
 
     # national total
-    err    = (Y_regions_pred - Y_regions_true)      .mean(dim=0)     # (V, R)
+    err    = diff.mean(dim=0)                                        # (V, R)
     out   += torch.sum(err,      dim=1).abs() * lambda_regions_sum   # (V)
 
     return lambda_regions * out

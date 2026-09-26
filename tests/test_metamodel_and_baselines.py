@@ -5,8 +5,10 @@ Tests for the baselines (``baselines`` imports lightgbm, not torch):
 * RF and LGBM: finite, better than the mean, deterministic with
   ``random_state``, cached by configuration; Ridge never cached.
 
-Open bugs (item 4a, scaler fit on train+valid+test; item 4b, meta-NN selection
-on the train split and df_valid=None crash): test_open_bugs.py.
+* the scaler of the linear baselines is fit on the training rows only.
+
+Open bugs (item 4b, meta-NN selection on the train split and df_valid=None
+crash): test_open_bugs.py.
 """
 import numpy as np
 import pandas as pd
@@ -14,7 +16,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Ridge (the scaler leak, item 4a, is in test_open_bugs.py)
+# Ridge: finite predictions, scaler fit on train only
 # ---------------------------------------------------------------------------
 class TestBaselineScaler:
     def _fit(self, tmp_path):
@@ -175,6 +177,42 @@ def test_metamodel_context_excludes_predictions():
     cols = ['Tavg_degC', 'consumption_LR', 'consumption_RF', 'consumption_LGBM',
             'consumption_NNTQ', 'NNTQ_inter']
     assert metamodel._context_cols(cols) == ['Tavg_degC', 'NNTQ_inter']
+
+
+def test_scaler_fit_on_train_only(tmp_path):
+    """
+    Behavioural leak check. Fit the baselines on data whose test block is drawn
+    from a very different distribution, then compare the returned TEST
+    predictions to a leakage-free reference (Ridge on train-only-scaled
+    features). They match only when the scaler is fit on train alone.
+    (/!\\ it was fit on train+valid+test)
+    """
+    baselines = pytest.importorskip("baselines", reason="needs lightgbm/sklearn")
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.linear_model import Ridge
+
+    rng = np.random.default_rng(0)
+    F, n_train, n_rest = 4, 200, 100
+    X = np.vstack([rng.normal(0, 1, size=(n_train, F)),
+                   rng.normal(50, 5, size=(n_rest, F))]).astype(np.float32)
+    y = (X[:, 0] * 2 + rng.normal(0, 0.1, size=n_train + n_rest)).astype(np.float32)
+    dates = pd.date_range("2020-01-01", periods=len(X), freq="D")
+    dates_df = pd.DataFrame({"start": [], "end": []})
+
+    series, _ = baselines.regression_and_forest(
+        X=X, y=y, cols_y_nation=["consumption_GW"],
+        cols_features=[f"f{i}" for i in range(F)],
+        dates=dates, dates_df=dates_df, train_end=160, val_end=200,
+        models_cfg={"LR": {"type": "ridge", "alpha": 1.0}},
+        cache_dir=str(tmp_path), save_cache_baselines=False,
+        cache_id_dict={}, force_calculation=True, verbose=0)
+    their_test = series["LR"].iloc[200:].values
+
+    scaler = StandardScaler().fit(X[:160])          # train-only reference
+    Xs = scaler.transform(X)
+    ref = Ridge(alpha=1.0).fit(Xs[:160], y[:160]).predict(Xs[200:])
+
+    np.testing.assert_allclose(their_test, ref, rtol=1e-3, atol=1e-3)
 
 
 # ---------------------------------------------------------------------------

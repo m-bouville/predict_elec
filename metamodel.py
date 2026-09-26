@@ -213,6 +213,7 @@ def horizon(index: pd.DatetimeIndex) -> np.ndarray:
     if getattr(index, 'tz', None) is not None:
         index = index.tz_convert(FORECAST_TZ)
     return (index.hour * 2 + index.minute // 30).to_numpy().astype(np.int16)
+            # (index.hour + index.minute/60) / 24
 
 
 # 3. TRAIN META-MODEL

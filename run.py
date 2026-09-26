@@ -225,10 +225,18 @@ def postprocess(baseline_parameters   : Dict[str, Any],
                 df_metrics            : pd.DataFrame(),
                 quantile_delta_coverage:Dict[str, float],
                 avg_weights_meta_NN   : Dict[str, float],
-                avg_abs_worst_days_test:float,
+                avg_abs_worst_days_search:float,
                 run_id                : int,
-                verbose               : int   = 0
+                verbose               : int   = 0,
+                df_metrics_search     : Optional[pd.DataFrame] = None,
+                quantile_delta_coverage_test: Optional[Dict[str, float]] = None
                 ) -> [Dict[str, Any], [float, float]]:
+    """csv row and losses of a run.
+    `df_metrics`: metrics reported (test_*: second half of the test period);
+    `df_metrics_search`, `quantile_delta_coverage`, `avg_abs_worst_days_search`:
+    first half of the test period, the objectives of the searches (search_*,
+    q10..q90, avg_abs_worst_days_search). Without `df_metrics_search`,
+    loss_meta uses `df_metrics`."""
 
     # the dicts are modified below (x1e6, sequences flattened): work on copies,
     #   the caller's dicts (e.g. constants.NNTQ_PARAMETERS in 'once' mode) must
@@ -237,19 +245,24 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     NNTQ_parameters     = copy.deepcopy(NNTQ_parameters)
     metamodel_parameters= copy.deepcopy(metamodel_parameters)
 
-    flat_metrics = {}
-    for model in df_metrics.index:
-        for metric in df_metrics.columns:
-            key = f"test_{model}_{metric}".replace(" ", "_")
-            flat_metrics[key] = float(df_metrics.loc[model, metric])
-
-    # metamodels not run (do_metamodel=False): NaN, so that the csv keeps the
-    #   same columns, in the same order
     _meta_run = avg_weights_meta_NN is not None
+
+    def _flatten(df: pd.DataFrame, prefix: str) -> Dict[str, float]:
+        out = {f"{prefix}_{model}_{metric}".replace(" ", "_"):
+                   float(df.loc[model, metric])
+               for model in df.index for metric in df.columns}
+        # metamodels not run (do_metamodel=False): NaN, so that the csv keeps
+        #   the same columns, in the same order
+        if not _meta_run:
+            for model in ['meta_LR', 'meta_NN']:
+                for metric in df.columns:
+                    out[f"{prefix}_{model}_{metric}"] = np.nan
+        return out
+
+    flat_metrics = _flatten(df_metrics, "test")                    # reported
+    flat_metrics_search = _flatten(df_metrics_search, "search") \
+        if df_metrics_search is not None else {}                   # objective
     if not _meta_run:
-        for model in ['meta_LR', 'meta_NN']:
-            for metric in df_metrics.columns:
-                flat_metrics[f"test_{model}_{metric}"] = np.nan
         avg_weights_meta_NN = {k: np.nan for k in ['NNTQ_q50', 'LR', 'RF', 'LGBM']}
 
     # learning_rate and weight_decay are small numbers, prone to round-off errors:
@@ -270,9 +283,11 @@ def postprocess(baseline_parameters   : Dict[str, Any],
     del metamodel_parameters["num_cells"]
     metamodel_parameters.update(_dict_num_cells)
 
-    _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
+    _loss_NNTQ = round(loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_search,
                            verbose=verbose), 2)
-    _loss_meta = round(loss_meta(flat_metrics, verbose=verbose), 5) \
+    _loss_meta = round(loss_meta(
+        {k.replace("search_", "test_", 1): v for k, v in flat_metrics_search.items()}
+        if flat_metrics_search else flat_metrics, verbose=verbose), 5) \
         if _meta_run else np.nan
 
     # BUG: this does not do the job
@@ -292,8 +307,11 @@ def postprocess(baseline_parameters   : Dict[str, Any],
         **quantile_delta_coverage,
         **{"avg_weight_meta_NN_"+key: value
            for (key, value) in avg_weights_meta_NN.items()},
-        **flat_metrics,   # bias, RMSE, MAE
-        'avg_abs_worst_days_test': avg_abs_worst_days_test,
+        **flat_metrics_search,   # bias, RMSE, MAE: objective (1st half of test)
+        **flat_metrics,          # bias, RMSE, MAE: reported  (2nd half of test)
+        **{"test_coverage_"+key: value
+           for (key, value) in (quantile_delta_coverage_test or {}).items()},
+        'avg_abs_worst_days_search': avg_abs_worst_days_search,
         'num_runs' : 1,
         "loss_NNTQ": _loss_NNTQ,
         "loss_meta": _loss_meta,
@@ -499,6 +517,7 @@ def run_model_once(
 
     # load data from csv and create pd.DataFrame
     _cache_fname = input_cache_fname(cache_dir, dict_input_csv_fnames)
+                # 'input_data_full.pkl' if do_plot_statistics else 'input_data.pkl')
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, names_cols, dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
@@ -593,6 +612,10 @@ def run_model_once(
             "test_steps"   : test_steps,
             "forecast_hour": forecast_hour,
             "forecast_tz"  : FORECAST_TZ,   # /!\ origins were in UTC before
+            # /!\ were missing: another validation split, or other regions or
+            #     weights, reloaded a model trained with different ones
+            "n_valid"      : n_valid,
+            "weights_regions": weights_regions,
             "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'} |
@@ -621,6 +644,10 @@ def run_model_once(
 
         # Create model
         NNTQ_model = containers.NeuralNet(**NNTQ_parameters,
+            # regional errors in national units: the sum is the national error
+                                          regions_to_nation=
+                                              _data.scaler_Y_regions.scale_ /
+                                              _data.scaler_y_nation .scale_[0],
                                           len_train_data= len(_data.train.loader),
                                               # optimizer steps (batches) per epoch,
                                               # NOT time steps: the LR schedule
@@ -731,7 +758,18 @@ def run_model_once(
     if verbose > 0:
         data.train.compare_models(unit="GW", verbose=verbose)
         data.valid.compare_models(unit="GW", verbose=verbose)
-    test_metrics = data.test .compare_models(unit="GW", verbose=verbose)
+    # test period in two: the first half is the objective of the searches,
+    #   the second half is only reported (/!\ both used to be the whole period)
+    _cut = containers.search_period_end(data.test)
+    search_metrics = data.test.compare_models(unit="GW", period=(None, _cut))
+    test_metrics   = data.test.compare_models(unit="GW", verbose=verbose,
+                                              period=(_cut, None))
+    quantile_delta_coverage_test = {
+        f"q{int(100*tau)}": utils.quantile_coverage(
+            containers._in_period(data.test.true_nation_GW, (_cut, None)),
+            containers._in_period(data.test.dict_preds_NNTQ[f"q{int(100*tau)}"],
+                                  (_cut, None))) - tau
+        for tau in NNTQ_parameters['quantiles']}
 
 
     _plot_quantiles = ['q25', 'q50', 'q75']
@@ -790,7 +828,9 @@ def run_model_once(
         baseline_parameters, NNTQ_parameters, metamodel_NN_parameters,
         len(names_cols['features']),
         test_metrics, quantile_delta_coverage, avg_weights_meta_NN,
-        avg_abs_worst_days_test_NN_median, run_id, verbose)
+        avg_abs_worst_days_test_NN_median, run_id, verbose,
+        df_metrics_search=search_metrics,
+        quantile_delta_coverage_test=quantile_delta_coverage_test)
 
     if torch.cuda.is_available():
         # clear VRAM
@@ -1205,20 +1245,17 @@ def recalculate_loss(csv_path: str,
             _list_losses_NNTQ.append(row['loss_NNTQ'])
             _list_losses_meta.append(row['loss_meta'])
             continue
-        flat_metrics = (row \
-        [['test_NNTQ_bias',   'test_NNTQ_RMSE',   'test_NNTQ_MAE',
-          'test_LR_bias',     'test_LR_RMSE',     'test_LR_MAE',
-          'test_RF_bias',     'test_RF_RMSE',     'test_RF_MAE',
-          'test_LGBM_bias',   'test_LGBM_RMSE',   'test_LGBM_MAE',
-          'test_meta_LR_bias','test_meta_LR_RMSE','test_meta_LR_MAE',
-          'test_meta_NN_bias','test_meta_NN_RMSE','test_meta_NN_MAE']]).to_dict()
+        # objective: first half of the test period (search_* columns)
+        flat_metrics = {f"test_{m}_{k}": row[f"search_{m}_{k}"]
+                        for m in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']
+                        for k in ['bias', 'RMSE', 'MAE']}
 
         quantile_delta_coverage = \
             row[['q10', 'q25', 'q50', 'q75', 'q90']].to_dict()
 
-        avg_abs_worst_days_test = row[['avg_abs_worst_days_test']].iloc[0]
+        avg_abs_worst_days_search = row['avg_abs_worst_days_search']
 
-        _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_test,
+        _loss_NNTQ = loss_NNTQ(quantile_delta_coverage, avg_abs_worst_days_search,
                                verbose=verbose)
         _list_losses_NNTQ.append(_loss_NNTQ)
 

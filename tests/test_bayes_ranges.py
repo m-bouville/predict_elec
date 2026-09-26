@@ -18,6 +18,7 @@ Bayes_search imports run -> torch, and optuna: skipped without them.
 """
 import copy
 import os
+import pandas as pd
 
 import pytest
 
@@ -111,6 +112,9 @@ def test_csv_loads_and_sampling_works(stage):
     path = os.path.join(ROOT, f"parameter_search_{stage.value}.csv")
     if not os.path.exists(path):
         pytest.skip(f"{os.path.basename(path)} not found")
+    if 'search_NNTQ_MAE' not in pd.read_csv(path, nrows=0).columns:
+        pytest.skip(f"{os.path.basename(path)}: objective on the whole test "
+                    "period (before the split in two): not reloadable")
 
     trials = bs.load_frozen_trials(path, ALL_DISTRIBUTIONS, stage)
     study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=0))

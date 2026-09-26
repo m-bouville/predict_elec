@@ -260,6 +260,8 @@ def prices_per_season(price:   pd.Series,
                'spring': ([ 3, 4, 5], "March, April and May"),
                'summer': ([ 6, 7, 8], "June, July and August")}
     # winter: year of January (December counts with the next year)
+    #winter['year_pair']=winter.apply(lambda row:f"{row['year_as_January']-1}-"
+    #                                            f"{row['year_as_January']-2000}",axis=1)
     year_of = {'winter': price.index.year + (price.index.month == 12),
                'spring': price.index.year,
                'summer': price.index.year}
@@ -295,8 +297,12 @@ def prices_per_season(price:   pd.Series,
             _profile = _price_profile_local(_price)
 
             _hours = _profile.drop(index=24)       # stats over the 24 hours
+            # print(country, _season, _year, len(_price))
             _dict_stats['avg_'   + _season].append(float(_hours.mean()))
+            # _dict_stats['std_'   + _season].append(float(_hours.std()))
+            #   (with 'std' kept in `names` and `styles` above)
             _dict_stats['range_' + _season].append(float(_hours.max() - _hours.min()))
+            # print(_year, _profile)
 
             if _year >= first_year:
                 if _season == 'winter':

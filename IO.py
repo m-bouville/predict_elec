@@ -90,6 +90,9 @@ os.makedirs('cache', exist_ok=True)
 # Load all data
 # -------------------------------------------------------
 
+SOURCES_NOT_MODEL_INPUTS = ('price', 'eco2mix')   # loaded for statistics only
+
+
 def load_data(dict_input_csv_fnames: dict, cache_fname: str,
               num_steps_per_day: int, minutes_per_step: int,
               do_plot_statistics: Optional[bool] = None, verbose: int = 0)\
@@ -340,8 +343,16 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         load_temperature_world()
 
 
-    # remove padding
-    common_start  = max(starts.values()); common_end = min(ends.values())
+    # remove padding: up to the end of the model inputs
+    #   (/!\ price and eco2mix, statistics only, also counted: a file lagging
+    #    behind truncated all the data; and a daily source ends at the START of
+    #    its last day, which was cut to one row)
+    _ends_inputs = {name: end for (name, end) in ends.items()
+                    if name not in SOURCES_NOT_MODEL_INPUTS}
+    if 'temperature' in _ends_inputs:   # daily: covers its whole last day
+        _ends_inputs['temperature'] += pd.Timedelta(days=1) - \
+                                       pd.Timedelta(minutes=minutes_per_step)
+    common_start  = max(starts.values()); common_end = min(_ends_inputs.values())
     if verbose >= 3:
         print(f"intersection start: {common_start  }, end: {common_end}")
     df_merged=df_merged.loc[:common_end]
@@ -389,7 +400,10 @@ def load_consumptions_recent(
     df_nation = df_nation['Consommation (MW)'].div(1000).round(3).dropna().squeeze()
     df_nation.name = 'consumption_GW'
 
-    df_nation = df_nation.resample('30min').mean()  # to match the rest of the dataset
+    # quarter-hourly -> half-hourly: the value at :00 (or :30), as in the
+    #   historical files (/!\ was the mean of :00 and :15: another quantity
+    #   than the history, 0.2 GW apart on average)
+    df_nation = df_nation.resample('30min').first()
 
 
     # régional
@@ -409,7 +423,7 @@ def load_consumptions_recent(
         index="datetime_utc", columns="Région", values='consumption_GW',
         aggfunc='mean').sort_index()
 
-    df_region = df_region.resample('30min').mean()  # to match the rest of the dataset
+    df_region = df_region.resample('30min').first()   # as the national data
 
     # remove rows with at least 2 NAs
     df_region = df_region.dropna(thresh=2)

@@ -73,8 +73,8 @@ DISTRIBUTIONS_NNTQ = {
     'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
     'epochs':      IntDistribution(low=10, high=30, step=1),
-    'batch_size':  CategoricalDistribution(choices=[64, 96, 128, 192]),
-    'learning_rate':FloatDistribution(low=0.0004,high=0.018, step=0.0004),
+    'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
+    'learning_rate':FloatDistribution(low=0.0004,high=0.01, log=True),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.4, step=0.01),
 
@@ -106,8 +106,7 @@ DISTRIBUTIONS_NNTQ = {
 
 DISTRIBUTIONS_METAMODEL_NN = {
     'metaNN_epochs':      IntDistribution(low=1, high=20, step=1),  # 1: NNTQ search
-    'metaNN_batch_size':  CategoricalDistribution(
-        choices=[16, 32, 64, 96, 128, 192, 256, 384, 512, 640]),
+    'metaNN_batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
     'metaNN_learning_rate':FloatDistribution(low=0.0005, high=0.0050, step=0.0001),
     'metaNN_weight_decay':FloatDistribution(low=5e-9, high=10e-5, log=True),
     'metaNN_dropout':     FloatDistribution(low=0., high=0.4,step=0.001),
@@ -214,9 +213,9 @@ def sample_NNTQ_parameters(
     if 'epochs' in p:
         p['epochs'        ] = trial.suggest_int  ('epochs', 10, 28, step=2)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [64, 96, 128, 192])
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.018,step=0.0004)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.01,log=True)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
@@ -305,7 +304,7 @@ def sample_metamodel_NN_parameters(
         p['epochs']      = trial.suggest_int('metaNN_epochs', 10, 20)
     if 'batch_size' in p:
         p['batch_size']  = trial.suggest_categorical(
-            'metaNN_batch_size', [16, 32, 64, 96, 128, 192, 256, 384, 512, 640])
+            'metaNN_batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
         p['learning_rate']=trial.suggest_float('metaNN_learning_rate',
                                                low=0.0005, high=0.0050, step=0.0005)
@@ -705,13 +704,15 @@ def cols_not_paras() -> List[str]:
         # ,'GB_boosting_type', 'input_length', 'num_patches',
 
     # output
-    cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage
+    cols_not_paras.extend(['q10', 'q25', 'q50', 'q75', 'q90'])  # coverage (search)
+    cols_not_paras.extend([f'test_coverage_q{q}' for q in (10, 25, 50, 75, 90)])
     for _model in ['NNTQ_q50', 'LR', 'RF', 'LGBM']:
         cols_not_paras.append(f'avg_weight_meta_NN_{_model}')
     for _model in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']:
         for _metric in ['bias', 'RMSE', 'MAE']:
-            cols_not_paras.append(f'test_{_model}_{_metric}')
-    cols_not_paras.extend(['num_features', 'avg_abs_worst_days_test'])
+            cols_not_paras.append(f'search_{_model}_{_metric}')  # objective
+            cols_not_paras.append(f'test_{_model}_{_metric}')    # reported
+    cols_not_paras.extend(['num_features', 'avg_abs_worst_days_search'])
     # print(cols_not_paras)
     # print([e for e in results_df.columns if e not in cols_not_paras])
 
@@ -727,7 +728,9 @@ def load_frozen_trials(csv_path     : str,
 
     # print(list(results_df.columns))
     _superfluous = set(_cols_not_paras) - set(results_df.columns)
-    assert len(_superfluous) == 0, _superfluous
+    assert len(_superfluous) == 0, \
+        (f"{csv_path}: columns missing (a csv from before the test period was "
+         f"cut in two cannot be reloaded: start a new one)", _superfluous)
 
     results_df.drop(columns=_cols_not_paras, inplace=True)
     print(f"{csv_path} loaded: {results_df.shape}")

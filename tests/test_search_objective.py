@@ -59,6 +59,27 @@ def test_loss_NNTQ_spread_and_dominant_gap():
     assert run.loss_NNTQ(one_big, 0.) > run.loss_NNTQ(diffused, 0.)
 
 
+def test_worst_days_average_the_top_n_days():
+    """avg_abs_diff (the worst-days term of loss_NNTQ) is the mean over the
+    top_n worst days (/!\\ was the mean over all days); days with a DST switch
+    (46 or 50 steps) are left out."""
+    import utils
+    from constants import Split
+    local = pd.date_range("2022-03-01", "2022-04-05", freq="30min",
+                          tz="Europe/Paris", inclusive="left")
+    idx = local.tz_convert("UTC")
+    naive = local.tz_localize(None).normalize()           # calendar days, DST-proof
+    day_number = (naive - naive[0]).days                  # 0..34
+    y_true = pd.Series(50., index=idx)
+    y_pred = pd.Series(50. + day_number + 1., index=idx)   # day k: error k+1 GW
+    frame = pd.Series(10., index=idx)
+    worst, avg = utils.worst_days_by_loss(
+        Split.test, y_true, y_pred, frame, frame * 0, num_steps_per_day=48, top_n=5)
+    # 35 days, 27 March (error 27) is a 46-step day: worst 5 are 35, 34, 33, 32, 31
+    assert avg == pytest.approx((35 + 34 + 33 + 32 + 31) / 5)
+    assert len(worst) == 5
+
+
 # ---------------------------------------------------------------------------
 # loss_meta
 # ---------------------------------------------------------------------------

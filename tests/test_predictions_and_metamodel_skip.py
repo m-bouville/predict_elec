@@ -228,7 +228,9 @@ def _postprocess(metrics, weights):
     return run.postprocess(copy.deepcopy(constants.BASELINES_PARAMETERS),
                            copy.deepcopy(constants.NNTQ_PARAMETERS),
                            copy.deepcopy(constants.METAMODEL_NN_PARAMETERS),
-                           60, metrics, cov, weights, 2.5, 0)
+                           60, metrics, cov, weights, 2.5, 0,
+                           df_metrics_search=metrics + .5,
+                           quantile_delta_coverage_test=cov)
 
 
 def test_csv_row_schema_unchanged_without_metamodel():
@@ -248,8 +250,9 @@ def test_csv_row_schema_unchanged_without_metamodel():
     assert not np.isnan(loss_meta_full) and np.isnan(loss_meta_skip)
 
     meta_cols = ([f"avg_weight_meta_NN_{m}" for m in ['NNTQ_q50', 'LR', 'RF', 'LGBM']]
-                 + [f"test_meta_{m}_{k}" for m in ['LR', 'NN']
-                    for k in ['bias', 'RMSE', 'MAE']] + ['loss_meta'])
+                 + [f"{p}_meta_{m}_{k}" for p in ['search', 'test']
+                    for m in ['LR', 'NN'] for k in ['bias', 'RMSE', 'MAE']]
+                 + ['loss_meta'])
     assert all(np.isnan(row_skip[c]) for c in meta_cols)
     # everything else identical (except the timestamp)
     for c in row_full:

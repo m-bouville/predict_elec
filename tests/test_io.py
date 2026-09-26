@@ -5,6 +5,10 @@ Tests for ``IO.load_data`` beyond the time zones (those: test_io_timezone.py).
   input data come from the pickle or not, and at verbose 3 (/!\ it was parsed
   and plotted a second time at the end of the statistics block, and parsed a
   third time for the verbose-3 checks);
+* real-time consumption (quarter-hourly) -> half-hourly: the :00 / :30 value,
+  as in the historical files (/!\ was the mean of :00 and :15);
+* the data end at the end of the model inputs: neither price nor eco2mix
+  (statistics only) truncate them, and the last temperature day is whole;
 * ``_read_or_download``: a missing csv is downloaded as served, then read like
   a local one (/!\ the first run used to read the URL with other options, e.g.
   eco2mix without na_values='ND', and saved an extra index column); a failed
@@ -114,6 +118,55 @@ def test_statistics_verbose_3_parse_eco2mix_once(tmp_path, monkeypatch, capsys):
 
     assert len(calls) == 1 and calls[0]["do_plot_statistics"] is True
     assert "eco2mix" in analyzed
+
+
+@pytest.mark.parametrize("temperature_last_day, expected_end", [
+    ("2025-06-30", "2025-06-30 21:30"),   # whole last Paris day (CEST: 22:00 UTC)
+    ("2025-07-31", "2025-07-15 23:30"),   # consumption ends first
+])
+def test_data_end_at_the_end_of_the_model_inputs(tmp_path, temperature_last_day,
+                                                 expected_end):
+    """(/!\\ the end was the earliest of ALL sources: a lagging price or eco2mix
+    file truncated the data, and the last temperature day was cut to its
+    first row)"""
+    idx = pd.date_range("2025-01-01", "2025-08-31 23:30", freq="30min", tz="UTC")
+    df_merged = pd.DataFrame({"consumption_GW": 50.}, index=idx)
+    t_end = pd.Timestamp(temperature_last_day, tz="Europe/Paris").tz_convert("UTC")
+    ends = {"consumption":           pd.Timestamp("2025-07-15 23:30", tz="UTC"),
+            "consumption_by_region": pd.Timestamp("2025-08-31 23:30", tz="UTC"),
+            "temperature":           t_end,          # daily: start of its last day
+            "price":                 pd.Timestamp("2025-03-01 00:00", tz="UTC"),
+            "eco2mix":               pd.Timestamp("2025-02-01 00:00", tz="UTC")}
+    starts = {k: idx[0] for k in ends}
+    cache = tmp_path / "input.pkl"
+    with open(cache, "wb") as f:
+        pickle.dump((df_merged, None, pd.DataFrame(), starts, ends, {}), f)
+
+    out, _, _ = IO.load_data({}, str(cache), 48, 30, do_plot_statistics=False)
+
+    assert out.index.max() == pd.Timestamp(expected_end, tz="UTC")
+
+
+def test_real_time_consumption_takes_the_half_hour_value(tmp_path):
+    """National (sample of the real file) and regional real-time data: the
+    half-hourly value is the reading at :00 / :30, not the mean with :15."""
+    stamps = pd.date_range("2026-07-01 00:00", periods=8, freq="15min", tz="UTC")
+    rows = [f"{t.isoformat()};{r};{1000 * (k + 1) + 10 * i}"
+            for i, t in enumerate(stamps)
+            for k, r in enumerate(["Nouvelle-Aquitaine", "Bretagne", "Occitanie"])]
+    regional = tmp_path / "regional.csv"
+    regional.write_text("Date - Heure;Région;Consommation (MW)\n" + "\n".join(rows) + "\n",
+                        encoding="utf-8")   # as RTE's file (Windows default: cp1252)
+
+    nation, regions = IO.load_consumptions_recent(
+        path_nation=os.path.join(DATA, "eco2mix-national-tr_sample.csv"),
+        url_nation="-", path_region=str(regional), url_region="-")
+
+    # sample: 46807 (00:00), 46358 (00:15), 45014 (00:30), ... MW, at +02:00
+    assert nation.iloc[:2].tolist() == pytest.approx([46.807, 45.014])
+    assert (nation.index.minute % 30 == 0).all()
+    assert regions["Bretagne"].tolist() == pytest.approx([2.0, 2.02, 2.04, 2.06])
+    assert regions["Occitanie"].iloc[0] == pytest.approx(3.0)
 
 
 # ---------------------------------------------------------------------------

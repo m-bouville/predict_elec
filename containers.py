@@ -47,6 +47,27 @@ def _local_days(index: pd.DatetimeIndex, tz: str = FORECAST_TZ) -> np.ndarray:
     return index.to_numpy().astype('datetime64[D]')
 
 
+def search_period_end(split: 'DataSplit') -> pd.Timestamp:
+    """The test period is cut in two at a Paris midnight: the searches select
+    on the first half (coverage, worst days, metrics of the objectives), the
+    second half is only reported. (/!\\ the objectives used the whole test
+    period: after hundreds of trials, the test scores were optimistic)"""
+    local = pd.DatetimeIndex(split.true_nation_GW.index).tz_convert(FORECAST_TZ)
+    days  = local.normalize().unique()
+    return days[len(days) // 2].tz_convert('UTC')
+
+
+def _in_period(series: pd.Series, period: Optional[Tuple]) -> pd.Series:
+    """series restricted to [start, end) (None: unbounded)."""
+    if period is None:
+        return series
+    start, end = period
+    keep = np.ones(len(series), dtype=bool)
+    if start is not None: keep &= series.index >= start
+    if end   is not None: keep &= series.index <  end
+    return series[keep]
+
+
 @dataclass
 class DataSplit:
     name:             Split    # Split.train    |Split.valid      |Split.test
@@ -123,6 +144,7 @@ class DataSplit:
         model.eval()
 
         offset_steps = pred_length - valid_length
+        # print(f"{pred_length} - {valid_length} = {offset_steps}")
             # scored steps: rows idx_origin + offset_steps + h, h < valid_length
             #   (/!\ was + 1: every timestamp was 30 min late)
 
@@ -233,12 +255,14 @@ class DataSplit:
                            holidays_full   : pd.Series,
                            num_steps_per_day:int,
                            top_n           : int,
-                           verbose         : int = 0) -> (pd.DataFrame, float):
+                           verbose         : int = 0,
+                           period          : Optional[Tuple] = None
+                           ) -> (pd.DataFrame, float):
         # print("temperature_full:\n", temperature_full)
         # print(f"{self.name}.true_nation_GW:\n", self.true_nation_GW)
         return utils.worst_days_by_loss(
             split       = self.name,
-            y_true      = self.true_nation_GW,
+            y_true      = _in_period(self.true_nation_GW, period),
             y_pred      = self.dict_preds_NNTQ['q50'],
             temperature = temperature_full.iloc[self.idx],
             holidays    = holidays_full   .iloc[self.idx],
@@ -300,10 +324,14 @@ class DataSplit:
             self.y_metamodel_LR = _input[['y_nation']].squeeze()
 
     # compare models
-    def compare_models(self, unit: str = "GW", verbose: int = 0) -> pd.DataFrame:
+    def compare_models(self, unit: str = "GW", verbose: int = 0,
+                       period: Optional[Tuple] = None) -> pd.DataFrame:
+        """Metrics of every model; `period` = (start, end) restricts them to
+        [start, end) (None: unbounded)."""
         if verbose > 0:
             print(f"\n{self.name_display:10s} metrics [{unit}]:")
-        return utils.compare_models( self.true_nation_GW, self.dict_preds_NNTQ,
+        return utils.compare_models(_in_period(self.true_nation_GW, period),
+                            self.dict_preds_NNTQ,
                             self.dict_preds_ML, self.dict_preds_meta,
                             subset=self.name_display, unit=unit, verbose=verbose)
 
@@ -353,6 +381,7 @@ class DatasetBundle:
 
     scaler_y_nation:   object
     scaler_X: Optional[object] = None
+    scaler_Y_regions: Optional[object] = None
 
     # metamodels (added later)
     weights_meta_LR:     Optional[str]        = None
@@ -515,6 +544,8 @@ class NeuralNet:
 
     lambda_regions   : Optional[float] = None
     lambda_regions_sum:Optional[float] = None
+    regions_to_nation: Optional[np.ndarray] = None
+        # region std / national std: regional errors in national units (GW)
 
     # save best model
     best_loss        : float  = float("inf")
@@ -752,13 +783,16 @@ class NeuralNet:
             )
 
         num_steps_per_day = int(round(24*60/minutes_per_step))
+        # objective of the search: first half of the test period only
+        _search = (None, search_period_end(data.test))
         worst_days_test_df, avg_abs_worst_days_test_NN_median = \
             data.test.worst_days_by_loss(
                 temperature_full = temperature_full,
                 holidays_full    = holidays_full,
                 num_steps_per_day= num_steps_per_day,
                 top_n            = num_worst_days,
-                verbose          = verbose
+                verbose          = verbose,
+                period           = _search
             )
         if verbose >= 3:
             print(worst_days_test_df.to_string())
@@ -777,8 +811,9 @@ class NeuralNet:
         quantile_delta_coverage = {}
         for tau in self.quantiles:
             key = f"q{int(100*tau)}"
-            cov = utils.quantile_coverage(data.test.true_nation_GW,
-                                          data.test.dict_preds_NNTQ[key])
+            cov = utils.quantile_coverage(
+                _in_period(data.test.true_nation_GW,    _search),
+                _in_period(data.test.dict_preds_NNTQ[key], _search))
             quantile_delta_coverage[key] = cov-tau
 
             if verbose > 0:

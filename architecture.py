@@ -9,7 +9,7 @@
 ###############################################################################
 
 
-from   typing import Tuple, List, Dict  # Sequence  #, Optional
+from   typing import Tuple, List, Dict, Optional  # Sequence
 # from   collections import defaultdict
 
 import torch
@@ -54,7 +54,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
 
         index_y_nation : int,
         indices_Y_regions: List[int],
-        forecast_tz  : str = FORECAST_TZ
+        forecast_tz  : str = FORECAST_TZ,
+        context_length: int = 0
     ):
         """
         Parameters
@@ -72,6 +73,10 @@ class DayAheadDataset(torch.utils.data.Dataset):
         forecast_tz : str
             Time zone of forecast_hour (dates_subset are UTC; naive dates
             are taken as already local)
+        context_length : int
+            Number of leading rows that belong to the previous split: inputs
+            only, no origin there. The indices returned are relative to the
+            rows after them (the split itself).
         index_y_nation : int
             Column index of target variable
         """
@@ -95,10 +100,11 @@ class DayAheadDataset(torch.utils.data.Dataset):
         _idx   = np.arange(len(dates_subset))
         _mask  = ((_local.hour   == forecast_hour) &
                   (_local.minute == 0) &
-                  (_idx >= input_length) &
+                  (_idx >= input_length) & (_idx >= context_length) &
                   (_idx + pred_length < len(data_subset)))
         self.start_indices_subset= _idx[_mask].tolist()
         self.forecast_origins    = list(dates_subset[_mask])     # as given (UTC)
+        self.context_length      = int(context_length)
 
         # print("forecast_origins:", type(self.forecast_origins[0]))
 
@@ -149,7 +155,7 @@ class DayAheadDataset(torch.utils.data.Dataset):
             torch.tensor(Y_regions),
             torch.tensor(y_nation).unsqueeze(-1),  # (pred_length, 1)
             torch.tensor(T)       .unsqueeze(-1),  # (pred_length, 1),
-            idx_subset,
+            idx_subset - self.context_length,   # in the split (after the context)
             int(self.forecast_origins[idx_days_subset].timestamp())
                 # pd.Timestamp != batchable
         )
@@ -287,8 +293,10 @@ def make_X_and_y(array           : np.ndarray,
 
 
 
-    def build_day_ahead(data_subset, date_slice, temperatures_subset):
+    def build_day_ahead(data_subset, date_slice, temperatures_subset,
+                        context_length=0):
         return DayAheadDataset(
+            context_length   = context_length,
             data_subset      = data_subset,
             dates_subset     = date_slice,
             temperatures_subset=temperatures_subset,
@@ -301,8 +309,18 @@ def make_X_and_y(array           : np.ndarray,
         ) # X_list, y_list, origin_list, target_dates_list
 
     train_dataset_scaled= build_day_ahead(train_scaled,train_dates,train_Tavg_degC)
-    valid_dataset_scaled= build_day_ahead(valid_scaled,valid_dates,valid_Tavg_degC)
-    test_dataset_scaled = build_day_ahead(test_scaled, test_dates, test_Tavg_degC)
+    # valid and test: their first inputs are the last rows of the previous
+    #   split (the past, known at the origin), so that their first days are
+    #   forecast (/!\ each split was its own dataset: its first input_length
+    #   steps, 14 days, had no origin and were never scored)
+    def _with_context(idx_split):
+        _start, _end = idx_split[0] - input_length, idx_split[-1] + 1
+        assert _start >= 0, (_start, input_length)
+        return (df_scaled[_start:_end], dates[_start:_end], temperatures[_start:_end])
+    valid_dataset_scaled= build_day_ahead(*_with_context(idx_valid),
+                                          context_length=input_length)
+    test_dataset_scaled = build_day_ahead(*_with_context(idx_test),
+                                          context_length=input_length)
     complete_dataset_scaled=build_day_ahead(df_scaled, dates, temperatures)
 
     # print("len(X_dataset_scaled[0]) [days]", len(train_dataset_scaled[0]),
@@ -381,7 +399,7 @@ def make_X_and_y(array           : np.ndarray,
 
     data = containers.DatasetBundle(
             train, valid, test, complete,
-            scaler_y_nation=scaler_y_nation,
+            scaler_y_nation=scaler_y_nation, scaler_Y_regions=scaler_Y_regions,
             X=X_GW, y_nation=y_nation_GW, Y_regions=Y_regions_GW,
             minutes_per_step=minutes_per_step,
             num_steps_per_day = int(round(24*60/minutes_per_step)),
@@ -524,6 +542,12 @@ class TimeSeriesTransformer(nn.Module):
             # self.pad_length  = input_length - total_covered
 
             self.patch_embed= PatchEmbedding(patch_length,stride,num_features,dim_model)
+            # learned positional embedding, one vector per patch (as in PatchTST)
+            #   (/!\ there was none: attention could not tell the patches apart
+            #    but through the calendar features inside them)
+            self.pos_embedding = nn.Parameter(
+                torch.zeros(1, self.num_patches, dim_model))
+            nn.init.trunc_normal_(self.pos_embedding, std=0.02)
             self.layers = nn.ModuleList([
                 TransformerEncoderLayerWithAttn(dim_model, num_heads, dropout, ffn_mult)
                 for _ in range(num_layers)
@@ -586,6 +610,7 @@ class TimeSeriesTransformer(nn.Module):
         B, T, D = h.shape
         assert T == self.num_patches, (T, self.num_patches)
         assert D == self.dim_model,   (D, self.dim_model)
+        h = h + self.pos_embedding                  # position of each patch
 
         # 2. Transformer encoder
         for layer in self.layers:
@@ -837,6 +862,13 @@ class BlockWeighting(nn.Module):
 # ----------------------------------------------------------------------
 
 
+def _regions_to_nation(model_NN) -> Optional[torch.Tensor]:
+    """(R,) tensor on the model's device, or None (regional units kept)."""
+    r = getattr(model_NN, 'regions_to_nation', None)
+    return None if r is None else \
+        torch.as_tensor(np.asarray(r), dtype=torch.float32, device=model_NN.device)
+
+
 def subset_evolution_torch(
         model_NN, #: containers.NeuralNet
         subset_loader: DataLoader
@@ -886,30 +918,34 @@ def subset_evolution_torch(
                                 enabled=device.type == 'cuda'): # mixed precision
                 # CPU: autocast would mean bfloat16, ~3x slower and less precise
             (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
-            pred_nation_scaled_dev = pred_nation_scaled .to(device) # (B, H, Q)
-            pred_regions_scaled_dev= pred_regions_scaled.to(device) # (B, H, R)
+        # losses in float32, outside autocast (/!\ were computed inside, on the
+        #   float16 predictions: rounding noise on differences of close values,
+        #   e.g. the derivative and coverage terms)
+        pred_nation_scaled_dev = pred_nation_scaled .float()      # (B, H, Q)
+        pred_regions_scaled_dev= pred_regions_scaled.float()      # (B, H, R)
 
-            # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
+        # assert y_scaled_dev.shape[1] == pred_scaled_dev.shape[1] == pred_length
 
-            # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
-            loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
-                pred_nation_scaled_dev[:, -valid_length:, :],
-                y_nation_scaled_dev   [:, -valid_length:, 0], model_NN.quantiles,
-                **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
-                     'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
-                     'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
-                Tavg_current=T_degC_dev[:, -valid_length:, 0])
+        # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
+        loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
+            pred_nation_scaled_dev[:, -valid_length:, :],
+            y_nation_scaled_dev   [:, -valid_length:, 0], model_NN.quantiles,
+            **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
+                 'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
+                 'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
+            Tavg_current=T_degC_dev[:, -valid_length:, 0])
 
-            if model_NN.lambda_regions > 0:
-                loss_region_scaled_h_batch = losses.regions_torch(
-                        pred_regions_scaled_dev[:, -valid_length:, :],   # (B, V, R)
-                        Y_regions_scaled_dev   [:, -valid_length:, :],   # (B, V, R)
-                        model_NN.lambda_regions, model_NN.lambda_regions_sum
-                    )
-                loss_scaled_h_batch = loss_quantile_scaled_h_batch + \
-                                      loss_region_scaled_h_batch
-            else:
-                loss_scaled_h_batch = loss_quantile_scaled_h_batch
+        if model_NN.lambda_regions > 0:
+            loss_region_scaled_h_batch = losses.regions_torch(
+                    pred_regions_scaled_dev[:, -valid_length:, :],   # (B, V, R)
+                    Y_regions_scaled_dev   [:, -valid_length:, :],   # (B, V, R)
+                    model_NN.lambda_regions, model_NN.lambda_regions_sum,
+                    _regions_to_nation(model_NN)
+                )
+            loss_scaled_h_batch = loss_quantile_scaled_h_batch + \
+                                  loss_region_scaled_h_batch
+        else:
+            loss_scaled_h_batch = loss_quantile_scaled_h_batch
 
         amp_scaler.scale(loss_scaled_h_batch.mean()).backward()  # full precision
         amp_scaler.unscale_(model_NN.optimizer)
@@ -946,14 +982,15 @@ def subset_evaluation(
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Loss per horizon on a validation or test loader: the same torch losses as
-    in training, without gradients, computed on the model's device. Only the
-    averages over the batches go to the CPU.
+    in training, without gradients, computed on the model's device once over
+    all the samples (independent of the batch size). Only the results go to
+    the CPU.
     (/!\\ was `subset_evolution_numpy`: every batch was copied to the CPU to
      run numpy twins of the losses, which had to be kept identical by hand)
 
     Returns:
         loss_quantile_scaled_h: np.ndarray
-            shape (V, ): average over the batches of the total loss
+            shape (V, ): total loss over all the samples
         dict_losses_h: Dict[str, np.ndarray]
             components of the loss, each of shape (V, ): used for diagnostics
     """
@@ -964,36 +1001,45 @@ def subset_evaluation(
 
     model.eval()
 
-    loss_quantile_scaled_h = torch.zeros(valid_length, device=device)
-    dict_losses_h = {key: torch.zeros(valid_length, device=device) for key in
-                     ['pinball', 'coverage', 'crossing', 'derivative', 'median']}
-
+    # predictions and targets of every sample, on the device; the losses are
+    #   then computed once over all of them (/!\ were the average of per-batch
+    #   losses: the coverage smoothing scale is a std over the samples, and
+    #   the last batch is smaller, so the value depended on the batch size)
+    list_pred_nation, list_y_nation, list_T = [], [], []
+    list_pred_regions, list_Y_regions       = [], []
     for (X_scaled, Y_regions_scaled, y_nation_scaled,
          T_degC, _, _) in subset_loader:
         (pred_nation_scaled, pred_regions_scaled) = model(X_scaled.to(device))
 
         # validation and plotting are over VALID_LENGTH, not PRED_LENGTH
-        loss_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
-            pred_nation_scaled[:, -valid_length:, :],                  # (B, V, Q)
-            y_nation_scaled   [:, -valid_length:, 0].to(device),        # (B, V)
-            model_NN.quantiles,
-            **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
-                 'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
-                 'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
-            Tavg_current=T_degC[:, -valid_length:, 0].to(device))
-
+        list_pred_nation.append(pred_nation_scaled[:, -valid_length:, :].float()) # (B,V,Q)
+        list_y_nation   .append(y_nation_scaled   [:, -valid_length:, 0].to(device))
+        list_T          .append(T_degC            [:, -valid_length:, 0].to(device))
         if model_NN.lambda_regions > 0:
-            loss_scaled_h_batch = loss_scaled_h_batch + losses.regions_torch(
-                    pred_regions_scaled[:, -valid_length:, :],          # (B, V, R)
-                    Y_regions_scaled   [:, -valid_length:, :].to(device),
-                    model_NN.lambda_regions, model_NN.lambda_regions_sum)
+            list_pred_regions.append(pred_regions_scaled[:, -valid_length:, :].float())
+            list_Y_regions   .append(Y_regions_scaled   [:, -valid_length:, :].to(device))
 
-        loss_quantile_scaled_h += loss_scaled_h_batch
-        for key in dict_losses_h:
-            dict_losses_h[key] += dict_losses_h_batch[key]
+    loss_quantile_scaled_h, dict_losses_h = losses.quantile_torch(
+        torch.cat(list_pred_nation),                                   # (N, V, Q)
+        torch.cat(list_y_nation),                                      # (N, V)
+        model_NN.quantiles,
+        **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
+             'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
+             'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
+        Tavg_current=torch.cat(list_T))
+
+    if model_NN.lambda_regions > 0:
+        loss_quantile_scaled_h = loss_quantile_scaled_h + losses.regions_torch(
+                torch.cat(list_pred_regions), torch.cat(list_Y_regions),  # (N, V, R)
+                model_NN.lambda_regions, model_NN.lambda_regions_sum,
+                _regions_to_nation(model_NN))
+
+    # print("total:\n", loss_quantile_scaled_h.cpu().numpy().round(2))
+    # print(pd.DataFrame({k: v.cpu().numpy()
+    #                     for k, v in dict_losses_h.items()}).round(2).head())
 
     def _to_numpy(t: torch.Tensor) -> np.ndarray:
-        return (t / len(subset_loader)).cpu().numpy().astype(np.float64)
+        return t.cpu().numpy().astype(np.float64)
 
     return _to_numpy(loss_quantile_scaled_h), \
            {key: _to_numpy(value) for (key, value) in dict_losses_h.items()}

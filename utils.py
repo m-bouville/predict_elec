@@ -29,7 +29,7 @@ import holidays
 
 
 import IO,  plots  # losses, architecture
-from   constants   import Split
+from   constants   import Split, FORECAST_TZ
 
 
 
@@ -43,10 +43,16 @@ def df_features_calendar(dates: pd.DatetimeIndex,
     df = pd.DataFrame(index=dates)
     assert isinstance(df.index, pd.DatetimeIndex)
 
+    # every calendar feature in Paris local time: consumption follows the
+    #   local clock (/!\ they were computed on the UTC dates: 1-2 h off, with a
+    #   1-h jump at each DST switch, and holidays flagged 01:00/02:00 -> 01:00/02:00)
+    #   The index (and so the rows) stays in UTC.
+    loc = dates.tz_convert(FORECAST_TZ) if dates.tz is not None else dates
+
     # periods
-    df['hour_norm'] = (df.index.hour + df.index.minute/60) / 24
-    df['dow_norm']  = (df.index.dayofweek + df['hour_norm']) / 7
-    df['doy_norm']  =  df.index.dayofyear / 365
+    df['hour_norm'] = (loc.hour + loc.minute/60) / 24
+    df['dow_norm']  = (loc.dayofweek + df['hour_norm']) / 7
+    df['doy_norm']  =  loc.dayofyear / 365
 
     # sine waves
     for _hours in [6, 8, 12, 24]:  # several periods per day
@@ -70,27 +76,29 @@ def df_features_calendar(dates: pd.DatetimeIndex,
 
 
     # day of week: 7 days => 6 degrees of freedom (convention: 0 = Monday)
-    df['is_Monday'  ] = (df.index.dayofweek == 0).astype(np.int16) # esp. morning
-    df['is_Tuesday' ] = (df.index.dayofweek == 1).astype(np.int16)
-    df['is_Wednesday']= (df.index.dayofweek == 2).astype(np.int16)
-    df['is_Friday'  ] = (df.index.dayofweek == 4).astype(np.int16) # esp. evening
-    df['is_Saturday'] = (df.index.dayofweek == 5).astype(np.int16)
-    df['is_Sunday'  ] = (df.index.dayofweek == 6).astype(np.int16)
-    df['is_weekend' ] = (((df.index.dayofweek == 4) & (df.index.hour >= 16)) |
-                          (df.index.dayofweek.isin([5, 6]))).astype(np.int16)
+    df['is_Monday'  ] = (loc.dayofweek == 0).astype(np.int16) # esp. morning
+    df['is_Tuesday' ] = (loc.dayofweek == 1).astype(np.int16)
+    df['is_Wednesday']= (loc.dayofweek == 2).astype(np.int16)
+    df['is_Friday'  ] = (loc.dayofweek == 4).astype(np.int16) # esp. evening
+    df['is_Saturday'] = (loc.dayofweek == 5).astype(np.int16)
+    df['is_Sunday'  ] = (loc.dayofweek == 6).astype(np.int16)
+    df['is_weekend' ] = (((loc.dayofweek == 4) & (loc.hour >= 17)) |
+                          (loc.dayofweek.isin([5, 6]))).astype(np.int16)
+        # (hours: the former UTC thresholds in winter local time)
 
-    # peak hours. /!\ UTC: [6, 8) means [7, 9) local in winter
-    df['is_morning_peak']=((df.index.hour >= 6) & (df.index.hour < 8)).astype(np.int16)
-    df['is_evening_peak']=((df.index.hour >=17) & (df.index.hour <19)).astype(np.int16)
+    # peak hours (/!\ were [6, 8) and [17, 19) UTC, i.e. these in winter)
+    df['is_morning_peak']=((loc.hour >= 7) & (loc.hour <  9)).astype(np.int16)
+    df['is_evening_peak']=((loc.hour >=18) & (loc.hour < 20)).astype(np.int16)
 
-    # there is a peak of coverage loss between about 9pm and midninght, UTC
-    df['is_evening'    ] = (df.index.hour >= 21).astype(np.int16)
+    # there is a peak of coverage loss between about 9pm and midnight UTC,
+    #   i.e. 10pm and 1am local time in winter (/!\ was hour >= 21 UTC)
+    df['is_evening'    ] = ((loc.hour >= 22) | (loc.hour < 1)).astype(np.int16)
 
     # people go on holiday
-    df['is_August'  ] = ((df.index.month    == 8) \
-                    & (df.index.day >= 5) & (df.index.day <= 25)).astype(np.int16)
-    df['is_Christmas']=(((df.index.month==12) & (df.index.day>=23)) | \
-                     ((df.index.month== 1) & (df.index.day<= 4))).astype(np.int16)
+    df['is_August'  ] = ((loc.month    == 8) \
+                    & (loc.day >= 5) & (loc.day <= 25)).astype(np.int16)
+    df['is_Christmas']=(((loc.month==12) & (loc.day>=23)) | \
+                     ((loc.month== 1) & (loc.day<= 4))).astype(np.int16)
             # redundent with school holiday
 
     # covid lockdown periods
@@ -106,11 +114,11 @@ def df_features_calendar(dates: pd.DatetimeIndex,
 
 
     # public holidays for France
-    fr_holidays = holidays.France(years=range(min(2012, df.index.year.min()),
-                                              df.index.year.max() + 2))
+    fr_holidays = holidays.France(years=range(min(2012, loc.year.min()),
+                                              loc.year.max() + 2))
         # /!\ was range(2012, 2027): no holiday at all from 2027 on
     dates_holidays = set(fr_holidays.keys())
-    _days = df.index.tz_localize(None) if df.index.tz is not None else df.index
+    _days = loc.tz_localize(None) if loc.tz is not None else loc   # local dates
     df['is_holiday'] = _days.normalize().isin(pd.to_datetime(list(dates_holidays)))\
                             .astype(np.int16)
         # vectorized: /!\ was np.isin(df.index.date, ...), ~100x slower
@@ -133,15 +141,18 @@ def df_features_past_consumption(consumption: pd.Series,
 
     # # diff
     # for _weeks in [1, 2]:
-    #     _hours = int(round(num_steps_per_day * 7 * _weeks))
     #     df[f"consumption_diff_{_weeks}wk_GW"] = \
-    #         _shifted_conso - _shifted_conso.shift(freq=f"{_hours}h")
+    #         _shifted_conso - _shifted_conso.shift(freq=f"{7 * _weeks}D")
+    #         # (was freq=f"{_hours}h", _hours = num_steps_per_day*7*_weeks:
+    #         #  the same step/hour mix-up as the SMA windows below)
 
     # moving averages
     for _weeks in [1, 2, 4, 52]:
-        _hours = int(round(num_steps_per_day * 7 * _weeks))
+        _steps = int(round(num_steps_per_day * 7 * _weeks))   # in the window
         df[f"consumption_SMA_{_weeks}wk_GW"] = _shifted_conso.rolling(
-            f"{_hours}h", min_periods=int(round(_hours*.8))).mean()
+            f"{7 * _weeks}D", min_periods=int(round(_steps*.8))).mean()
+            # /!\ was rolling(f"{_steps}h"): a number of half-hour steps read
+            #     as hours, i.e. windows twice their named size
 
     if verbose >= 3:
         print(df.tail().to_string())  # head() would be made of NaNs
@@ -501,7 +512,10 @@ def worst_days_by_loss(
     daily = daily[daily['n_points'] == num_steps_per_day]  # incommensurable
 
 
-    avg_abs_diff = float(daily['abs_diff'].mean())
+    avg_abs_diff = float(daily['abs_diff'].head(top_n).mean())
+        # the top_n worst days (sorted above)
+        #   (/!\ was the mean over all days, computed before .head(top_n))
+    # avg_abs_diff = float(daily['abs_diff'].mean())   # all days
 
     daily['day_name'] = daily['date'].dt.day_name()
     daily['day'     ] = daily['date'].dt.day

@@ -205,3 +205,23 @@ def test_regions_hand_computed():
 
 def test_no_numpy_twins_left():
     assert not [name for name in dir(losses) if name.endswith('_numpy')]
+
+
+def test_regions_in_national_units():
+    """With regions_to_nation (region std / national std), errors are in
+    national units: the sum term is the national error.
+    (/!\\ they were added in each region's own std units)"""
+    true = np.zeros((2, 3, 2))
+    pred = true + np.array([1., 1.])                 # +1 regional std in each region
+    ratio = _t([0.6, 0.2])                           # region stds / national std
+    # MAE: .6 + .2; sum: |.6 + .2| * .5
+    np.testing.assert_allclose(
+        losses.regions_torch(_t(pred), _t(true), .1, .5, ratio).numpy(),
+        .1 * ((.6 + .2) + .5 * (.6 + .2)))
+    # errors that cancel nationally: +1 GW in one region, -1 GW in the other
+    opposite = true + np.array([1. / .6, -1. / .2])
+    out = losses.regions_torch(_t(opposite), _t(true), .1, .5, ratio).numpy()
+    np.testing.assert_allclose(out, .1 * (1. + 1. + 0.))  # national error 0
+    # without the ratio: the former regional units
+    np.testing.assert_allclose(
+        losses.regions_torch(_t(pred), _t(true), .1, .5).numpy(), .1 * (2. + .5 * 2.))

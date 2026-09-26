@@ -357,8 +357,8 @@ def _small_net(data, **overrides):
 @pytest.mark.filterwarnings("ignore:batch_size")
 @pytest.mark.parametrize("lambda_regions", [0., .05])
 def test_subset_evaluation_is_the_training_loss_without_gradients(lambda_regions):
-    """subset_evaluation = average over the batches of losses.quantile_torch
-    (+ regions_torch), as in training; float64 numpy out; no gradient.
+    """subset_evaluation = losses.quantile_torch (+ regions_torch) computed once
+    over all the samples of the loader; float64 numpy out; no gradient.
     (/!\\ replaces subset_evolution_numpy and the numpy twins of the losses)"""
     import losses
     data, _, _ = _small_bundle()
@@ -372,28 +372,68 @@ def test_subset_evaluation_is_the_training_loss_without_gradients(lambda_regions
     V, names = 48, ['lambda_cross', 'lambda_coverage', 'lambda_deriv', 'lambda_median',
                     'smoothing_cross', 'saturation_cold_degC', 'threshold_cold_degC',
                     'lambda_cold']
-    expected, expected_dict = 0., {k: 0. for k in dict_h}
     with torch.no_grad():
-        for (X, Y_regions, y, T, _, _) in loader:
-            pred, pred_regions = net.model(X)
-            batch, parts = losses.quantile_torch(
-                pred[:, -V:], y[:, -V:, 0], net.quantiles,
-                **{n: getattr(net, n) for n in names}, Tavg_current=T[:, -V:, 0])
-            if lambda_regions > 0:
-                batch = batch + losses.regions_torch(
-                    pred_regions[:, -V:], Y_regions[:, -V:],
-                    net.lambda_regions, net.lambda_regions_sum)
-            expected = expected + batch.numpy()
-            expected_dict = {k: expected_dict[k] + parts[k].numpy() for k in dict_h}
+        batches = list(loader)
+        pred, pred_regions = net.model(torch.cat([b[0] for b in batches]))
+        Y_regions = torch.cat([b[1] for b in batches])
+        y = torch.cat([b[2] for b in batches])
+        T = torch.cat([b[3] for b in batches])
+        expected, parts = losses.quantile_torch(
+            pred[:, -V:], y[:, -V:, 0], net.quantiles,
+            **{n: getattr(net, n) for n in names}, Tavg_current=T[:, -V:, 0])
+        if lambda_regions > 0:
+            expected = expected + losses.regions_torch(
+                pred_regions[:, -V:], Y_regions[:, -V:],
+                net.lambda_regions, net.lambda_regions_sum)
 
     assert loss_h.dtype == np.float64 and loss_h.shape == (V,)
-    np.testing.assert_allclose(loss_h, expected / len(loader), rtol=1e-5)
+    np.testing.assert_allclose(loss_h, expected.numpy(), rtol=1e-5)
     assert set(dict_h) == {'pinball', 'coverage', 'crossing', 'derivative', 'median'}
     for k in dict_h:
-        np.testing.assert_allclose(dict_h[k], expected_dict[k] / len(loader),
+        np.testing.assert_allclose(dict_h[k], parts[k].numpy(),
                                    rtol=1e-5, atol=1e-7, err_msg=k)
     assert all(p.grad is None for p in net.model.parameters())
     assert not net.model.training
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_subset_evaluation_independent_of_the_batch_size():
+    """(/!\\ was the average of per-batch losses: the coverage scale is a std
+    over the batch, and the last batch is smaller)"""
+    from torch.utils.data import DataLoader
+    data, _, _ = _small_bundle()
+    net = _small_net(data, lambda_coverage=.01)
+    dataset = data.complete.loader.dataset
+    results = [architecture.subset_evaluation(
+                   net, DataLoader(dataset, batch_size=b, shuffle=False))[0]
+               for b in (3, 7, len(dataset))]
+    for r in results[1:]:
+        np.testing.assert_allclose(r, results[0], rtol=1e-5)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_training_losses_computed_in_float32(monkeypatch):
+    """Under autocast (GPU) the model returns float16: the losses must be
+    computed on float32 predictions (/!\\ they were computed inside autocast).
+    The float16 output is simulated on CPU."""
+    import losses
+    data, _, _ = _small_bundle()
+    net = _small_net(data)
+
+    class Half(torch.nn.Module):
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+        def forward(self, X):
+            return tuple(o.half() for o in self.inner(X))
+    net.model = Half(net.model)
+
+    dtypes = []
+    real = losses.quantile_torch
+    monkeypatch.setattr(losses, "quantile_torch", lambda pred, *a, **k:
+                        dtypes.append(pred.dtype) or real(pred, *a, **k))
+    architecture.subset_evolution_torch(net, data.train.loader)
+    assert dtypes and set(dtypes) == {torch.float32}
 
 
 @pytest.mark.filterwarnings("ignore:batch_size")
@@ -451,3 +491,57 @@ def test_training_loop_returns_the_profile_of_the_restored_model(monkeypatch):
     np.testing.assert_allclose(profile, expected, rtol=1e-6)
     for k in parts:
         np.testing.assert_allclose(parts[k], expected_parts[k], rtol=1e-6, atol=1e-9)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_valid_and_test_forecast_from_their_first_day():
+    """The first origin of valid and test is their first noon (Paris): the
+    inputs before it come from the previous split (/!\\ each split was its own
+    dataset: its first input_length steps, 14 days, were never forecast).
+    Indices returned stay relative to the split."""
+    data, array, dates = _small_bundle()
+    for split in (data.valid, data.test):
+        ds = split.loader.dataset
+        start = pd.DatetimeIndex(split.dates)[0]
+        first = ds.forecast_origins[0].tz_convert("Europe/Paris")
+        assert first.hour == 12 and first - start.tz_convert("Europe/Paris") \
+            < pd.Timedelta(days=1)
+        X, _, y, _, idx, origin = ds[0]
+        assert pd.Timestamp(int(origin), unit='s', tz='UTC') == ds.forecast_origins[0]
+        assert pd.DatetimeIndex(split.dates)[int(idx)] == ds.forecast_origins[0]
+        # inputs: the input_length rows before the origin, partly before the
+        #   split, i.e. those of the same origin in the complete dataset
+        g = dates.get_loc(ds.forecast_origins[0])
+        assert g - 144 < dates.get_loc(start)
+        complete = data.complete.loader.dataset
+        k = complete.forecast_origins.index(ds.forecast_origins[0])
+        np.testing.assert_array_equal(np.asarray(X), np.asarray(complete[k][0]))
+        np.testing.assert_array_equal(np.asarray(y), np.asarray(complete[k][2]))
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_patch_order_matters():
+    """With the positional embedding, swapping two patches inside a pooling
+    block changes the output (/!\\ without it the change was ~1e-8: attention
+    and mean-pooling cannot tell the order)."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data)
+    model = net.model.eval()
+    assert any(p is model.pos_embedding for p in model.parameters())
+    assert model.pos_embedding.shape == (1, model.num_patches, model.dim_model)
+
+    T, D = model.num_patches, model.dim_model
+    tokens = torch.randn(2, T, D, generator=torch.Generator().manual_seed(0))
+    start, end = model.block_ranges[0]
+    assert end - start >= 2 and end < T          # two patches, not the last one
+    swapped = tokens.clone()
+    swapped[:, [start, start + 1]] = tokens[:, [start + 1, start]]
+
+    X = torch.zeros(2, model.input_length + model.features_in_future * model.pred_length,
+                    model.num_features)
+    outputs = []
+    for h in (tokens, swapped):
+        model.patch_embed.forward = lambda X, h=h: h
+        with torch.no_grad():
+            outputs.append(model(X)[0])
+    assert (outputs[0] - outputs[1]).abs().max() > 1e-4

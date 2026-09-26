@@ -56,7 +56,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED         =   0              # For reproducibility
 
 
-TRAIN_SPLIT_FRACTION=0.8
+TRAIN_SPLIT_FRACTION=0.7
 VALID_RATIO  =   0.25           # validation from training set
 
 FORECAST_HOUR:int = 12          # 12: noon

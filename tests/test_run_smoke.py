@@ -30,6 +30,7 @@ torch = pytest.importorskip("torch", reason="run imports torch")
 pytest.importorskip("lightgbm", reason="baselines need lightgbm")
 
 import constants
+import containers
 import run
 
 # the tiny synthetic training set has few batches: expected, not a problem here
@@ -82,6 +83,10 @@ def _parameters():
 def _once(tmp_path, monkeypatch, nntq_overrides=None, **kwargs):
     monkeypatch.setattr(run.utils, "df_features",
                         lambda *a, **k: _synthetic_features())
+    return run.run_model_once(**_once_args(tmp_path, nntq_overrides, **kwargs))
+
+
+def _once_args(tmp_path, nntq_overrides=None, **kwargs):
     base, nntq, meta = _parameters()
     nntq.update(nntq_overrides or {})
     args = dict(
@@ -94,7 +99,7 @@ def _once(tmp_path, monkeypatch, nntq_overrides=None, **kwargs):
         validate_every=1, display_every=999, plot_conv_every=999, run_id=0,
         cache_dir=str(tmp_path), do_plot_statistics=False, verbose=0)
     args.update(kwargs)
-    return run.run_model_once(**args)
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +113,15 @@ def test_full_run_produces_finite_losses_and_row(tmp_path, monkeypatch):
     assert np.isfinite(metrics.to_numpy()).all()
     assert row["loss_NNTQ"] == loss_NNTQ and row["loss_meta"] == loss_meta
     assert set(cov) == {'q10', 'q25', 'q50', 'q75', 'q90'}
+    # objective on the first half of the test period, second half reported
+    assert row['test_NNTQ_MAE'] == metrics.loc['NNTQ', 'MAE']
+    assert np.isfinite(row['search_NNTQ_MAE']) and \
+        row['search_NNTQ_MAE'] != row['test_NNTQ_MAE']
+    assert np.isfinite(row['test_coverage_q50']) and \
+        np.isfinite(row['avg_abs_worst_days_search'])
+    cut = containers.search_period_end(data.test)
+    assert data.test.true_nation_GW.index.min() < cut \
+        < data.test.true_nation_GW.index.max()
     # the price is statistics only: never a model feature
     assert all('price' not in c for c in data.train.X_columns)
 
@@ -149,6 +163,40 @@ def test_cache_is_loaded_and_baselines_refreshed(tmp_path, monkeypatch):
         assert old.index.equals(new.index) and list(old) == list(new)
         assert not np.allclose(old['RF'], new['RF'])   # refreshed, not cached
         assert np.isfinite(new.to_numpy()).all()
+
+
+def test_cache_key_follows_the_validation_split_and_regions(tmp_path, monkeypatch):
+    """Another validation split, or other region weights, give another NNTQ
+    cache (/!\\ the key ignored them: the cached model was reloaded)."""
+    _once(tmp_path, monkeypatch, save_cache_NNTQ=True)
+    _once(tmp_path, monkeypatch, save_cache_NNTQ=True, valid_ratio=0.2)
+    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 2
+
+    other = dict(REGIONS, NE=0.7, S=0.3)
+    monkeypatch.setattr(run.utils, "df_features", lambda *a, **k:
+                        _synthetic_features()[:2] + (other,))
+    run.run_model_once(**_once_args(tmp_path, save_cache_NNTQ=True))
+    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 3
+
+
+def test_regional_errors_in_national_units(tmp_path, monkeypatch):
+    """The NNTQ gets regions_to_nation = region std / national std (training
+    split), used by its regional loss."""
+    built = []
+    real = run.containers.NeuralNet
+
+    def spy(*a, **k):
+        net = real(*a, **k)
+        built.append(net)
+        return net
+    monkeypatch.setattr(run.containers, "NeuralNet", spy)
+    data, *_ = _once(tmp_path, monkeypatch, nntq_overrides={'lambda_regions': .05})
+    ratio = np.asarray(built[0].regions_to_nation)
+    df, _, _ = _synthetic_features()
+    n_train = len(data.train.dates)
+    expected = df[["consumption_NE_GW", "consumption_S_GW"]].iloc[:n_train].std(ddof=0) \
+               / df["consumption_GW"].iloc[:n_train].std(ddof=0)
+    np.testing.assert_allclose(ratio, expected.to_numpy(), rtol=1e-3)
 
 
 def test_fresh_baselines_are_aligned_on_dates(tmp_path, monkeypatch):

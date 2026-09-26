@@ -1,11 +1,11 @@
 """
 Tests for the feature engineering in ``utils``.
 
-* ``df_features_calendar`` -- fix 9: the ``cos`` line was dedented out of the
+* ``df_features_calendar`` -- in Paris local time; fix 9: the ``cos`` line was dedented out of the
   daily loop, so only ``cos_24h`` survived; and the yearly terms were cos-only,
   which cannot tell spring from autumn.
-* ``df_features_past_consumption`` -- no leak of future consumption.
-  (Open item 3, SMA windows twice their named size: test_open_bugs.py.)
+* ``df_features_past_consumption`` -- no leak of future consumption; SMA
+  windows of their named size (/!\ they were twice as long).
 
 ``utils`` imports ``IO`` -> ``architecture`` -> ``torch`` at import time, so the
 whole module needs torch to import.  It also needs the ``holidays`` package.
@@ -187,14 +187,43 @@ def test_school_holidays_real_calendar():
 
 
 # ---------------------------------------------------------------------------
-# is_holiday: vectorized, same result as the former np.isin on dates
+# calendar features in Paris local time
+# ---------------------------------------------------------------------------
+def test_calendar_features_in_paris_time():
+    """The same local time gives the same features in winter and in summer
+    (/!\\ they were computed on the UTC dates: 1 h apart between CET and
+    CEST); holidays cover the Paris day."""
+    named = {"mon_0730_winter": "2022-01-10 06:30", "mon_0730_summer": "2022-07-11 05:30",
+             "tue_0030_winter": "2022-01-10 23:30",
+             "fri_1700_winter": "2022-01-14 16:00", "fri_1700_summer": "2022-07-15 15:00",
+             "apr30_2330":      "2022-04-30 21:30", "may1_0000": "2022-04-30 22:00",
+             "may1_2330":       "2022-05-01 21:30", "may2_0000": "2022-05-01 22:00"}
+    stamps = pd.DatetimeIndex(sorted(named.values()), tz="UTC")   # sorted index
+    df = utils.df_features_calendar(stamps)
+    row = {k: df.loc[pd.Timestamp(v, tz="UTC")] for k, v in named.items()}
+
+    for col in ['sin_24h', 'cos_24h', 'sin_12h', 'cos_6h', 'is_Monday',
+                'is_morning_peak', 'is_evening_peak', 'is_evening']:
+        assert row["mon_0730_winter"][col] == pytest.approx(row["mon_0730_summer"][col]), col
+    assert row["mon_0730_winter"]['is_morning_peak'] == 1
+    assert row["mon_0730_winter"]['is_Monday'] == 1
+    assert row["mon_0730_winter"]['sin_24h'] == pytest.approx(np.sin(2*np.pi * 7.5/24))
+    assert row["fri_1700_winter"]['is_weekend'] == row["fri_1700_summer"]['is_weekend'] == 1
+    assert [row[k]['is_holiday'] for k in
+            ("apr30_2330", "may1_0000", "may1_2330", "may2_0000")] == [0, 1, 1, 0]
+    assert row["tue_0030_winter"]['is_evening'] == 1
+    assert row["tue_0030_winter"]['is_Tuesday'] == 1
+
+
+# ---------------------------------------------------------------------------
+# is_holiday: vectorized, same result as np.isin on the (Paris) dates
 # ---------------------------------------------------------------------------
 def test_is_holiday_matches_isin_on_dates():
     import holidays
     dates = pd.date_range("2012-01-01", "2026-12-31 23:30", freq="30min", tz="UTC")
     df = utils.df_features_calendar(dates)
     days = set(holidays.France(years=range(2012, 2028)).keys())
-    ref = np.isin(dates.date, list(days)).astype(np.int16)
+    ref = np.isin(dates.tz_convert("Europe/Paris").date, list(days)).astype(np.int16)
     np.testing.assert_array_equal(df['is_holiday'].to_numpy(), ref)
     assert df['is_holiday'].dtype == np.int16
 
@@ -215,3 +244,36 @@ def test_add_calendar_columns():
     assert df['timeofday'].tolist() == [22., 22.5, 23., 23.5, 0., 0.5]
     df2 = IO.add_calendar_columns(pd.DataFrame(index=idx), timeofday=False)
     assert list(df2.columns) == ['year', 'month', 'dateofyear']
+
+
+# ---------------------------------------------------------------------------
+# SMA windows of the named size
+# ---------------------------------------------------------------------------
+def test_sma_window_matches_its_name():
+    """
+    ``consumption_SMA_1wk_GW`` averages over exactly ONE week: one week after a
+    lagged step from 0 to 1 the trailing mean is 1 (/!\\ the window was two
+    weeks: ~0.5), and 2 days before it is 5/7.
+    """
+    pytest.importorskip("torch", reason="utils imports torch via IO/architecture")
+    pytest.importorskip("holidays")
+    import utils
+
+    num_steps_per_day = 48
+    lag = num_steps_per_day
+    idx = pd.date_range("2022-01-01", periods=num_steps_per_day * 400,
+                        freq="30min", tz="UTC")
+    step_at = num_steps_per_day * 100
+    values = np.where(np.arange(len(idx)) >= step_at, 1.0, 0.0)
+    consumption = pd.Series(values, index=idx)
+
+    df = utils.df_features_past_consumption(consumption, lag, num_steps_per_day)
+    one_week_after = idx[step_at + lag + num_steps_per_day * 7 + 2]
+    assert df["consumption_SMA_1wk_GW"].loc[one_week_after] == \
+        pytest.approx(1.0, abs=0.05)
+    five_days_after = idx[step_at + lag + num_steps_per_day * 5]
+    assert df["consumption_SMA_1wk_GW"].loc[five_days_after] == \
+        pytest.approx(5 / 7, abs=0.01)
+    for weeks in (2, 4):
+        after = idx[step_at + lag + num_steps_per_day * 7 * weeks + 2]
+        assert df[f"consumption_SMA_{weeks}wk_GW"].loc[after] == pytest.approx(1.)

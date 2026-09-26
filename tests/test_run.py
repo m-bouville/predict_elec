@@ -43,7 +43,8 @@ def _postprocess_row(nntq=None, meta=None, base=None):
         base if base is not None else copy.deepcopy(constants.BASELINES_PARAMETERS),
         nntq if nntq is not None else copy.deepcopy(constants.NNTQ_PARAMETERS),
         meta if meta is not None else copy.deepcopy(constants.METAMODEL_NN_PARAMETERS),
-        60, metrics, cov, weights, 2.5, 0)
+        60, metrics, cov, weights, 2.5, 0,       # as run_model_once
+        df_metrics_search=metrics, quantile_delta_coverage_test=cov)
 
 
 def test_postprocess_leaves_parameters_unchanged():
@@ -130,13 +131,17 @@ def test_search_warns_when_validate_every_is_not_used(monkeypatch, validate_ever
 # recalculate_loss: current column names, multi-run rows kept
 # ---------------------------------------------------------------------------
 def test_recalculate_loss(tmp_path):
+    """The objective: search_* columns (first half of the test period),
+    never the reported test_* ones."""
     import run
-    metrics = {f"test_{m}_{k}": 1. for m in ['NNTQ', 'LR', 'RF', 'LGBM',
-                                              'meta_LR', 'meta_NN']
-               for k in ['bias', 'RMSE', 'MAE']}
+    _mk = lambda prefix, v: {f"{prefix}_{m}_{k}": v
+                             for m in ['NNTQ', 'LR', 'RF', 'LGBM', 'meta_LR', 'meta_NN']
+                             for k in ['bias', 'RMSE', 'MAE']}
+    metrics = _mk("test", 1.)                              # objective, as keyed
     cov = {'q10': .01, 'q25': -.02, 'q50': 0., 'q75': .03, 'q90': -.01}
-    rows = [dict(timestamp="2026-09-26 10:00:00", **metrics, **cov,
-                 avg_abs_worst_days_test=1.5, num_runs=n,
+    rows = [dict(timestamp="2026-09-26 10:00:00", **_mk("search", 1.),
+                 **_mk("test", 7.), **cov,               # reported: ignored
+                 avg_abs_worst_days_search=1.5, num_runs=n,
                  loss_NNTQ=99., loss_meta=99.) for n in (1, 5)]
     csv = tmp_path / "search.csv"
     pd.DataFrame(rows).to_csv(csv, index=False)
@@ -236,3 +241,41 @@ def test_append_csv_row(tmp_path):
     run.append_csv_row(pd.DataFrame([{"a": 1.}]), str(empty))      # new, header
     assert pd.read_csv(empty).to_dict("list") == {"a": [1.]}
 
+
+
+# ---------------------------------------------------------------------------
+# search objective on the first half of the test period, second half reported
+# ---------------------------------------------------------------------------
+def test_postprocess_objective_is_the_search_half():
+    import run
+    models = ['NNTQ', 'LR', 'RF', 'LGBM', 'meta LR', 'meta NN']
+    search = pd.DataFrame(np.ones((6, 3)), index=models,
+                          columns=['bias', 'RMSE', 'MAE'])
+    test   = search * 5.
+    cov    = {'q10': .01, 'q25': -.02, 'q50': 0., 'q75': .03, 'q90': -.01}
+    cov_t  = {k: v + .1 for k, v in cov.items()}
+    weights = pd.Series([.4, .2, .2, .2], index=['NNTQ_q50', 'LR', 'RF', 'LGBM'])
+    row, (loss_NNTQ, loss_meta) = run.postprocess(
+        copy.deepcopy(constants.BASELINES_PARAMETERS),
+        copy.deepcopy(constants.NNTQ_PARAMETERS),
+        copy.deepcopy(constants.METAMODEL_NN_PARAMETERS),
+        60, test, cov, weights, 2.5, 0,
+        df_metrics_search=search, quantile_delta_coverage_test=cov_t)
+
+    # both halves in the row, the objective from the search half only
+    assert row['search_meta_NN_MAE'] == 1. and row['test_meta_NN_MAE'] == 5.
+    assert row['q10'] == cov['q10'] and row['test_coverage_q10'] == cov_t['q10']
+    assert row['avg_abs_worst_days_search'] == 2.5
+    flat = {f"test_{m}_{k}": 1. for m in ['NNTQ', 'LR', 'RF', 'LGBM',
+                                          'meta_LR', 'meta_NN']
+            for k in ['bias', 'RMSE', 'MAE']}
+    assert loss_meta == pytest.approx(run.loss_meta(flat), abs=1e-5)
+    assert loss_NNTQ == pytest.approx(run.loss_NNTQ(cov, 2.5), abs=1e-2)
+
+
+def test_search_columns_are_not_parameters():
+    import Bayes_search
+    cols = Bayes_search.cols_not_paras()
+    for c in ['search_meta_NN_MAE', 'test_meta_NN_MAE', 'test_coverage_q10',
+              'avg_abs_worst_days_search']:
+        assert c in cols, c
