@@ -24,7 +24,7 @@ import pandas as pd
 
 
 import architecture, utils, metamodel, plots
-from   constants   import Split
+from   constants   import Split, FORECAST_TZ
 
 
 def ordered_loader(loader: torch.utils.data.DataLoader
@@ -36,6 +36,14 @@ def ordered_loader(loader: torch.utils.data.DataLoader
         return loader
     return torch.utils.data.DataLoader(loader.dataset, batch_size=loader.batch_size,
                                        shuffle=False, drop_last=False)
+
+
+def _local_days(index: pd.DatetimeIndex, tz: str = FORECAST_TZ) -> np.ndarray:
+    """Local calendar day of each timestamp, as datetime64[D] (naive: already local)."""
+    index = pd.DatetimeIndex(index)
+    if index.tz is not None:
+        index = index.tz_convert(tz).tz_localize(None)
+    return index.to_numpy().astype('datetime64[D]')
 
 
 @dataclass
@@ -113,8 +121,9 @@ class DataSplit:
 
         model.eval()
 
-        offset_steps = pred_length - valid_length + 1
-        # print(f"{pred_length} - {valid_length} + 1 = {offset_steps}")
+        offset_steps = pred_length - valid_length
+            # scored steps: rows idx_origin + offset_steps + h, h < valid_length
+            #   (/!\ was + 1: every timestamp was 30 min late)
 
         # per-batch arrays, concatenated after the loop
         list_idx, list_origin, list_y, list_pred = [], [], [], []
@@ -168,15 +177,23 @@ class DataSplit:
         N, V, Q    = pred_GW.shape
 
         h          = np.arange(V)                                     # (V,)
-            # /!\ after reference: h == 0 <=> offset_steps after noon
+            # h == 0 <=> offset_steps after the origin (local noon)
         idx_current= idx_origin[:, None] + h[None, :] + offset_steps  # (N, V)
-        keep       = idx_current < self.X.shape[0]
+        keep       = idx_current < len(self.dates)
             # otherwise, would be after end of dataset
-        time_ns    = (origin_s[:, None] + 60 * minutes_per_step * \
-                      (h[None, :] + offset_steps)) * 10**9            # (N, V)
-
-        # same time resolution as pd.Timestamp(.., unit='s') + pd.Timedelta, as before
-        _unit = (pd.Timestamp(0, unit='s', tz='UTC') + pd.Timedelta(minutes=1)).unit
+        # timestamps: the dates of the rows themselves, not origin + k*30 min
+        #   (robust to missing rows, e.g. the DST fall-back hour missing in RTE data)
+        time_current = pd.DatetimeIndex(self.dates)[
+            np.where(keep, idx_current, 0).ravel()]                   # (N*V,)
+        # keep only the day ahead: local date == local date of the origin + 1
+        #   (a DST day has 46 or 50 steps, not valid_length = 48)
+        day_current= _local_days(time_current).reshape(N, V)
+        _origins   = pd.to_datetime(origin_s, unit='s', utc=True)
+        if pd.DatetimeIndex(self.dates).tz is None:   # naive dates: local already
+            _origins = _origins.tz_localize(None)
+        day_origin = _local_days(_origins)
+        keep      &= day_current == (day_origin + np.timedelta64(1, 'D'))[:, None]
+        time_current = time_current[keep.ravel()].rename("time_current")
 
         df = pd.DataFrame(
             {"y_true": y_GW[keep],
@@ -184,8 +201,7 @@ class DataSplit:
                 for qi, tau in enumerate(quantiles)},
              "h": np.broadcast_to(h, (N, V))[keep],
              "idx_subset_current": idx_current[keep]},
-            index=pd.to_datetime(time_ns[keep], unit='ns', utc=True)\
-                .as_unit(_unit).rename("time_current")
+            index=time_current
         ).sort_index()
 
         min_origin_time = origin_s.min()

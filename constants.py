@@ -12,7 +12,7 @@
 __all__ = ['SEED', 'TRAIN_SPLIT_FRACTION', 'VALID_RATIO',
            'VALIDATE_EVERY', 'DISPLAY_EVERY', 'PLOT_CONV_EVERY',
            'DICT_INPUT_CSV_FNAMES', 'CACHE_FNAME',
-           'FORECAST_HOUR', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
+           'FORECAST_HOUR', 'FORECAST_TZ', 'MINUTES_PER_STEP', 'NUM_STEPS_PER_DAY',
            'BASELINES_PARAMETERS', 'NNTQ_PARAMETERS', 'METAMODEL_NN_PARAMETERS']
 
 
@@ -60,6 +60,10 @@ TRAIN_SPLIT_FRACTION=0.8
 VALID_RATIO  =   0.25           # validation from training set
 
 FORECAST_HOUR:int = 12          # 12: noon
+FORECAST_TZ  :str = 'Europe/Paris'
+    # time zone of FORECAST_HOUR and of the scored day: the day-ahead auction
+    #   closes at noon Paris time, for delivery 00:00-24:00 Paris time of D+1.
+    #   The data stay in UTC; only origins and the scored day use this zone.
 
 
 
@@ -74,6 +78,7 @@ NNTQ_PARAMETERS: dict = {
 
     'input_length'     : days_to_steps(14),  # How many half-hours the model sees
     'pred_length'      : days_to_steps( 1 + (24.-FORECAST_HOUR)/24),
+        # noon -> midnight is always 24 steps in local time: DST switches at 2-3 am
         # start at noon, finish at midnight the next day
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon

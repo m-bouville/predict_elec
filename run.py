@@ -34,7 +34,7 @@ import pandas as pd
 
 import MC_search, Bayes_search, containers, architecture, \
     utils, baselines, IO, plot_statistics   # plots,
-from   constants import Stage, Split
+from   constants import Stage, Split, FORECAST_TZ
 
 # system dimensions
 # B = BATCH_SIZE
@@ -308,7 +308,7 @@ def append_csv_row(df_row: pd.DataFrame, path: str,
     """Append one row to a results csv, creating it (with header) if needed.
     Refuses to append a row whose columns differ from the file's header: pandas
     would otherwise append the values under the wrong columns, silently."""
-    if os.path.exists(path):
+    if os.path.exists(path) and os.path.getsize(path) > 0:
         header = pd.read_csv(path, nrows=0).columns.tolist()
         if header != list(df_row.columns):
             missing = [c for c in header if c not in df_row.columns]
@@ -318,7 +318,8 @@ def append_csv_row(df_row: pd.DataFrame, path: str,
                 f"(missing: {missing}, extra: {extra}"
                 f"{', same names in another order' if not missing and not extra else ''}"
                 f"). Rename the file to start a new one.")
-    df_row.to_csv(path, mode="a", header=not os.path.exists(path), index=False,
+    _new = not os.path.exists(path) or os.path.getsize(path) == 0
+    df_row.to_csv(path, mode="a", header=_new, index=False,
                   float_format=float_format)
 
 
@@ -565,6 +566,7 @@ def run_model_once(
             "train_split_fraction": train_split_fraction,
             "test_steps"   : test_steps,
             "forecast_hour": forecast_hour,
+            "forecast_tz"  : FORECAST_TZ,   # /!\ origins were in UTC before
             "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'} |

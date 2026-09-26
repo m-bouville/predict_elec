@@ -149,4 +149,8 @@ def test_append_csv_row(tmp_path):
         with pytest.raises(ValueError, match="Rename the file"):
             run.append_csv_row(pd.DataFrame([bad]), path)
     assert len(pd.read_csv(path)) == 2                              # untouched
+    empty = tmp_path / "empty.csv"
+    empty.write_text("")                                            # empty file:
+    run.append_csv_row(pd.DataFrame([{"a": 1.}]), str(empty))      # new, header
+    assert pd.read_csv(empty).to_dict("list") == {"a": [1.]}
 

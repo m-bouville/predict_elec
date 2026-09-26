@@ -738,7 +738,8 @@ def load_frozen_trials(csv_path     : str,
                 'metaNN_learning_rate', 'metaNN_weight_decay']] =\
         (results_df[['learning_rate', 'weight_decay',
                 'metaNN_learning_rate', 'metaNN_weight_decay']] * 1e-6)\
-            .map(lambda x: float(f"{x:.6g}"))
+            .apply(lambda col: col.map(lambda x: float(f"{x:.6g}")))
+            # (Series.map: DataFrame.map only exists from pandas 2.1)
             # 6 significant digits, not 9 decimals: round(9) turned e.g.
             #   weight_decay 1.312e-9 into 1e-9
             # learning_rate and weight_decay are small, prone to round-off errors:

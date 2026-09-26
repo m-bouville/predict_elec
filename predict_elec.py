@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
 
     elif 'Bayes' in MODE:       # 'Bayes_NNTQ', 'Bayes_meta, 'Bayes_all'
-        NUM_TRIALS = 400
+        NUM_TRIALS = 80
         VERBOSE    = 0
 
     elif MODE in ['stats_only', 'load_input']:

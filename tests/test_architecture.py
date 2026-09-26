@@ -126,10 +126,10 @@ class TestRMSNorm:
 # ---------------------------------------------------------------------------
 # DayAheadDataset window convention
 # ---------------------------------------------------------------------------
-# NOTE: the 30-min off-by-one (item 2) is in containers' reconstruction
-# (offset_steps): tested in test_open_bugs.py. These tests pin the DATASET
-# convention that the fix relies on: the raw target spans the full horizon starting AT the origin, and
-# the last valid_length steps line up with the day ahead.  index_y_nation is a
+# These tests pin the DATASET convention: origins at FORECAST_HOUR Paris time,
+# the raw target spans the full horizon starting AT the origin, and the last
+# valid_length steps line up with the Paris day ahead (the timestamps given to
+# those steps by containers: test_predictions_and_metamodel_skip.py).  index_y_nation is a
 # LIST (it is concatenated with indices_Y_regions inside __getitem__).
 class TestForecastWindowConvention:
     def test_raw_target_spans_full_horizon_from_origin(self):
@@ -154,9 +154,8 @@ class TestForecastWindowConvention:
     def test_last_valid_length_lines_up_with_day_ahead(self):
         """
         The last valid_length steps of the horizon (what containers scores) start
-        pred_length - valid_length steps after a noon origin, i.e. 00:00 of D+1,
-        and end at 23:30 of D+1.  (This is the convention; the +1 bug is in
-        containers, tested in test_open_bugs.py.)
+        pred_length - valid_length steps after a noon (Paris) origin, i.e. 00:00
+        Paris of D+1, and end at 23:30 Paris of D+1 (a day without DST switch).
         """
         F, n = 3, 48 * 6
         idx = pd.date_range("2022-01-01", periods=n, freq="30min", tz="UTC")
@@ -171,17 +170,53 @@ class TestForecastWindowConvention:
             forecast_hour=12, index_y_nation=[0], indices_Y_regions=[])
 
         i = ds.start_indices_subset[0]
-        origin = ds.forecast_origins[0]
+        origin = ds.forecast_origins[0].tz_convert("Europe/Paris")
         y_valid = np.asarray(ds[0][2]).ravel()[-valid_length:]  # what containers scores
 
         offset = pred_length - valid_length                     # 24 (no +1)
         assert y_valid[0] == i + offset
-        # first scored step is 00:00 of the day AFTER the (noon) origin's day
-        day_ahead_start = origin.normalize() + pd.Timedelta(days=1)
-        assert origin + pd.Timedelta(minutes=30 * offset) == day_ahead_start
-        # last scored step is 23:30 of that same day-ahead
-        assert origin + pd.Timedelta(minutes=30 * (offset + valid_length - 1)) == \
+        # first scored step is 00:00 (Paris) of the day AFTER the origin's day
+        day_ahead_start = origin.normalize() + pd.DateOffset(days=1)
+        assert idx[i + offset] == day_ahead_start
+        assert idx[i + offset + valid_length - 1] == \
                day_ahead_start + pd.Timedelta(hours=23, minutes=30)
+
+    @pytest.mark.parametrize("start, utc_hour", [("2022-01-10", 11),   # CET
+                                                 ("2022-07-10", 10)])  # CEST
+    def test_origins_are_noon_paris(self, start, utc_hour):
+        """Origins at 12:00 Paris: 11:00 UTC in winter, 10:00 UTC in summer
+        (/!\ were 12:00 UTC: 13:00 or 14:00 Paris, after the gate closure)."""
+        n = 48 * 10
+        idx = pd.date_range(start, periods=n, freq="30min", tz="UTC")
+        ds = architecture.DayAheadDataset(
+            data_subset=np.zeros((n, 2), np.float32), dates_subset=idx,
+            temperatures_subset=np.zeros(n, np.float32), input_length=48,
+            pred_length=72, features_in_future=0, forecast_hour=12,
+            index_y_nation=[0], indices_Y_regions=[])
+        assert len(ds) >= 7
+        assert all(o.hour == utc_hour and o.minute == 0 for o in ds.forecast_origins)
+        assert all(o.tz_convert("Europe/Paris").hour == 12 for o in ds.forecast_origins)
+
+    @pytest.mark.parametrize("start", ["2022-03-20", "2022-10-23"])
+    def test_one_origin_per_local_day_across_DST(self, start):
+        """Around the DST switches: one origin per Paris day, and noon -> next
+        Paris midnight is always 24 steps (the switch is at 2-3 am, on D+1)."""
+        n = 48 * 14
+        idx = pd.date_range(start, periods=n, freq="30min", tz="UTC")
+        ds = architecture.DayAheadDataset(
+            data_subset=np.zeros((n, 2), np.float32), dates_subset=idx,
+            temperatures_subset=np.zeros(n, np.float32), input_length=48,
+            pred_length=72, features_in_future=0, forecast_hour=12,
+            index_y_nation=[0], indices_Y_regions=[])
+        local = pd.DatetimeIndex(ds.forecast_origins).tz_convert("Europe/Paris")
+        assert (local.hour == 12).all()
+        assert local.normalize().is_unique
+        assert (np.diff(local.tz_localize(None).normalize()) ==
+                np.timedelta64(1, 'D')).all()
+        for i, o in zip(ds.start_indices_subset, local):
+            midnight = idx[i + 24].tz_convert("Europe/Paris")
+            assert (midnight.hour, midnight.minute) == (0, 0)
+            assert midnight.date() == (o + pd.DateOffset(days=1)).date()
 
     def test_features_in_future_window(self):
         """features_in_future (production setting): X covers input_length steps

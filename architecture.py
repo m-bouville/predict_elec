@@ -26,7 +26,7 @@ import pandas as pd
 
 
 import losses, containers  # utils
-from   constants   import Split
+from   constants   import Split, FORECAST_TZ
 
 
 
@@ -53,7 +53,8 @@ class DayAheadDataset(torch.utils.data.Dataset):
         forecast_hour: int,
 
         index_y_nation : int,
-        indices_Y_regions: List[int]
+        indices_Y_regions: List[int],
+        forecast_tz  : str = FORECAST_TZ
     ):
         """
         Parameters
@@ -67,7 +68,10 @@ class DayAheadDataset(torch.utils.data.Dataset):
         pred_length : int
             Number of future half-hours to predict
         forecast_hour : int
-            Hour when forecast is made
+            Hour when forecast is made, in local time (forecast_tz)
+        forecast_tz : str
+            Time zone of forecast_hour (dates_subset are UTC; naive dates
+            are taken as already local)
         index_y_nation : int
             Column index of target variable
         """
@@ -83,18 +87,18 @@ class DayAheadDataset(torch.utils.data.Dataset):
         self.index_y_nation = index_y_nation
         self.indices_Y_regions= indices_Y_regions
 
-        # Pre-compute valid forecast indices
-        self.start_indices_subset= []
-        self.forecast_origins    = []
-
-        for idx_steps_subset, date in enumerate(dates_subset):
-            if (date.hour   == forecast_hour and
-                date.minute == 0 and
-                idx_steps_subset >= input_length and
-                idx_steps_subset + pred_length < len(data_subset)):
-
-                self.start_indices_subset.append(idx_steps_subset)
-                self.forecast_origins    .append(date)
+        # Pre-compute valid forecast indices: forecast_hour:00 LOCAL time
+        #   (/!\ was date.hour on the UTC dates: 13:00 or 14:00 in Paris, after
+        #    the noon gate closure, and a scored day shifted by 1-2 h)
+        _local = dates_subset.tz_convert(forecast_tz) \
+            if dates_subset.tz is not None else dates_subset
+        _idx   = np.arange(len(dates_subset))
+        _mask  = ((_local.hour   == forecast_hour) &
+                  (_local.minute == 0) &
+                  (_idx >= input_length) &
+                  (_idx + pred_length < len(data_subset)))
+        self.start_indices_subset= _idx[_mask].tolist()
+        self.forecast_origins    = list(dates_subset[_mask])     # as given (UTC)
 
         # print("forecast_origins:", type(self.forecast_origins[0]))
 
