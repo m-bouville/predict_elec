@@ -12,7 +12,11 @@ Compatibility of the ranges in Bayes_search.py.
    the value is then fixed without consulting the sampler.
    Numeric ranges may differ from DISTRIBUTIONS_* (as long as sampled values fit).
 3. Reloading the csv keeps the significant digits of small values (learning
-   rates, weight decays are saved x1e6).
+   rates, weight decays are saved x1e6), the csv being written by
+   ``run.append_csv_row`` (its float_format), as in the search.
+4. The sampling functions put each sampled value into the parameter dicts
+   actually used (key mapping: metaNN_ prefix, num_cells_0/_1, <model>_<key>),
+   and leave the other entries (and their input) unchanged.
 
 Bayes_search imports run -> torch, and optuna: skipped without them.
 """
@@ -26,6 +30,7 @@ optuna = pytest.importorskip("optuna")
 
 import Bayes_search as bs
 import constants
+import run
 from constants import Stage
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -138,7 +143,7 @@ def test_reloaded_weight_decay_keeps_its_significant_digits(tmp_path):
     row, _ = _postprocess_row(nntq, meta)
     row.update(loss_NNTQ=20., loss_meta=2.3)
     csv = tmp_path / "search.csv"
-    pd.DataFrame([row]).to_csv(csv, index=False, float_format="%.6f")  # as the search
+    run.append_csv_row(pd.DataFrame([row]), str(csv))   # the search's writer
 
     trials = bs.load_frozen_trials(
         str(csv), bs.DISTRIBUTIONS_BASELINES | bs.DISTRIBUTIONS_NNTQ |
@@ -164,7 +169,9 @@ def test_numeric_rf_max_features_reloads(tmp_path):
         row.update(loss_NNTQ=20., loss_meta=2.3)
         rows.append(row)
     csv = tmp_path / "search.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False, float_format="%.6f")
+    run.append_csv_row(pd.DataFrame(rows), str(csv))   # the search's writer
+        # (one row at a time, as the search does, 0.4 is written 0.400000 and
+        #  not reloaded: test_open_bugs_B.py)
     trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.meta)
     assert [t.params['RF_max_features'] for t in trials] == ['sqrt', '0.4']
 
@@ -185,7 +192,8 @@ def test_rows_outside_the_current_ranges_are_skipped(tmp_path):
         row.update(loss_NNTQ=20., loss_meta=2.3)
         rows.append(row)
     csv = tmp_path / "search.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False, float_format="%.6f")
+    for row in rows:                       # through the search's writer
+        run.append_csv_row(pd.DataFrame([row]), str(csv))
 
     trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.NNTQ)
 
@@ -193,3 +201,102 @@ def test_rows_outside_the_current_ranges_are_skipped(tmp_path):
     study = optuna.create_study()
     for t in trials:
         study.add_trial(t)                 # the ones loaded are valid
+
+
+# ---------------------------------------------------------------------------
+# 4. sampled values reach the parameter dicts actually used
+# ---------------------------------------------------------------------------
+class _ScriptedTrial:
+    """Stands for an optuna trial: every suggest_* returns the value scripted
+    for its name (all different from the defaults in constants), and records
+    the names asked."""
+    def __init__(self, values):
+        self.values, self.asked = values, []
+
+    def _get(self, name, *a, **k):
+        self.asked.append(name)
+        return self.values[name]
+    suggest_int = suggest_float = suggest_categorical = _get
+
+
+NNTQ_SCRIPT = dict(
+    use_ML_features=1, stride=12, patch_length=36, input_length=576, epochs=12,
+    batch_size=64, learning_rate=0.001, weight_decay=2e-8, dropout=0.06,
+    lambda_cross=0.01, lambda_coverage=0.02, lambda_deriv=0.03,
+    lambda_median=0.04, smoothing_cross=0.05, threshold_cold_degC=1.5,
+    saturation_cold_degC=-3.5, lambda_cold=0.09, lambda_regions=0.016,
+    lambda_regions_sum=0.2, ffn_size=3, num_heads=5, model_dim=340,
+    num_layers=5, num_geo_blocks=8, warmup_steps=1200, patience=7,
+    min_delta=0.02)
+
+META_SCRIPT = dict(
+    metaNN_epochs=15, metaNN_batch_size=32, metaNN_learning_rate=0.002,
+    metaNN_weight_decay=3e-6, metaNN_dropout=0.05, metaNN_num_cells_0=44,
+    metaNN_num_cells_1=8, metaNN_patience=5, metaNN_factor=0.8)
+
+BASELINES_SCRIPT = dict(
+    LR_type='lasso', LR_alpha=0.9,
+    RF_n_estimators=300, RF_max_depth=20, RF_min_samples_leaf=9,
+    RF_min_samples_split=15, RF_max_features='0.4',
+    LGBM_boosting_type='dart', LGBM_num_leaves=31, LGBM_max_depth=4,
+    LGBM_learning_rate=0.05, LGBM_n_estimators=500, LGBM_min_child_samples=8,
+    LGBM_subsample=0.7, LGBM_colsample_bytree=0.8, LGBM_reg_alpha=0.12,
+    LGBM_reg_lambda=0.05)
+
+
+def _unchanged_except(out, base, changed_keys):
+    return {k: v for k, v in out.items() if k not in changed_keys} == \
+           {k: v for k, v in base.items() if k not in changed_keys}
+
+
+def test_NNTQ_sampling_reaches_the_parameters():
+    """Each NNTQ parameter is asked under its own name and its value lands in
+    p[name]; the other entries (device, quantiles...) and the input dict are
+    unchanged."""
+    base = copy.deepcopy(constants.NNTQ_PARAMETERS)
+    ref  = copy.deepcopy(base)
+    assert all(base[k] != v for k, v in NNTQ_SCRIPT.items())   # all visible
+    trial = _ScriptedTrial(NNTQ_SCRIPT)
+    p = bs.sample_NNTQ_parameters(trial, base)
+    assert sorted(trial.asked) == sorted(NNTQ_SCRIPT)
+    assert {k: p[k] for k in NNTQ_SCRIPT} == NNTQ_SCRIPT
+    assert _unchanged_except(p, base, NNTQ_SCRIPT)
+    assert base == ref
+
+
+def test_metamodel_NN_sampling_reaches_the_parameters():
+    """metaNN_<key> -> p[key]; metaNN_num_cells_0 / _1 -> p['num_cells'], in
+    that order; metaNN_epochs -> p['epochs']."""
+    base = copy.deepcopy(constants.METAMODEL_NN_PARAMETERS)
+    ref  = copy.deepcopy(base)
+    trial = _ScriptedTrial(META_SCRIPT)
+    p = bs.sample_metamodel_NN_parameters(trial, base)
+    assert sorted(trial.asked) == sorted(META_SCRIPT)
+    expected = {k[len('metaNN_'):]: v for k, v in META_SCRIPT.items()
+                if 'num_cells' not in k}
+    expected['num_cells'] = [44, 8]
+    assert {k: p[k] for k in expected} == expected
+    assert p['epochs'] == 15 != base['epochs']
+    assert _unchanged_except(p, base, expected)
+    assert base == ref
+
+
+def test_baseline_sampling_reaches_the_parameters():
+    """<model>_<key> -> p[model][key] (numeric max_features given as text ->
+    float); the other entries (random_state, n_jobs...) and the input dict
+    are unchanged."""
+    base = copy.deepcopy(constants.BASELINES_PARAMETERS)
+    ref  = copy.deepcopy(base)
+    trial = _ScriptedTrial(BASELINES_SCRIPT)
+    p = bs.sample_baseline_parameters(trial, base)
+    assert sorted(trial.asked) == sorted(BASELINES_SCRIPT)
+    for name, value in BASELINES_SCRIPT.items():
+        model, key = name.split('_', 1)
+        expected = 0.4 if name == 'RF_max_features' else value
+        assert p[model][key] == expected, name
+        assert base[model][key] != expected, name        # visible change
+    for model in base:
+        keys = {n.split('_', 1)[1] for n in BASELINES_SCRIPT
+                if n.startswith(model + '_')}
+        assert _unchanged_except(p[model], base[model], keys), model
+    assert base == ref

@@ -33,7 +33,7 @@ def test_cold_penalty_ramp():
     assert p[1, 0] == pytest.approx(0.0)     # exactly at threshold
     assert p[3, 0] == pytest.approx(1.0)     # at saturation
     assert p[4, 0] == pytest.approx(1.0)     # colder than saturation, clipped
-    assert 0.0 < p[2, 0] < 1.0               # on the ramp
+    assert p[2, 0] == pytest.approx(0.5)     # linear ramp: halfway (-3 degC)
     assert p.shape == T.shape                # same shape as input (not scalar)
 
 
@@ -73,15 +73,36 @@ CONSTS = dict(lambda_cross=0., lambda_coverage=0., smoothing=0.01,
 # ---------------------------------------------------------------------------
 # quantile loss: pinball, coverage, crossing (hand-computed)
 # ---------------------------------------------------------------------------
-def test_pinball_hand_computed():
-    """Prediction 3 GW below the truth: pinball = tau * 3 for each quantile."""
-    quantiles = (0.1, 0.5, 0.9)
+@pytest.mark.parametrize("pred, cost_per_quantile", [
+    (57., lambda tau: tau * 3),          # 3 GW below the truth: tau * 3
+    (63., lambda tau: (1 - tau) * 3),    # 3 GW above:        (1 - tau) * 3
+])
+def test_pinball_hand_computed(pred, cost_per_quantile):
+    """Pinball loss on both sides of the truth (asymmetric in tau; quantiles
+    not symmetric around 0.5, else both sides sum to the same)."""
+    quantiles = (0.1, 0.25, 0.5)
     y_true = _t(np.full((4, 2), 60.))
-    y_pred = _t(np.full((4, 2, 3), 57.))
+    y_pred = _t(np.full((4, 2, 3), pred))
     loss, parts = losses.quantile_with_crossing_torch(
         y_pred, y_true, quantiles, **CONSTS, Tavg_current=_t(np.full((4, 2), 10.)))
-    np.testing.assert_allclose(parts['pinball'].numpy(), 3 * sum(quantiles))
+    np.testing.assert_allclose(parts['pinball'].numpy(),
+                               sum(cost_per_quantile(t) for t in quantiles))
     np.testing.assert_allclose(loss.numpy(), parts['pinball'].numpy())
+
+
+def test_cold_weight_is_per_sample_in_the_pinball():
+    """Fix 7 where it matters: a cold sample (weight 1 + lambda_cold) and a
+    mild one (weight 1) with different errors. Pinball = mean over the samples
+    of weight x pinball, not the batch-mean weight x the mean pinball (/!\\ the
+    weight was .mean()-ed over the batch: 2.5 x tau instead of 2.75 x tau)."""
+    quantiles, lam = (0.1, 0.5, 0.9), .5
+    y_true = _t([[60.], [60.]])
+    y_pred = _t(np.array([[[57.] * 3], [[59.] * 3]]))   # errors 3 (cold), 1 (mild)
+    T      = _t([[-8.], [15.]])                          # saturated / mild
+    _, parts = losses.quantile_with_crossing_torch(
+        y_pred, y_true, quantiles, **dict(CONSTS, lambda_cold=lam), Tavg_current=T)
+    per_sample = ((1 + lam) * 3 + 1 * 1) / 2            # 2.75 per unit of tau
+    np.testing.assert_allclose(parts['pinball'].numpy(), per_sample * sum(quantiles))
 
 
 @pytest.mark.parametrize("offset", [+10., -10.])
@@ -123,9 +144,10 @@ def test_colder_batch_raises_pinball():
     assert loss_cold.sum() > loss_mild.sum()
 
 
-def test_coverage_scale_computed_once_same_result():
-    """(the smoothing scale is now computed once, not per quantile): same
-    numbers as recomputing it for each quantile."""
+def test_coverage_matches_its_formula():
+    """The coverage penalty, written out independently (smoothed indicator,
+    cold weights per sample, normalised coverage, asymmetric weight and tail
+    emphasis), on random data."""
     quantiles, y_pred, y_true, Tavg = _random_case(0)
     consts = dict(CONSTS, lambda_coverage=.3, smoothing=.1, lambda_cold=.2)
     _, parts = losses.quantile_with_crossing_torch(y_pred, y_true, quantiles,
@@ -141,6 +163,28 @@ def test_coverage_scale_computed_once_same_result():
         expected += .3 * torch.where(err > 0, tau, 1 - tau) * err.abs() / (tau * (1 - tau))
     np.testing.assert_allclose(parts["coverage"].numpy(), expected.numpy(), rtol=1e-6)
     # (float32: the accumulators of quantile_with_crossing_torch)
+
+
+def test_calibrated_forecast_has_coverage_tau_with_cold_weights():
+    """The property the normalisation promises: a perfectly calibrated
+    forecast (the true quantiles of the noise) has coverage ~ tau, hence a
+    near-zero coverage penalty, even with cold days weighted more (/!\\ the
+    unnormalised weighted mean gave coverage ~ tau x mean weight)."""
+    from statistics import NormalDist
+    quantiles = (0.1, 0.25, 0.5, 0.75, 0.9)
+    rng = np.random.default_rng(0)
+    B, V = 20_000, 2
+    y_true = rng.normal(0., 1., size=(B, V))
+    y_pred = np.broadcast_to(np.array([NormalDist().inv_cdf(t) for t in quantiles]),
+                             (B, V, len(quantiles)))
+    T = rng.choice([-8., 15.], size=(B, V))              # half cold, half mild
+    _, parts = losses.quantile_with_crossing_torch(
+        _t(y_pred), _t(y_true), quantiles,
+        **dict(CONSTS, lambda_coverage=1., smoothing=.001, lambda_cold=.5),
+        Tavg_current=_t(T))
+    # each |coverage - tau| < 0.015 (sampling noise ~ 0.004)
+    bound = sum(max(t, 1 - t) / (t * (1 - t)) * .015 for t in quantiles)
+    assert (parts['coverage'].numpy() < bound).all()
 
 
 # ---------------------------------------------------------------------------

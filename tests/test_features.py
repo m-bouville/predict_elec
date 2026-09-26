@@ -167,12 +167,13 @@ def test_school_holidays_no_nan_within_calendar(monkeypatch):
 
 
 def test_school_holidays_real_calendar():
-    """With the project's csv (skipped when absent): known summer 2026,
-    unknown after the last published date."""
+    """With the project's csv files (skipped when either is absent): known
+    summer 2026, unknown (NaN) from the last published date on, known before."""
     import os, IO
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.exists(os.path.join(root, "data", "fr-en-calendrier-scolaire.csv")):
-        pytest.skip("school calendar csv not found")
+    for fname in ("fr-en-calendrier-scolaire.csv", "vacances_scolaires_2015_2017.csv"):
+        if not os.path.exists(os.path.join(root, "data", fname)):
+            pytest.skip(f"school calendar csv not found: data/{fname}")
     cwd = os.getcwd()
     os.chdir(root)                                   # the loader uses data/...
     try:
@@ -183,7 +184,11 @@ def test_school_holidays_real_calendar():
     finally:
         os.chdir(cwd)
     assert out.loc["2026-08-01 12:00", "holiday_summer"] == 3
-    assert out.loc["2027-08-01 12:00"].isna().all()
+    # the returned end is the last published date (known_until: here the start
+    #   of the next summer holidays, whose end is not published yet)
+    assert dates[0] < end < dates[-1]
+    assert out.loc[dates >= end].isna().all().all()
+    assert out.loc[dates <  end].notna().all().all()
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +266,8 @@ def test_sma_window_matches_its_name():
 
     num_steps_per_day = 48
     lag = num_steps_per_day
-    idx = pd.date_range("2022-01-01", periods=num_steps_per_day * 400,
-                        freq="30min", tz="UTC")
+    idx = pd.date_range("2022-01-01", periods=num_steps_per_day * 470,
+                        freq="30min", tz="UTC")     # 52 weeks after the step
     step_at = num_steps_per_day * 100
     values = np.where(np.arange(len(idx)) >= step_at, 1.0, 0.0)
     consumption = pd.Series(values, index=idx)
@@ -274,9 +279,13 @@ def test_sma_window_matches_its_name():
     five_days_after = idx[step_at + lag + num_steps_per_day * 5]
     assert df["consumption_SMA_1wk_GW"].loc[five_days_after] == \
         pytest.approx(5 / 7, abs=0.01)
-    for weeks in (2, 4):
+    for weeks in (2, 4, 52):
         after = idx[step_at + lag + num_steps_per_day * 7 * weeks + 2]
         assert df[f"consumption_SMA_{weeks}wk_GW"].loc[after] == pytest.approx(1.)
+        # one day before the window is past the step: 1/(7 * weeks) still at 0
+        before = idx[step_at + lag + num_steps_per_day * (7 * weeks - 1)]
+        assert df[f"consumption_SMA_{weeks}wk_GW"].loc[before] == \
+            pytest.approx(1 - 1 / (7 * weeks), abs=2e-3), weeks
 
 
 def test_sma_needs_80pc_of_its_window():
@@ -299,3 +308,149 @@ def test_sma_needs_80pc_of_its_window():
         sma = utils.df_features_past_consumption(c, lag, steps)["consumption_SMA_1wk_GW"]
         after_gap = idx[start + steps * gap_days + lag + steps]   # window holds the gap
         assert bool(np.isfinite(sma.loc[after_gap])) is valid, gap_days
+
+
+# ---------------------------------------------------------------------------
+# school holidays: toy calendar in the real files' format, two zones
+# ---------------------------------------------------------------------------
+CALENDAR_HEADER = "description;population;start_date;end_date;location;zones;annee_scolaire"
+CALENDAR_ROWS = [   # dates as served: UTC stamps of the Paris midnights
+    "Vacances de la Toussaint;-;2025-10-17T22:00:00+00:00;2025-11-02T23:00:00+00:00;Lyon;Zone A;2025-2026",
+    "Vacances de la Toussaint;-;2025-10-17T22:00:00+00:00;2025-11-02T23:00:00+00:00;Dijon;Zone A;2025-2026",
+    "Vacances de la Toussaint;Élèves;2025-10-17T22:00:00+00:00;2025-11-02T23:00:00+00:00;Rennes;Zone B;2025-2026",
+    "Vacances de la Toussaint;Enseignants;2025-10-16T22:00:00+00:00;2025-11-03T23:00:00+00:00;Lyon;Zone A;2025-2026",
+    "Vacances d'Hiver;-;2026-02-06T23:00:00+00:00;2026-02-22T23:00:00+00:00;Lyon;Zone A;2025-2026",
+    "Vacances d'Hiver;-;2026-02-13T23:00:00+00:00;2026-03-01T23:00:00+00:00;Rennes;Zone B;2025-2026",
+    "Vacances de Noël;-;2025-12-19T23:00:00+00:00;2026-01-04T23:00:00+00:00;Corse;Corse;2025-2026",
+    "Pont de l'Ascension;-;2026-05-13T22:00:00+00:00;2026-05-17T22:00:00+00:00;Lyon;Zone A;2025-2026",
+    "Début des Vacances d'Été;-;2026-07-03T22:00:00+00:00;2026-07-03T22:00:00+00:00;Lyon;Zone A;2025-2026",
+]
+OLD_CALENDAR = "start_date,end_date,zones,description\n# ==== 2014-2015 ====\n" \
+               "2014-10-18,2014-11-02,A,Toussaint\n"
+
+
+@pytest.fixture
+def toy_school_calendar(tmp_path, monkeypatch):
+    """IO.school_holidays reading toy csv files written under tmp_path."""
+    import IO
+    fname1, fname2 = tmp_path / "calendrier.csv", tmp_path / "old.csv"
+    fname1.write_text("﻿" + CALENDAR_HEADER + "\r\n" + "\r\n".join(CALENDAR_ROWS)
+                      + "\r\n", encoding="utf-8")
+    fname2.write_text(OLD_CALENDAR, encoding="utf-8")
+    real = IO.school_holidays
+    monkeypatch.setattr(IO, "school_holidays",
+                        lambda: real(fname1=str(fname1), url1="-", fname2=str(fname2)))
+    return IO
+
+
+def _paris(stamp):
+    return pd.Timestamp(stamp, tz="Europe/Paris").tz_convert("UTC")
+
+
+def test_school_holidays_two_zones(toy_school_calendar):
+    """Per holiday type, the number of zones on holiday (+1 per zone: A and B
+    together count 2; a location listed twice counts once; teachers, 'pont'
+    and non-metropolitan rows ignored). Holidays are [start, end) at Paris
+    midnights: 0 at start - 30 min, on at start, still on at end - 30 min,
+    off at end."""
+    IO = toy_school_calendar
+    dates = pd.date_range("2025-09-01", "2026-06-30 23:30", freq="30min", tz="UTC")
+    out, _ = IO.make_school_holidays_indicator(dates)
+    assert set(out.columns) == {"holiday_all_saints", "holiday_February",
+                                "holiday_summer"}
+    half = pd.Timedelta("30min")
+
+    ts = out["holiday_all_saints"]
+    start, end = _paris("2025-10-18 00:00"), _paris("2025-11-03 00:00")  # CEST, CET
+    assert [ts[start - half], ts[start], ts[end - half], ts[end]] == [0, 2, 2, 0]
+
+    feb = out["holiday_February"]
+    for stamp, before, after in [("2026-02-07", 0, 1),     # A starts
+                                 ("2026-02-14", 1, 2),     # B joins
+                                 ("2026-02-23", 2, 1),     # A back to school
+                                 ("2026-03-02", 1, 0)]:    # B back to school
+        t = _paris(stamp + " 00:00")
+        assert (feb[t - half], feb[t]) == (before, after), stamp
+
+    assert out.loc[_paris("2026-05-15 12:00")].eq(0).all()          # 'pont'
+    assert out.loc[_paris("2026-01-01 12:00")].eq(0).all()          # Corse only
+    assert out["holiday_all_saints"].max() == 2                     # no double count
+
+
+def test_school_holidays_unknown_after_known_until(toy_school_calendar):
+    """From the last date of the calendar (known_until: here the start of the
+    summer holidays, whose end is not published) on, every column is NaN."""
+    IO = toy_school_calendar
+    dates = pd.date_range("2026-06-01", "2026-07-10", freq="30min", tz="UTC")
+    with pytest.warns(UserWarning, match="school holidays unknown after"):
+        out, (first, last) = IO.make_school_holidays_indicator(dates)
+    known_until = _paris("2026-07-04 00:00")
+    assert last == known_until
+    assert first == pd.Timestamp("2014-10-18", tz="UTC")           # the old file
+    assert out.loc[dates >= known_until].isna().all().all()
+    assert out.loc[dates <  known_until].eq(0).all().all()
+
+
+# ---------------------------------------------------------------------------
+# df_features: assembly of the feature frame
+# ---------------------------------------------------------------------------
+def test_df_features_assembly(monkeypatch):
+    """Rows before the documented start (2014-09-15 UTC, return to class) keep
+    their calendar features but have NaN input data (dropped later with the
+    NaN rows); the bookkeeping columns are removed; no column name twice;
+    dates_df gets the school-calendar row and dates."""
+    import IO
+    idx = pd.date_range("2014-09-10", "2014-09-25 23:30", freq="30min", tz="UTC")
+    df = pd.DataFrame({"consumption_GW": 50. + np.sin(np.arange(len(idx)) / 10),
+                       "Tavg_degC": 12.}, index=idx)
+    IO.add_calendar_columns(df)
+    dates_df = pd.DataFrame({"start": [idx[0]] * 2, "end": [idx[-1]] * 2},
+                            index=["consumption", "temperature"])
+    monkeypatch.setattr(IO, "load_data", lambda *a, **k: (df.copy(), dates_df.copy(),
+                                                           {"NE": 1.}))
+    monkeypatch.setattr(IO, "school_holidays", _toy_calendar)     # all known, 0
+
+    out, dates_out, weights = utils.df_features({}, None, lag=48, num_steps_per_day=48,
+                                                minutes_per_step=30)
+
+    assert out.index.equals(idx)
+    assert out.columns.is_unique
+    assert not {"year", "month", "timeofday", "dateofyear"} & set(out.columns)
+    first = pd.Timestamp("2014-09-15", tz="UTC")
+    early = out.index < first
+    assert out.loc[early, ["consumption_GW", "Tavg_degC"]].isna().all().all()
+    assert out.loc[~early, ["consumption_GW", "Tavg_degC"]].notna().all().all()
+    assert out.loc[early, "sin_24h"].notna().all()                  # calendar kept
+    for col in ("holiday_summer", "is_holiday", "lockdown", "consumption_SMA_1wk_GW",
+                "date"):
+        assert col in out.columns, col
+    assert "school_holidays" in dates_out.index
+    assert dates_out.loc["consumption", "start"] == pd.Timestamp("2014-09-10").date()
+    assert weights == {"NE": 1.}
+
+
+# ---------------------------------------------------------------------------
+# covid lockdown flag
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("start, end", [("2020-03-17", "2020-05-11"),
+                                        ("2020-10-30", "2020-12-15"),
+                                        ("2021-04-03", "2021-05-03")])
+def test_lockdown_periods_in_paris_time(start, end):
+    """lockdown = 1 from the Paris midnight starting `start` to the Paris
+    midnight starting `end`, both included (label slice: the first half-hour
+    of `end` is flagged), 0 outside."""
+    dates = pd.date_range("2020-01-01", "2021-12-31 23:30", freq="30min", tz="UTC")
+    flag = utils.df_features_calendar(dates)["lockdown"]
+    half = pd.Timedelta("30min")
+    t0, t1 = _paris(start + " 00:00"), _paris(end + " 00:00")
+    assert (flag[t0 - half], flag[t0], flag[t1], flag[t1 + half]) == (0, 1, 1, 0)
+    assert flag[t0:t1].eq(1).all()
+
+
+def test_lockdown_total_duration():
+    """Exactly the three periods: (55 + 46 + 30) Paris days, less the 2
+    half-hours of the spring-forward night (2020-03-29, in the first period),
+    plus the first half-hour of each end day."""
+    dates = pd.date_range("2019-12-31", "2022-01-01", freq="30min", tz="UTC")
+    flag = utils.df_features_calendar(dates)["lockdown"]
+    assert int(flag.sum()) == (55 + 46 + 30) * 48 - 2 + 3

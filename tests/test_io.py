@@ -363,3 +363,248 @@ def test_temperature_world_first_run_and_cache_agree(tmp_path, monkeypatch):
     np.testing.assert_allclose(first["monthly_diff_K"].to_numpy(),
                                second["monthly_diff_K"].to_numpy())
     np.testing.assert_allclose(first.index.to_numpy(), second.index.to_numpy())
+
+
+# ---------------------------------------------------------------------------
+# load_consumption: history (monthly file) + recent real-time data
+# ---------------------------------------------------------------------------
+# Sample of the real history file (UTF-8 with BOM, CRLF, ';'): the Paris day
+#   2025-10-26 (fall-back) as RTE serves it, i.e. 48 rows, the two CEST
+#   half-hours 02:00 and 02:30 (00:00 and 00:30 UTC) absent; and 2025-03-30
+#   00:00-04:30 local, where the non-existent 02:00 / 02:30 rows carry the same
+#   UTC stamps as 03:00 / 03:30 (duplicates).
+HISTORY = os.path.join(DATA, "consommation-quotidienne-brute_sample.csv")
+FALL_BACK_DAY = pd.Timestamp("2025-10-26", tz="Europe/Paris")
+FALL_BACK_GAP = pd.DatetimeIndex(["2025-10-26 00:00", "2025-10-26 00:30"], tz="UTC")
+
+
+def _history_without_spring_rows(tmp_path):
+    """The sample restricted to the fall-back day (no duplicate stamps)."""
+    with open(HISTORY, "rb") as f:
+        lines = f.read().split(b"\r\n")
+    path = tmp_path / "history.csv"
+    path.write_bytes(b"\r\n".join(l for l in lines if b";30/03/2025;" not in l))
+    return str(path)
+
+
+def _recent_series(start="2025-10-25 22:00", end="2025-10-27 06:00"):
+    """As load_consumptions_recent returns it: genuine UTC half-hours, GW;
+    values (100 + k/1000) that cannot be mistaken for the history (30-50 GW)."""
+    idx = pd.date_range(start, end, freq="30min", tz="UTC", name="datetime_utc")
+    return pd.Series(100. + np.arange(len(idx)) / 1000., index=idx,
+                     name="consumption_GW")
+
+
+def _rows_of_paris_day(df, day):
+    return df[df.index.tz_convert("Europe/Paris").normalize() == day]
+
+
+def test_consumption_history_alone_on_the_fall_back_day(tmp_path):
+    """History alone: MW -> GW, the UTC stamps of the file; the fall-back Paris
+    day has 48 rows, 00:00 and 00:30 UTC missing (the file has one row per
+    local wall-clock half-hour: the first 02:00-03:00 CEST is not in it)."""
+    df = IO.load_consumption(_history_without_spring_rows(tmp_path), url="-")
+    day = _rows_of_paris_day(df, FALL_BACK_DAY)
+    assert len(day) == 48 and day.index.is_unique
+    assert not FALL_BACK_GAP.isin(df.index).any()
+    assert df.loc["2025-10-26 22:30", "consumption_GW"] == pytest.approx(48.436)
+    assert df.loc["2025-10-25 22:00", "consumption_GW"] == pytest.approx(46.384)
+    assert {"year", "month", "dateofyear", "timeofday"} <= set(df.columns)
+
+
+def test_consumption_history_then_recent(tmp_path):
+    """History + real-time data: the history is kept where both exist, the
+    real-time data fill its gaps (the two fall-back half-hours) and continue
+    after its end. The fall-back Paris day then has its 50 UTC half-hours,
+    each once, all known."""
+    path   = _history_without_spring_rows(tmp_path)
+    hist   = IO.load_consumption(path, url="-")["consumption_GW"]
+    recent = _recent_series()
+    df     = IO.load_consumption(path, url="-", df_recent=recent)
+
+    assert df.index.is_unique and df.index.is_monotonic_increasing
+    # overlap: history preferred
+    pd.testing.assert_series_equal(df["consumption_GW"].reindex(hist.index), hist,
+                                   check_names=False)
+    # gaps of the history: real-time values
+    np.testing.assert_allclose(df.loc[FALL_BACK_GAP, "consumption_GW"],
+                               recent[FALL_BACK_GAP])
+    # after the history ends: real-time values
+    after = recent.index[recent.index > hist.index.max()]
+    assert len(after) > 0
+    np.testing.assert_allclose(df.loc[after, "consumption_GW"], recent[after])
+    # the 25-hour day: 50 unique UTC half-hours, all known
+    day = _rows_of_paris_day(df, FALL_BACK_DAY)
+    assert len(day) == 50 and day.index.is_unique
+    assert day["consumption_GW"].notna().all()
+    assert (day.index[1:] - day.index[:-1] == pd.Timedelta("30min")).all()
+    # calendar columns recomputed on the merged index
+    assert df["timeofday"].isna().sum() == 0
+
+
+def test_consumption_duplicates_kept_then_averaged_by_load_data(monkeypatch):
+    """Duplicate stamps (the non-existent spring-forward local hour): kept as
+    they are by load_consumption (without real-time data), then collapsed by
+    load_data into their mean, with a warning, as its comment documents."""
+    df = IO.load_consumption(HISTORY, url="-")
+    dup = df.index[df.index.duplicated()]
+    assert dup.equals(pd.DatetimeIndex(["2025-03-30 01:00", "2025-03-30 01:30"],
+                                       tz="UTC", name="datetime_utc"))
+    assert sorted(df.loc["2025-03-30 01:30", "consumption_GW"]) == \
+        pytest.approx([46.395, 47.832])
+
+    monkeypatch.setattr(IO, "load_weights", lambda **k: ({}, {}))
+    monkeypatch.setattr(IO, "load_consumptions_recent", lambda: (None, None))
+    monkeypatch.setattr(IO, "load_eco2mix", lambda **k: df[[]].iloc[:1])
+    with pytest.warns(UserWarning, match="consumption has duplicates"):
+        out, _, _ = IO.load_data({"consumption": HISTORY}, None, 48, 30,
+                                 do_plot_statistics=False)
+    assert out.index.is_unique
+    assert out.loc["2025-03-30 01:30", "consumption_GW"] == \
+        pytest.approx((46.395 + 47.832) / 2)
+    assert out.loc["2025-03-30 01:00", "consumption_GW"] == pytest.approx(48.398)
+    assert out.loc["2025-03-30 00:30", "consumption_GW"] == pytest.approx(47.832)
+
+
+# ---------------------------------------------------------------------------
+# load_weights and load_temperature
+# ---------------------------------------------------------------------------
+REGIONS = ["Auvergne-Rhône-Alpes", "Bourgogne-Franche-Comté", "Bretagne",
+           "Centre-Val de Loire", "Grand Est", "Hauts-de-France", "Normandie",
+           "Nouvelle-Aquitaine", "Occitanie", "Pays de la Loire",
+           "Provence-Alpes-Côte d'Azur", "Île-de-France"]           # no Corse
+CONSO_GWh = dict(zip(REGIONS, [60e3, 20e3, 22e3, 18e3, 42e3, 48e3, 26e3,
+                               40e3, 38e3, 27e3, 40e3, 67e3]))
+
+
+def _write_weights_csv(tmp_path):
+    """Annual regional consumption, two years (the mean is used), Corse
+    included (dropped by the loader)."""
+    lines = ["Année;Code INSEE région;Région;Consommation brute électricité (GWh) - RTE"]
+    for year, factor in [(2023, 0.9), (2024, 1.1)]:
+        for k, (region, gwh) in enumerate(list(CONSO_GWh.items()) + [("Corse", 2e3)]):
+            lines.append(f"{year};{k};{region};{gwh * factor:.1f}")
+    path = tmp_path / "weights.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def test_load_weights_per_region_and_per_cluster(tmp_path):
+    """Region weight = its mean annual consumption / the total without Corse
+    (sum 1); cluster weight = the sum of its regions'; the clusters partition
+    the 12 regions."""
+    w_regions, w_clusters = IO.load_weights(path=_write_weights_csv(tmp_path))
+    total = sum(CONSO_GWh.values())
+    assert set(w_regions) == set(REGIONS)                   # Corse dropped
+    for region, gwh in CONSO_GWh.items():
+        assert w_regions[region] == pytest.approx(gwh / total, abs=1e-5)
+    assert sum(w_regions.values()) == pytest.approx(1., abs=1e-4)
+
+    assert set(w_clusters) == set(IO.CLUSTERS)
+    in_clusters = [r for regions in IO.CLUSTERS.values() for r in regions]
+    assert sorted(in_clusters) == sorted(REGIONS)           # each region once
+    for cluster, regions in IO.CLUSTERS.items():
+        assert w_clusters[cluster] == pytest.approx(
+            sum(CONSO_GWh[r] for r in regions) / total, abs=1e-5)
+        assert w_clusters[cluster] == pytest.approx(
+            sum(w_regions[r] for r in regions), abs=1e-4)
+    assert sum(w_clusters.values()) == pytest.approx(1., abs=1e-4)
+
+
+DAYS = pd.date_range("2025-01-01", periods=14, freq="D")
+BASE = dict(zip(REGIONS + ["Corse"], [2., 4., 9., 6., 1., 3., 7., 10., 12., 8.,
+                                      14., 5., 40.]))          # Corse: outlier
+
+
+def _tavg(region, day_idx):
+    return BASE[region] + day_idx + (0.3 if day_idx % 2 else 0.)
+
+
+def _write_temperature_csv(tmp_path, drop=()):
+    """Daily regional temperatures in the real file's format; `drop`: (region
+    or None for all regions, day index) rows left out."""
+    lines = ["ID;Date;Code INSEE région;Région;TMin (°C);TMax (°C);TMoy (°C)"]
+    for d, day in enumerate(DAYS):
+        for k, region in enumerate(BASE):
+            if (region, d) in drop or (None, d) in drop:
+                continue
+            t = _tavg(region, d)
+            lines.append(f"{day:%Y-%m-%d}-{k};{day:%Y-%m-%d};{k};{region};"
+                         f"{t - 3:.2f};{t + 4:.2f};{t:.2f}")
+    path = tmp_path / "temperature.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _weights():
+    total = sum(CONSO_GWh.values())
+    return {r: v / total for r, v in CONSO_GWh.items()}
+
+
+def _expected_mean(regions, d, weights=None):
+    weights = weights or _weights()
+    w = np.array([weights[r] for r in regions])
+    return float(np.dot(w / w.sum(), [_tavg(r, d) for r in regions]))
+
+
+def test_temperature_region_weighted_means(tmp_path):
+    """National Tavg: the consumption-weighted mean of the 12 regions; cluster
+    Tavg: the same with the weights renormalised within the cluster; Corsica
+    (40 degC here) plays no part; Tmin / Tmax the same way."""
+    out, Tavg_full, _, _ = IO.load_temperature(_write_temperature_csv(tmp_path),
+                                               _weights())
+    assert "corse" not in Tavg_full.columns and Tavg_full.shape[1] == 12
+    assert out.index.tz is not None and str(out.index.tz) == "Europe/Paris"
+    for d in range(len(DAYS)):
+        row = out.iloc[d]
+        assert row["Tavg_degC"] == pytest.approx(_expected_mean(REGIONS, d), abs=0.006)
+        assert row["Tmin_degC"] == pytest.approx(_expected_mean(REGIONS, d) - 3, abs=0.006)
+        for cluster, regions in IO.CLUSTERS.items():
+            assert row[f"Tavg_{cluster}_degC"] == pytest.approx(
+                _expected_mean(regions, d), abs=0.006), (cluster, d)
+            assert row[f"T_spread_{cluster}_K"] == pytest.approx(7., abs=0.02)
+
+
+def test_temperature_missing_region_gives_nan(tmp_path):
+    """A region missing on a day: the national value and its cluster's are NaN
+    (no mean over the others); the other clusters are unaffected."""
+    out, _, _, _ = IO.load_temperature(
+        _write_temperature_csv(tmp_path, drop={("Bretagne", 5)}), _weights())
+    row = out.iloc[5]
+    assert np.isnan(row["Tavg_degC"]) and np.isnan(row["Tavg_W_degC"])
+    assert np.isnan(row["T_spread_W_K"])
+    for cluster in ("NE", "IdF", "S"):
+        assert row[f"Tavg_{cluster}_degC"] == pytest.approx(
+            _expected_mean(IO.CLUSTERS[cluster], 5), abs=0.006)
+    assert out["Tavg_degC"].drop(out.index[5]).notna().all()
+
+
+def test_temperature_sma_windows_count_rows(tmp_path):
+    """SMA_3days = rolling(3 rows, min_periods=2), SMA_10days = rolling(10
+    rows, min_periods=8). They count ROWS: across a day absent from the file,
+    SMA_3days averages 3 rows spread over 4 calendar days (open bug: see
+    test_open_bugs_C.py); a NaN value inside the window is skipped."""
+    out, _, _, _ = IO.load_temperature(
+        _write_temperature_csv(tmp_path, drop={(None, 9), ("Bretagne", 5)}),
+        _weights())
+    assert len(out) == len(DAYS) - 1                        # day 9: no row
+    ne, w = out["Tavg_NE_degC"], out["Tavg_W_degC"]
+    sma3, sma10 = out["Tavg_NE_SMA_3days"], out["Tavg_NE_SMA_10days"]
+    # min_periods
+    assert np.isnan(sma3.iloc[0]) and sma3.iloc[1] == pytest.approx(ne.iloc[:2].mean())
+    assert sma10.iloc[:7].isna().all() and sma10.iloc[7] == pytest.approx(ne.iloc[:8].mean())
+    # across the missing day 9: rows of days 7, 8 and 10 (4 calendar days)
+    day10 = pd.Timestamp(DAYS[10], tz="Europe/Paris")
+    assert sma3.loc[day10] == pytest.approx(ne.loc[[pd.Timestamp(DAYS[d], tz="Europe/Paris")
+                                                    for d in (7, 8, 10)]].mean())
+    # NaN inside the window (W on day 5): mean of the other 2 rows
+    assert out["Tavg_W_SMA_3days"].iloc[5] == pytest.approx(w.iloc[3:5].mean())
+    assert out["Tavg_W_SMA_3days"].iloc[6] == pytest.approx(w.iloc[[4, 6]].mean())
+
+
+def test_weights_then_temperature(tmp_path):
+    """The weights of load_weights are keyed as load_temperature needs them."""
+    w_regions, _ = IO.load_weights(path=_write_weights_csv(tmp_path))
+    out, _, _, _ = IO.load_temperature(_write_temperature_csv(tmp_path), w_regions)
+    assert out["Tavg_degC"].iloc[0] == pytest.approx(_expected_mean(REGIONS, 0),
+                                                     abs=0.01)

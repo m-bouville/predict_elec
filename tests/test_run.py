@@ -13,7 +13,11 @@ Tests for ``run`` (outside the model itself) and ``predict_elec``:
 * ``enforce_ranges`` (csv maintenance) works with pandas >= 3;
 * ``append_csv_row`` refuses a row whose columns differ from the file;
 * ``predict_elec``: the 'statistics' split and the RUN_FAST parameters are
-  passed on, and the constants are not modified.
+  passed on, and the constants are not modified; the settings of the other
+  modes (Bayes: 40 trials, silent, RUN_FAST ignored);
+* ``run_model``: mode -> search stage and csv path; the 'once' tail appends
+  its row to parameter_search_one-off.csv; 'statistics', 'stats_only' and
+  'load_input' pass the right settings to run_model_once.
 
 ``run`` imports torch, so the file skips without it.
 """
@@ -279,3 +283,160 @@ def test_search_columns_are_not_parameters():
     for c in ['search_meta_NN_MAE', 'test_meta_NN_MAE', 'test_coverage_q10',
               'avg_abs_worst_days_search']:
         assert c in cols, c
+
+
+
+# ---------------------------------------------------------------------------
+# predict_elec: the other modes
+# ---------------------------------------------------------------------------
+def _exec_predict_elec(monkeypatch, mode, run_fast):
+    import os, run
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "predict_elec.py")
+    src = open(path, encoding='utf-8').read()
+    src, n1 = re.subn(r"MODE = '[A-Za-z_]+'", f"MODE = '{mode}'", src, count=1)
+    src, n2 = re.subn(r"RUN_FAST\s*=\s*(True|False)", f"RUN_FAST = {run_fast}",
+                      src, count=1)
+    assert n1 == n2 == 1, "MODE / RUN_FAST not found in predict_elec.py"
+    captured = {}
+    monkeypatch.setattr(run, "run_model", lambda **kw: captured.update(kw))
+    exec(compile(src, path, "exec"), {"__name__": "__main__"})
+    return captured
+
+
+@pytest.mark.parametrize("mode, run_fast, num_trials, verbose, split", [
+    ('Bayes_NNTQ', True,  40, 0, None),     # RUN_FAST: one-off only
+    ('Bayes_meta', False, 40, 0, None),
+    ('once',       False,  1, 1, None),
+    ('statistics', False,  1, 1, (0.99, 0.01)),
+    ('stats_only', False,  0, 1, None),
+])
+def test_predict_elec_modes(monkeypatch, mode, run_fast, num_trials, verbose, split):
+    """Mode, number of trials, verbosity, split and parameter bundles passed
+    to run.run_model (the constants themselves, RUN_FAST ignored in the
+    searches)."""
+    kw = _exec_predict_elec(monkeypatch, mode, run_fast)
+    assert kw['mode'] == mode and kw['num_trials'] == num_trials
+    assert kw['verbose'] == verbose
+    assert (kw['train_split_fraction'], kw['valid_ratio']) == \
+        (split or (constants.TRAIN_SPLIT_FRACTION, constants.VALID_RATIO))
+    assert kw['baseline_parameters'] is constants.BASELINES_PARAMETERS
+    assert kw['NNTQ_parameters'] is constants.NNTQ_PARAMETERS
+    assert kw['metamodel_NN_parameters'] is constants.METAMODEL_NN_PARAMETERS
+    assert kw['dict_input_csv_fnames'] is constants.DICT_INPUT_CSV_FNAMES
+    assert (kw['forecast_hour'], kw['seed'], kw['minutes_per_step']) == \
+        (constants.FORECAST_HOUR, constants.SEED, constants.MINUTES_PER_STEP)
+
+
+def test_predict_elec_rejects_an_unknown_mode(monkeypatch):
+    """(a Bayes mode without a stage is rejected by run_model, below)"""
+    with pytest.raises(ValueError, match="not a valid mode"):
+        _exec_predict_elec(monkeypatch, 'whatever', False)
+
+
+# ---------------------------------------------------------------------------
+# run_model: mode -> stage, csv path
+# ---------------------------------------------------------------------------
+def _run_model(mode, **kw):
+    import run
+    args = dict(
+        mode=mode, num_trials=3,
+        baseline_parameters=constants.BASELINES_PARAMETERS,
+        NNTQ_parameters=constants.NNTQ_PARAMETERS,
+        metamodel_NN_parameters=constants.METAMODEL_NN_PARAMETERS,
+        dict_input_csv_fnames={}, minutes_per_step=30,
+        train_split_fraction=.8, valid_ratio=.25, forecast_hour=12, seed=0,
+        force_calc_baselines=False, validate_every=1, display_every=5,
+        plot_conv_every=5, cache_dir="some_cache")
+    args.update(kw)
+    return run.run_model(**args)
+
+
+@pytest.mark.parametrize("mode, stage, csv", [
+    ('Bayes_NNTQ',         'NNTQ', 'parameter_search_NNTQ.csv'),
+    ('Bayes_meta',         'meta', 'parameter_search_meta.csv'),
+    ('Bayesian_metamodel', 'meta', 'parameter_search_meta.csv'),
+    ('Bayes_all',          'all',  'parameter_search_all.csv'),
+])
+def test_run_model_search_stage_and_csv(monkeypatch, mode, stage, csv):
+    """The Bayes mode picks the stage and its csv; the bundles and settings
+    are passed on unchanged."""
+    import run
+    from constants import Stage
+    captured = []
+    monkeypatch.setattr(run.Bayes_search, "run_Bayes_search",
+                        lambda **kw: captured.append(kw))
+    monkeypatch.setattr(run, "run_model_once",
+                        lambda **kw: pytest.fail("no single run in a search"))
+    _run_model(mode)
+    assert len(captured) == 1
+    kw = captured[0]
+    assert kw['stage'] is Stage(stage) and kw['trials_csv_path'] == csv
+    assert kw['num_trials'] == 3 and kw['cache_dir'] == "some_cache"
+    assert kw['base_baseline_params'] is constants.BASELINES_PARAMETERS
+    assert kw['base_NNTQ_params'] is constants.NNTQ_PARAMETERS
+    assert kw['base_meta_NN_params'] is constants.METAMODEL_NN_PARAMETERS
+
+
+@pytest.mark.parametrize("mode", ['Bayes', 'Bayes_foo', 'foo'])
+def test_run_model_rejects_an_invalid_mode(monkeypatch, mode):
+    import run
+    monkeypatch.setattr(run.Bayes_search, "run_Bayes_search",
+                        lambda **kw: pytest.fail("search started"))
+    with pytest.raises(ValueError, match="not a valid mode"):
+        _run_model(mode)
+
+
+# ---------------------------------------------------------------------------
+# run_model: single-run modes
+# ---------------------------------------------------------------------------
+def _fake_once(captured, row):
+    from types import SimpleNamespace
+
+    def once(**kw):
+        captured.append(kw)
+        if not kw['do_run_model']:
+            return None
+        return (SimpleNamespace(train="TRAIN"), dict(row), None, None, None,
+                (20, 1.), (row['loss_NNTQ'], row['loss_meta']))
+    return once
+
+
+@pytest.mark.parametrize("mode", ['once', 'statistics'])
+def test_run_model_once_tail_appends_the_one_off_csv(tmp_path, monkeypatch, mode):
+    """'once' / 'statistics': model run (NNTQ cached), row appended to
+    parameter_search_one-off.csv in the working directory, at each run;
+    'statistics': whole-period diagnostics and plots on the training split."""
+    import run
+    from constants import Split
+    monkeypatch.chdir(tmp_path)
+    captured, plotted = [], []
+    row = {'run': 0, 'a': 1.25, 'loss_NNTQ': 20.5, 'loss_meta': 2.25}
+    monkeypatch.setattr(run, "run_model_once", _fake_once(captured, row))
+    monkeypatch.setattr(run.plot_statistics, "thermosensitivity_per_time_of_day",
+                        lambda **kw: plotted.append(kw['data_split']))
+    _run_model(mode, num_trials=1)
+    _run_model(mode, num_trials=1)
+
+    df = pd.read_csv(tmp_path / "parameter_search_one-off.csv")
+    assert df.to_dict("list") == {k: [v, v] for k, v in row.items()}
+    kw = captured[0]
+    assert kw['do_run_model'] is True and kw['save_cache_NNTQ'] is True
+    assert kw['run_id'] == 0 and kw['cache_dir'] == "some_cache"
+    stats = mode == 'statistics'
+    assert kw['do_plot_statistics'] is stats
+    assert kw['split_diagnostics'] is (Split.complete if stats else Split.test)
+    assert plotted == (["TRAIN"] * 2 if stats else [])
+
+
+@pytest.mark.parametrize("mode, stats", [('stats_only', True), ('load_input', False)])
+def test_run_model_without_model_writes_nothing(tmp_path, monkeypatch, mode, stats):
+    """'stats_only' / 'load_input': run_model_once without the model
+    (do_run_model=False), nothing written."""
+    import os, run
+    monkeypatch.chdir(tmp_path)
+    captured = []
+    monkeypatch.setattr(run, "run_model_once", _fake_once(captured, {}))
+    assert _run_model(mode, num_trials=0) is None
+    assert captured[0]['do_run_model'] is False
+    assert captured[0]['do_plot_statistics'] is stats
+    assert os.listdir(tmp_path) == []

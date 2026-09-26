@@ -347,11 +347,15 @@ def _small_net(data, **overrides):
                   input_length=144, pred_length=72, valid_length=48,
                   model_dim=16, num_heads=2, num_layers=1, ffn_size=2,
                   num_geo_blocks=2, patch_length=48, stride=24)
+    # the three arguments that are not in NNTQ_PARAMETERS can be overridden too
+    extra = dict(len_train_data=len(data.train.loader),
+                 num_features=data.num_features, weights_regions={'NE': 1.})
+    for key in extra:
+        if key in overrides:
+            extra[key] = overrides.pop(key)
     params.update(overrides)
     torch.manual_seed(0)
-    return containers.NeuralNet(**params, len_train_data=len(data.train.loader),
-                                num_features=data.num_features,
-                                weights_regions={'NE': 1.})
+    return containers.NeuralNet(**params, **extra)
 
 
 @pytest.mark.filterwarnings("ignore:batch_size")
@@ -473,23 +477,34 @@ def test_subset_evaluation_keeps_every_tensor_on_the_model_device(monkeypatch):
 
 
 @pytest.mark.filterwarnings("ignore:batch_size")
-def test_training_loop_returns_the_profile_of_the_restored_model(monkeypatch):
-    """The validation profile returned with the model is that of the model
-    returned (the best one, restored), not of the last epoch.
-    (restore is replaced by a visible change of the weights)"""
+def test_training_loop_restores_the_best_validated_epoch(monkeypatch):
+    """Validation losses scripted to 3, 1, 2: the model returned has the
+    weights of epoch 1 (the lowest VALIDATION loss), and the profile returned
+    is that of this model (/!\\ was the profile of the last epoch)."""
+    import containers
     data, _, _ = _small_bundle()
-    net = _small_net(data, epochs=2)
+    net = _small_net(data, epochs=3, patience=10)
+    real = architecture.subset_evaluation
+    scripted, states = iter([3., 1., 2.]), []
 
-    def restore(model, verbose=0):
-        with torch.no_grad():
-            for p in model.parameters():
-                p.mul_(0.5)
-    monkeypatch.setattr(net.save_best_model, "restore", restore)
+    def evaluation(model_NN, loader):
+        states.append({k: v.detach().clone()
+                       for k, v in model_NN.model.state_dict().items()})
+        loss = next(scripted, None)
+        return real(model_NN, loader) if loss is None else \
+            (np.full(48, loss), {})
+    monkeypatch.setattr(containers.architecture, "subset_evaluation", evaluation)
 
     *_, profile, parts = net.training_loop(
         data.train.loader, data.valid.loader, validate_every=1,
         display_every=999, plot_conv_every=999, verbose=0)
-    expected, expected_parts = architecture.subset_evaluation(net, data.valid.loader)
+
+    assert len(states) == 4                     # 3 epochs, then the profile
+    best, last, returned = states[1], states[2], states[3]
+    assert any(not torch.equal(best[k], last[k]) for k in best)   # trained on
+    for k in best:
+        torch.testing.assert_close(returned[k], best[k])
+    expected, expected_parts = real(net, data.valid.loader)
     np.testing.assert_allclose(profile, expected, rtol=1e-6)
     for k in parts:
         np.testing.assert_allclose(parts[k], expected_parts[k], rtol=1e-6, atol=1e-9)
@@ -596,3 +611,310 @@ def test_features_scaled_on_the_training_rows_only():
     np.testing.assert_allclose(X[:n_train].mean(0), 0., atol=1e-4)
     np.testing.assert_allclose(X[:n_train].std(0),  1., atol=1e-4)
     assert (X.mean(0) > .5).all()                              # later rows higher
+
+
+# ---------------------------------------------------------------------------
+# the training step (subset_evolution_torch)
+# ---------------------------------------------------------------------------
+# A loader is anything iterable with a len(): a list of batches lets a test
+# feed the SAME batch several times. dropout=0 makes the forward pass
+# deterministic in train mode. Stubbing `optimizer.step` keeps the weights
+# fixed, so that every batch sees the same model.
+def _batch(data, first=0, size=8):
+    """One collated training batch (X, Y_regions, y, T, idx, origin)."""
+    dataset = data.train.loader.dataset
+    return torch.utils.data.default_collate(
+        [dataset[i] for i in range(first, first + size)])
+
+
+def _grad_norm(model):
+    return float(torch.linalg.vector_norm(torch.stack(
+        [p.grad.detach().norm() for p in model.parameters() if p.grad is not None])))
+
+
+class _Scaled(torch.nn.Module):
+    """Model whose outputs are multiplied by `factor`: large gradients
+    (norm >> 1), so that clipping them is visible."""
+    def __init__(self, inner, factor):
+        super().__init__()
+        self.inner, self.factor = inner, factor
+    def forward(self, X):
+        return tuple(o * self.factor for o in self.inner(X))
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.filterwarnings("ignore:Seems like")
+def test_training_step_zeroes_the_gradients_at_each_batch(monkeypatch):
+    """The same batch 3 times, weights frozen (step stubbed): the gradient
+    (before clipping) must be the same at each batch. Without
+    `optimizer.zero_grad` the gradients accumulate over the batches."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data, dropout=0.)
+    net.optimizer.step = lambda *a, **k: None
+    norms, real_clip = [], torch.nn.utils.clip_grad_norm_
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", lambda params, *a, **k:
+                        norms.append(_grad_norm(net.model)) or real_clip(params, *a, **k))
+    batch = _batch(data)
+    architecture.subset_evolution_torch(net, [batch] * 3)
+    assert len(norms) == 3 and norms[0] > 0
+    np.testing.assert_allclose(norms, norms[0], rtol=1e-5)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_scheduler_steps_once_per_batch():
+    """After N batches, lr == learning_rate * lr_warmup_cosine(N, warmup_steps,
+    epochs, len_train_data): the schedule advances per optimizer step, as
+    `warmup_steps` is in batches (not per epoch, nor never)."""
+    data, _, _ = _small_bundle()
+    N, warmup, epochs, per_epoch = 5, 3, 4, 7
+    net = _small_net(data, learning_rate=1e-3, warmup_steps=warmup, epochs=epochs,
+                     len_train_data=per_epoch)
+    architecture.subset_evolution_torch(net, [_batch(data)] * N)
+    expected = [1e-3 * architecture.lr_warmup_cosine(s, warmup, epochs, per_epoch)
+                for s in (N, 1, 0)]
+    assert len(set(expected)) == 3              # N, 1 and 0 steps distinguishable
+    assert net.optimizer.param_groups[0]['lr'] == pytest.approx(expected[0], rel=1e-9)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.filterwarnings("ignore:Seems like")
+def test_gradients_clipped_to_norm_one_after_unscaling(monkeypatch):
+    """The optimizer step sees gradients of norm 1 when their true norm is
+    larger (checked: >> 1). A GradScaler enabled on the CPU (scale 2**10)
+    simulates mixed precision: clipping the SCALED gradients would leave
+    gradients of norm 2**-10 after unscaling."""
+    data, _, _ = _small_bundle()
+
+    def run(amp_scaler):
+        net = _small_net(data, dropout=0.)
+        net.model = _Scaled(net.model, 100.)
+        net.amp_scaler = amp_scaler
+        seen = []
+        net.optimizer.step = lambda *a, **k: seen.append(_grad_norm(net.model))
+        architecture.subset_evolution_torch(net, [_batch(data)])
+        assert len(seen) == 1
+        return seen[0]
+
+    clipped = run(torch.amp.GradScaler(device='cpu', init_scale=2.**10))
+    assert clipped == pytest.approx(1., rel=1e-4)
+
+    # same model and batch, without clipping nor scaling: the true norm
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", lambda *a, **k: None)
+    assert run(torch.amp.GradScaler(device='cpu', enabled=False)) > 10.
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.filterwarnings("ignore:Seems like")
+@pytest.mark.parametrize("lambda_regions", [0., .05])
+def test_training_loss_is_the_documented_loss(lambda_regions):
+    """Two batches, weights frozen (step stubbed): the loss returned is the
+    average over the batches of quantile_torch (+ regions_torch in national
+    units, i.e. with regions_to_nation) on the LAST valid_length steps; its
+    components are averaged the same way."""
+    import losses
+    data, _, _ = _small_bundle()
+    net = _small_net(data, dropout=0., lambda_regions=lambda_regions,
+                     lambda_regions_sum=.5, lambda_deriv=.05, lambda_median=.2,
+                     lambda_coverage=.01, lambda_cold=.2,
+                     regions_to_nation=np.array([.3]))
+    net.optimizer.step = lambda *a, **k: None
+    batches = [_batch(data, 0), _batch(data, 8)]
+    loss_h, dict_h = architecture.subset_evolution_torch(net, batches)
+
+    V, names = 48, ['lambda_cross', 'lambda_coverage', 'lambda_deriv', 'lambda_median',
+                    'smoothing_cross', 'saturation_cold_degC', 'threshold_cold_degC',
+                    'lambda_cold']
+    totals, parts = [], []
+    with torch.no_grad():
+        for X, Y_regions, y, T, *_ in batches:
+            pred, pred_regions = net.model(X)
+            total, part = losses.quantile_torch(
+                pred[:, -V:], y[:, -V:, 0], net.quantiles,
+                **{n: getattr(net, n) for n in names}, Tavg_current=T[:, -V:, 0])
+            if lambda_regions > 0:
+                total = total + losses.regions_torch(
+                    pred_regions[:, -V:], Y_regions[:, -V:], net.lambda_regions,
+                    net.lambda_regions_sum, regions_to_nation=torch.tensor([.3]))
+            totals.append(total)
+            parts.append(part)
+
+    assert loss_h.shape == (V,)
+    torch.testing.assert_close(loss_h, (totals[0] + totals[1]) / 2)
+    assert set(dict_h) == {'pinball', 'coverage', 'crossing', 'derivative', 'median'}
+    for k in dict_h:
+        torch.testing.assert_close(dict_h[k], (parts[0][k] + parts[1][k]) / 2,
+                                   atol=1e-7, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# early stopping
+# ---------------------------------------------------------------------------
+class TestEarlyStopping:
+    def test_small_improvements_exhaust_the_patience(self):
+        """Losses decreasing by less than min_delta (from the BEST loss) count
+        as no improvement: the `patience`-th of them stops, not before."""
+        es = architecture.EarlyStopping(patience=3, min_delta=.1)
+        assert not es(1.)                           # first loss: an improvement
+        assert not es(.97) and not es(.94)          # counter 1, 2
+        assert es(.92) is True                      # counter 3 == patience
+
+    def test_clear_improvement_resets_the_counter(self):
+        """An improvement by more than min_delta resets the counter and the
+        reference; improvements are measured against the best loss, not the
+        previous one (.85 is .15 below 1. but only .05 below .9)."""
+        es = architecture.EarlyStopping(patience=3, min_delta=.1)
+        es(1.)
+        assert not es(.95) and not es(.9)           # counter 1, 2
+        assert not es(.85)                          # 1. - .85 > .1: reset
+        assert es.counter == 0 and es.min_validation_loss == .85
+        assert not es(.8) and not es(.8)            # counter 1, 2 again
+        assert es(.8) is True
+
+    def test_an_improvement_of_exactly_min_delta_does_not_count(self):
+        """Boundary: strictly more than min_delta is required (`<`, not `<=`)
+        (values exact in binary)."""
+        es = architecture.EarlyStopping(patience=1, min_delta=.25)
+        es(1.)
+        assert es(.75) is True
+        es = architecture.EarlyStopping(patience=1, min_delta=.25)
+        es(1.)
+        assert not es(.75 - 2**-20)
+
+    @pytest.mark.filterwarnings("ignore:batch_size")
+    def test_neural_net_passes_its_patience_and_min_delta(self):
+        data, _, _ = _small_bundle()
+        net = _small_net(data, patience=7, min_delta=.123)
+        assert isinstance(net.early_stopping, architecture.EarlyStopping)
+        assert (net.early_stopping.patience, net.early_stopping.min_delta) == (7, .123)
+
+
+# ---------------------------------------------------------------------------
+# NeuralNet: the objects are built from its parameters
+# ---------------------------------------------------------------------------
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.parametrize("quantiles, regions, num_geo_blocks", [
+    ((.1, .25, .5, .75, .9), {'NE': 1.},            2),
+    ((.1, .5, .9),           {'NE': 1., 'SW': 2.},  3)])
+def test_neural_net_model_follows_the_parameters(quantiles, regions, num_geo_blocks):
+    """Number of quantiles, of regions and of geometric blocks: in the model
+    and in the shapes of its outputs."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data, quantiles=quantiles, weights_regions=regions,
+                     num_geo_blocks=num_geo_blocks)
+    Q, R = len(quantiles), len(regions)
+    assert (net.num_quantiles, net.num_regions) == (Q, R)
+    model = net.model
+    assert (model.num_quantiles, model.num_regions) == (Q, R)
+    assert len(model.block_ranges) == model.block_weighting.num_blocks == num_geo_blocks
+    assert model.fc_out[-1].out_features == 72 * (Q + R)
+    X = torch.zeros(3, 144 + 72, data.num_features)
+    with torch.no_grad():
+        pred, pred_regions = model.eval()(X)
+    assert pred.shape == (3, 72, Q) and pred_regions.shape == (3, 72, R)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.parametrize("lr, weight_decay, dropout", [(1e-3, 0., .1),
+                                                       (4e-4, 1e-2, .3)])
+def test_neural_net_optimizer_and_dropout_follow_the_parameters(lr, weight_decay,
+                                                               dropout):
+    """Adam's base lr and weight_decay, and the dropout of every layer (and of
+    the attention) are those of the parameters."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data, learning_rate=lr, weight_decay=weight_decay,
+                     dropout=dropout, num_layers=2)
+    assert isinstance(net.optimizer, torch.optim.Adam)
+    group = net.optimizer.param_groups[0]
+    assert group['initial_lr'] == lr and group['weight_decay'] == weight_decay
+    assert sum(len(g['params']) for g in net.optimizer.param_groups) == \
+        len(list(net.model.parameters()))
+    dropouts = [m.p for m in net.model.modules() if isinstance(m, torch.nn.Dropout)]
+    attention = [m.dropout for m in net.model.modules()
+                 if isinstance(m, torch.nn.MultiheadAttention)]
+    assert len(dropouts) == len(attention) == 2
+    assert all(p == dropout for p in dropouts + attention)
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.parametrize("len_train_data, warmup_steps, epochs", [(7, 4, 5),
+                                                                  (13, 10, 3)])
+def test_neural_net_schedule_follows_the_parameters(len_train_data, warmup_steps,
+                                                    epochs):
+    """The LR multiplier at every step of the run is lr_warmup_cosine with the
+    warmup_steps and epochs of the parameters and len_train_data batches per
+    epoch; the initial lr is learning_rate * multiplier(0)."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data, learning_rate=1e-3, len_train_data=len_train_data,
+                     warmup_steps=warmup_steps, epochs=epochs)
+    total = len_train_data * epochs
+    got = [net.scheduler.lr_lambdas[0](s) for s in range(total + 1)]
+    expected = [architecture.lr_warmup_cosine(s, warmup_steps, epochs, len_train_data)
+                for s in range(total + 1)]
+    np.testing.assert_allclose(got, expected, rtol=1e-12)
+    assert np.argmax(got) == min(warmup_steps, total // 4) - 1      # end of warmup
+    assert net.optimizer.param_groups[0]['lr'] == pytest.approx(1e-3 * expected[0])
+
+
+# ---------------------------------------------------------------------------
+# make_X_and_y: the splits and the scalers
+# ---------------------------------------------------------------------------
+def _trending_bundle():
+    """_small_bundle, whose columns (y, region, features) trend upwards: a
+    scaler fit on other rows than the training ones is visible."""
+    import copy
+    n = 48 * 60
+    dates = pd.date_range("2021-01-01", periods=n, freq="30min", tz="UTC")
+    names_cols = {'y_nation': ['consumption_GW'], 'Y_regions': ['consumption_NE_GW'],
+                  'features': ['f0', 'f1'],
+                  'ML_preds': ['consumption_LR', 'consumption_RF']}
+    array = np.random.default_rng(0).normal(size=(n, 6)).astype(np.float32)
+    array[:, :4] += np.linspace(0, 10, n, dtype=np.float32)[:, None]
+    train_split, n_valid = int(n * .8), int(n * .8 * .25)
+    data, _ = architecture.make_X_and_y(
+        array, dates, np.zeros(n, np.float32), train_split, n_valid,
+        copy.deepcopy(names_cols), False, {'NE': 1.}, 30, 144, 72, True, 16)
+    return data, array, dates, train_split, n_valid
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_make_X_and_y_splits_partition_the_dates():
+    """train, valid, test: disjoint, in this order, their union is complete;
+    valid is the last n_valid rows before test (= before train_split); the
+    values of each split are those of its rows."""
+    data, array, dates, train_split, n_valid = _trending_bundle()
+    train, valid, test = (pd.DatetimeIndex(s.dates)
+                          for s in (data.train, data.valid, data.test))
+    assert train.append(valid).append(test).equals(pd.DatetimeIndex(data.complete.dates))
+    assert pd.DatetimeIndex(data.complete.dates).equals(dates)
+    assert len(train.intersection(valid)) == len(valid.intersection(test)) \
+        == len(train.intersection(test)) == 0
+    assert valid.equals(dates[train_split - n_valid: train_split])
+    assert test[0] == dates[train_split] and train[-1] < valid[0]
+    for split in (data.train, data.valid, data.test):
+        rows = dates.get_indexer(split.dates)
+        assert list(split.idx) == list(rows)
+        # (test.y_nation is (n, 1), train and valid (n,): consumers squeeze it)
+        np.testing.assert_array_equal(np.ravel(split.y_nation), array[rows, 0])
+        np.testing.assert_array_equal(split.Y_regions, array[rows, 1:2])
+        np.testing.assert_array_equal(split.X, array[rows, 2:4])
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_targets_scaled_on_the_training_rows_only():
+    """The scalers of y_nation and Y_regions are fit on the training rows only
+    (not valid nor test): those rows have mean 0 / std 1 once scaled, and
+    the scalers invert to GW (complements
+    test_features_scaled_on_the_training_rows_only, on X)."""
+    data, array, dates, train_split, n_valid = _trending_bundle()
+    n_train = len(data.train.dates)
+    assert n_train == train_split - n_valid
+    for scaler, col in ((data.scaler_y_nation, 0), (data.scaler_Y_regions, 1)):
+        np.testing.assert_allclose(scaler.mean_,  array[:n_train, col].mean(), rtol=1e-5)
+        np.testing.assert_allclose(scaler.scale_, array[:n_train, col].std(),  rtol=1e-5)
+    scaled = data.complete.loader.dataset.data_subset[:, :2]      # y, region
+    np.testing.assert_allclose(scaled[:n_train].mean(0), 0., atol=1e-4)
+    np.testing.assert_allclose(scaled[:n_train].std(0),  1., atol=1e-4)
+    assert (scaled.mean(0) > .5).all()                             # later rows higher
+    np.testing.assert_allclose(
+        data.scaler_y_nation.inverse_transform(scaled[:, :1]).ravel(), array[:, 0],
+        rtol=1e-4, atol=1e-4)

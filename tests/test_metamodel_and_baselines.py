@@ -16,16 +16,14 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Ridge: finite predictions, scaler fit on train only
+# Ridge: finite predictions (scaler: test_scaler_fit_on_train_only)
 # ---------------------------------------------------------------------------
-class TestBaselineScaler:
+class TestRidgePredictions:
     def _fit(self, tmp_path):
         baselines = pytest.importorskip("baselines",
                                         reason="needs lightgbm/sklearn")
         rng = np.random.default_rng(0)
         F, n_train, n_rest = 4, 200, 100
-        # test rows deliberately drawn from a very different distribution: a
-        # leaked (whole-X) scaler would shift the train block far off zero.
         X = np.vstack([rng.normal(0, 1, size=(n_train, F)),
                        rng.normal(50, 5, size=(n_rest, F))]).astype(np.float32)
         y = (X[:, 0] * 2 + rng.normal(0, 0.1, size=n_train + n_rest)).astype(np.float32)
@@ -181,10 +179,11 @@ def test_metamodel_context_excludes_predictions():
 
 def test_scaler_fit_on_train_only(tmp_path):
     """
-    Behavioural leak check. Fit the baselines on data whose test block is drawn
-    from a very different distribution, then compare the returned TEST
-    predictions to a leakage-free reference (Ridge on train-only-scaled
-    features). They match only when the scaler is fit on train alone.
+    Behavioural leak check. Fit the baselines on data whose valid and test
+    blocks are drawn from two other distributions, then compare the returned
+    TEST predictions to a leakage-free reference (Ridge on train-only-scaled
+    features). They match only when the scaler is fit on the training rows
+    alone, not on train + valid nor on all rows.
     (/!\\ it was fit on train+valid+test)
     """
     baselines = pytest.importorskip("baselines", reason="needs lightgbm/sklearn")
@@ -193,7 +192,10 @@ def test_scaler_fit_on_train_only(tmp_path):
 
     rng = np.random.default_rng(0)
     F, n_train, n_rest = 4, 200, 100
-    X = np.vstack([rng.normal(0, 1, size=(n_train, F)),
+    # train (160 rows), valid (40) and test (100) from three distributions: a
+    #   scaler that saw the valid or test rows gives other predictions
+    X = np.vstack([rng.normal(0, 1, size=(160, F)),
+                   rng.normal(20, 3, size=(40, F)),
                    rng.normal(50, 5, size=(n_rest, F))]).astype(np.float32)
     y = (X[:, 0] * 2 + rng.normal(0, 0.1, size=n_train + n_rest)).astype(np.float32)
     dates = pd.date_range("2020-01-01", periods=len(X), freq="D")
@@ -252,3 +254,112 @@ def test_meta_data_horizons_cover_each_paris_day():
     for day, h in per_day:
         expected = [k for k in range(48) if not (str(day) == "2022-03-27" and k in (4, 5))]
         assert sorted(h.tolist()) == expected, day
+
+
+# ---------------------------------------------------------------------------
+# meta-LR: minimum weight
+# ---------------------------------------------------------------------------
+def _meta_LR_data(seed=0, n=300):
+    """Four 'predictions' of y; y leans negatively on C: an unconstrained fit
+    gives C a negative weight."""
+    rng = np.random.default_rng(seed)
+    truth = 50 + 10 * np.sin(np.arange(n) / 20)
+    X = pd.DataFrame({name: truth + rng.normal(0, s, n)
+                      for name, s in [("NNTQ", 1.), ("LR", 2.), ("RF", 3.), ("LGBM", 2.5)]},
+                     index=pd.date_range("2022-01-01", periods=n, freq="30min", tz="UTC"))
+    y = pd.Series(1.3 * X["NNTQ"] + 0.2 * X["LR"] - 0.4 * X["RF"] + 0. * X["LGBM"]
+                  + rng.normal(0, .1, n), index=X.index)
+    return X, y
+
+
+@pytest.mark.parametrize("min_weight", [0., 0.05])
+def test_meta_LR_respects_min_weight(min_weight):
+    """coef_ >= min_weight for every predictor, on data where the
+    unconstrained least squares put one weight below it (and that weight then
+    sits on its bound); the returned weights and predictions match coef_."""
+    pytest.importorskip("torch", reason="metamodel imports torch")
+    import metamodel
+    X, y = _meta_LR_data()
+    unconstrained = np.linalg.lstsq(X.to_numpy(), y.to_numpy(), rcond=None)[0]
+    assert unconstrained.min() < min_weight - 0.1               # the case at stake
+
+    model = metamodel.ConstrainedLinearRegression(fit_intercept=False,
+                                                  min_weight=min_weight).fit(X, y)
+    assert (model.coef_ >= min_weight - 1e-12).all()
+    assert model.coef_[2] == pytest.approx(min_weight, abs=1e-6)   # RF on its bound
+
+    weights, pred_in, pred1, pred2 = metamodel.weights_LR_metamodel(
+        X.iloc[:200], y.iloc[:200], X.iloc[200:], None, min_weight=min_weight)
+    assert list(weights) == list(X.columns)
+    assert min(weights.values()) >= min_weight - 1e-3
+    assert pred2 is None and pred1.index.equals(X.index[200:])
+    assert np.isfinite(pred_in).all() and np.isfinite(pred1).all()
+
+
+# ---------------------------------------------------------------------------
+# meta-NN: the best epoch (on validation) is restored
+# ---------------------------------------------------------------------------
+def test_meta_NN_restores_its_best_epoch(monkeypatch):
+    """Validation losses scripted to 5, 3, 1, 4, 2: the returned network is
+    the one at the end of epoch 3 (not the last one), and the returned weights
+    are those of that epoch's validation."""
+    torch = pytest.importorskip("torch", reason="metamodel is a torch module")
+    import metamodel
+    bugs = pytest.importorskip("test_open_bugs")
+    df = bugs._toy_meta_frame(1, per_h=60)
+    script = [5., 3., 1., 4., 2.]
+    states, valid_weights = [], []
+
+    RealMSE = torch.nn.MSELoss
+
+    class ScriptedMSE(RealMSE):
+        """Real loss when training; scripted loss for the validation."""
+        def forward(self, pred, target):
+            if torch.is_grad_enabled():
+                return super().forward(pred, target)
+            return torch.tensor(script[len(valid_weights) - 1])
+
+    class Recorded(metamodel.MetaNet):
+        """Records, at each validation, its parameters and output weights."""
+        def forward(self, context, preds):
+            y, w = super().forward(context, preds)
+            if not torch.is_grad_enabled():
+                states.append({k: v.clone() for k, v in self.state_dict().items()})
+                valid_weights.append(w.clone())
+            return y, w
+
+    monkeypatch.setattr(metamodel.nn, "MSELoss", ScriptedMSE)
+    monkeypatch.setattr(metamodel, "MetaNet", Recorded)
+    torch.manual_seed(0)
+    nets, weights = metamodel.train_meta_model(
+        df_train=df, df_valid=df.copy(), cols_features=["Tavg_degC"], valid_length=1,
+        dropout=0., num_cells=[8, 8], epochs=len(script), learning_rate=5e-2,
+        weight_decay=0., batch_size=32, patience=10, factor=.5, device="cpu")
+
+    assert len(states) == len(script)                  # one validation batch per epoch
+    best = int(np.argmin(script))
+    final = nets[0].state_dict()
+    for k, v in final.items():
+        torch.testing.assert_close(v, states[best][k])
+    assert any(not torch.equal(final[k], states[-1][k]) for k in final)  # not the last
+    np.testing.assert_array_equal(weights, valid_weights[best].numpy())
+
+
+# ---------------------------------------------------------------------------
+# meta-NN data: complete inputs keep every row
+# ---------------------------------------------------------------------------
+def _meta_inputs(n=96, drop_baseline=None, quantiles=("q25", "q50", "q75")):
+    dates = pd.date_range("2022-01-10 23:00", periods=n, freq="30min", tz="UTC")
+    s = lambda v: pd.Series(np.full(n, v), index=dates)
+    preds = {q: s(50. + k) for k, q in enumerate(quantiles)}
+    baselines = {b: s(50.) for b in ("LR", "RF", "LGBM") if b != drop_baseline}
+    return preds, baselines, np.zeros((n, 1)), np.full(n, 50.), dates
+
+
+def test_meta_data_complete_inputs_keep_every_row():
+    """Control for the test above: with every input, no row is lost."""
+    import metamodel
+    preds, baselines, X, y, dates = _meta_inputs()
+    df = metamodel.prepare_meta_data("train", preds, baselines, X, y, dates, ["f0"])
+    assert len(df) == len(dates)
+    assert (df["NNTQ_inter"] == 2.).all()

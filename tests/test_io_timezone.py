@@ -51,14 +51,13 @@ def test_localised_to_paris_not_fixed_offset(tmp_path):
 
     winter = pd.Timestamp("2022-01-15 12:00", tz="Europe/Paris")
     summer = pd.Timestamp("2022-07-15 12:00", tz="Europe/Paris")
-    assert winter in out.index
-    assert summer in out.index
-    # the discriminating check: winter is UTC+1, summer is UTC+2
-    assert winter.utcoffset() == pd.Timedelta(hours=1)
-    assert summer.utcoffset() == pd.Timedelta(hours=2)
-    # under the old +02:00 bug the winter instant would convert to 10:00 UTC;
-    # correctly it is 11:00 UTC
-    assert winter.tz_convert("UTC").hour == 11
+    assert winter in out.index      # same instant: 11:00 UTC (a fixed +02:00
+    assert summer in out.index      #   gave 10:00 UTC for the winter noon)
+    # the output itself: 12:00 local for both, winter UTC+1, summer UTC+2
+    assert (out.index.hour == 12).all()
+    offsets = sorted(t.utcoffset() for t in out.index)
+    assert offsets == [pd.Timedelta(hours=1), pd.Timedelta(hours=2)]
+    assert sorted(out.index.tz_convert("UTC").hour) == [10, 11]
 
 
 def test_nonexistent_spring_forward_hour_is_dropped(tmp_path):

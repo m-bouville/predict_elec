@@ -8,7 +8,9 @@ They exercise the paths no unit test reaches:
 * the NNTQ cache: a second identical call loads the pickle instead of training,
   and the baseline predictions of the loaded bundle are replaced by the fresh
   ones (aligned on dates: the date-alignment bug of 25/09 would fail here);
-* the NNTQ variants of the metamodel Bayesian search (N+2 trainings, middle N).
+* the NNTQ variants of the metamodel Bayesian search (N+2 trainings, middle N);
+* the NNTQ cache key: each thing the NNTQ depends on gives another pickle;
+* no pickle with save_cache_NNTQ=False; do_run_model=False returns early.
 (Variants with use_ML_features, names_cols modified in place: test_open_bugs.py,
 which reuses _once from here.)
 
@@ -107,7 +109,8 @@ def _once_args(tmp_path, nntq_overrides=None, **kwargs):
 # ---------------------------------------------------------------------------
 def test_full_run_produces_finite_losses_and_row(tmp_path, monkeypatch):
     data, row, metrics, w_meta, cov, _, (loss_NNTQ, loss_meta) = \
-        _once(tmp_path, monkeypatch)
+        _once(tmp_path, monkeypatch)                  # save_cache_NNTQ=False
+    assert not list(tmp_path.glob("NNTQ_preds_*.pkl"))   # no pickle written
     assert np.isfinite(loss_NNTQ) and np.isfinite(loss_meta)
     assert {'NNTQ', 'LR', 'RF', 'LGBM', 'meta LR', 'meta NN'} <= set(metrics.index)
     assert np.isfinite(metrics.to_numpy()).all()
@@ -165,23 +168,71 @@ def test_cache_is_loaded_and_baselines_refreshed(tmp_path, monkeypatch):
         assert np.isfinite(new.to_numpy()).all()
 
 
-def test_cache_key_follows_the_validation_split_and_regions(tmp_path, monkeypatch):
-    """Another validation split, or other region weights, give another NNTQ
-    cache (/!\\ the key ignored them: the cached model was reloaded)."""
-    _once(tmp_path, monkeypatch, save_cache_NNTQ=True)
-    _once(tmp_path, monkeypatch, save_cache_NNTQ=True, valid_ratio=0.2)
-    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 2
+def _other_regions():
+    return _synthetic_features()[:2] + (dict(REGIONS, NE=0.7, S=0.3),)
 
-    other = dict(REGIONS, NE=0.7, S=0.3)
-    monkeypatch.setattr(run.utils, "df_features", lambda *a, **k:
-                        _synthetic_features()[:2] + (other,))
-    run.run_model_once(**_once_args(tmp_path, save_cache_NNTQ=True))
-    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 3
 
-    # the cached worst days depend on their number (/!\ not in the key: a
-    #   stale avg_abs_worst_days, hence loss_NNTQ, was reloaded)
-    _once(tmp_path, monkeypatch, save_cache_NNTQ=True, num_worst_days=5)
-    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 4
+def _extra_feature_column():
+    df, dates_df, regions = _synthetic_features()
+    df["sin_12h"] = np.sin(4 * np.pi * np.arange(len(df)) / 48)
+    return df, dates_df, regions
+
+
+def _other_baselines():
+    base, _, _ = _parameters()
+    base['LR']['alpha'] *= 20
+    base['RF']['max_depth'] = 3
+    return base
+
+
+_ML = {'use_ML_features': 1}
+
+# case: (settings of both runs, changes in the second run, features of the
+#        second run, number of pickles expected)
+CACHE_KEY_CASES = {
+    # /!\ the key ignored the validation split, the region weights, the number
+    #     of worst days (stale avg_abs_worst_days, hence loss_NNTQ, reloaded)
+    "valid_ratio":    ({}, dict(valid_ratio=0.2), None, 2),
+    "regions":        ({}, {}, _other_regions, 2),
+    "num_worst_days": ({}, dict(num_worst_days=5), None, 2),
+    "NNTQ parameter": ({}, dict(nntq_overrides={'dropout': 0.3}), None, 2),
+    "feature column": ({}, {}, _extra_feature_column, 2),
+    "forecast_hour":  ({}, dict(forecast_hour=13), None, 2),
+        # (pred_length not adapted: only the key matters here)
+    "baselines, ML features": (dict(nntq_overrides=_ML),
+                               dict(baseline_parameters='other'), None, 2),
+    # without ML features the NNTQ does not depend on the baselines: same key
+    "baselines, no ML features": ({}, dict(baseline_parameters='other'), None, 1),
+}
+
+
+@pytest.mark.parametrize("case", list(CACHE_KEY_CASES))
+def test_cache_key_follows_what_the_NNTQ_depends_on(tmp_path, monkeypatch, case):
+    """A change of what the NNTQ depends on (validation split, region weights,
+    number of worst days, NNTQ parameters, feature columns, forecast hour, the
+    baselines when they are features) gives another NNTQ pickle; the baselines
+    alone do not when use_ML_features=0."""
+    both, changes, features, expected = CACHE_KEY_CASES[case]
+    _once(tmp_path, monkeypatch, save_cache_NNTQ=True, do_metamodel=False, **both)
+    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 1
+
+    if features is not None:
+        monkeypatch.setattr(run.utils, "df_features", lambda *a, **k: features())
+    kwargs = dict(both, **changes)
+    if kwargs.get('baseline_parameters') == 'other':
+        kwargs['baseline_parameters'] = _other_baselines()
+    run.run_model_once(**_once_args(tmp_path, save_cache_NNTQ=True,
+                                    do_metamodel=False, **kwargs))
+    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == expected
+
+
+def test_no_model_run_returns_early(tmp_path, monkeypatch):
+    """do_run_model=False (statistics only): the data is loaded, then None is
+    returned, before the baselines and the NNTQ."""
+    monkeypatch.setattr(run.baselines, "create_baselines",
+                        lambda *a, **k: pytest.fail("baselines computed"))
+    assert _once(tmp_path, monkeypatch, do_run_model=False) is None
+    assert not list(tmp_path.glob("NNTQ_preds_*.pkl"))
 
 
 def test_regional_errors_in_national_units(tmp_path, monkeypatch):
@@ -376,3 +427,18 @@ def test_objective_on_the_first_half_of_the_test_period(tmp_path, monkeypatch):
     assert worst_days(halves['search']) != pytest.approx(worst_days(whole), abs=.01)
     assert worst == pytest.approx(worst_days(halves['search']), abs=.01)
     assert row['avg_abs_worst_days_search'] == worst
+
+
+    # metrics (loss_meta): search_* on the first half, test_* on the second
+    def mae(model, keep):
+        preds = {'NNTQ': data.test.dict_preds_NNTQ['q50'], **data.test.dict_preds_ML}
+        df = pd.DataFrame({'true': true, **{k: v.reindex(true.index)
+                                            for k, v in preds.items()}})[keep].dropna()
+        return float((df[model] - df['true']).abs().mean())
+
+    for model in ['NNTQ', 'LR']:
+        assert mae(model, halves['search']) != pytest.approx(mae(model, whole), abs=1e-3)
+        assert row[f"search_{model}_MAE"] == pytest.approx(mae(model, halves['search']),
+                                                          abs=1e-3)
+        assert row[f"test_{model}_MAE"]   == pytest.approx(mae(model, halves['test']),
+                                                          abs=1e-3)

@@ -7,10 +7,16 @@ The objectives of the Bayesian searches and their multi-run logic.
 * ``Bayes_search.run_Bayes_search`` objective, with ``run.run_model_once``
   replaced by a script of losses: single runs during warm-up, extra runs only
   for promising trials, early stop, ``clean_avg`` (min and max dropped), csv row,
-  one NNTQ variant per run in the meta search.
+  one NNTQ variant per run in the meta search;
+* the history: csv rows loaded into the study before the new trials (values
+  loss_<stage>, numbering, warm-up and extra-run threshold from them);
+* each stage samples its own bundles and passes what it sampled to
+  run_model_once (NNTQ search: baselines and meta-NN at base values, 1 epoch).
 
 (Bayes_all KeyError: test_open_bugs.py.)
 """
+import copy
+
 import pandas as pd
 import pytest
 
@@ -57,6 +63,27 @@ def test_loss_NNTQ_spread_and_dominant_gap():
     one_big  = {**{q: 0. for q in QS}, 'q10': .05}
     diffused = {q: .01 for q in QS}
     assert run.loss_NNTQ(one_big, 0.) > run.loss_NNTQ(diffused, 0.)
+
+
+@pytest.mark.parametrize("cov, worst, expected", [
+    # shifted down, wider than it should be: spread = ((q90-q10) + (q75-q25))/2
+    #   = (.05 + .02)/2 = +.035; bias = mean(-.06 -.04 -.05 -.02 -.01 +.035)
+    #   = -.145/6. Weighted |terms| (q10 .12, q25 .06, q50 .05, q75 .03,
+    #   q90 .02, spread 2 x .035, bias .145/6), sorted, weights 7..1 (/28)
+    ({'q10': -.06, 'q25': -.04, 'q50': -.05, 'q75': -.02, 'q90': -.01}, .5,
+     100 * (7*.12 + 6*.07 + 5*.06 + 4*.05 + 3*.03 + 2*(.145/6) + 1*.02) / 28
+     + 100 * .02 * .5),
+    # shifted down, too narrow: spread = (-.09 - .06)/2 = -.075 -> |.075|;
+    #   bias = mean(.01 -.01 -.06 -.07 -.08 +.075) = -.0225
+    #   terms: q10 .02, q25 .015, q50 .06, q75 .105, q90 .16, spread .15, bias .0225
+    ({'q10': .01, 'q25': -.01, 'q50': -.06, 'q75': -.07, 'q90': -.08}, 0.,
+     100 * (7*.16 + 6*.15 + 5*.105 + 4*.06 + 3*.0225 + 2*.02 + 1*.015) / 28),
+], ids=["wide", "narrow"])
+def test_loss_NNTQ_hand_computed_spread_and_negative_bias(cov, worst, expected):
+    """Pins each term: spread weight 2, spread = mean of (q90-q10) and
+    (q75-q25) (the /2), |spread|, bias = mean of the 5 gaps and |spread| with
+    weight 1 taken in absolute value (negative here), worst days x 2."""
+    assert run.loss_NNTQ(cov, worst) == pytest.approx(expected, abs=1e-3)
 
 
 def test_worst_days_average_the_top_n_days():
@@ -137,7 +164,14 @@ SCRIPT = {0: [1.0], 1: [2.0], 2: [0.9], 3: [1.5],
 
 @pytest.fixture
 def search(tmp_path, monkeypatch):
+    """_search(stage, num_trials, script=SCRIPT, history=None) runs the search
+    with run_model_once replaced by `script` ({trial number: losses of its
+    runs}, loss_meta; loss_NNTQ = 10 x). `history`: rows already in the csv
+    (full rows, as run.postprocess writes them), then also the template of the
+    new rows. Returns (calls, csv, values of all the study's trials);
+    _search.trials: the study's trials."""
     calls = []
+    state = {'script': SCRIPT, 'template': None}
 
     def fake_run_model_once(**kw):
         trial = kw['run_id']                            # = trial.number
@@ -146,24 +180,35 @@ def search(tmp_path, monkeypatch):
                           variant=kw.get('NNTQ_variant'),
                           num_variants=kw.get('num_NNTQ_variants'),
                           do_metamodel=kw.get('do_metamodel'),
-                          save_cache_baselines=kw.get('save_cache_baselines')))
-        loss = SCRIPT[trial][i]
+                          save_cache_baselines=kw.get('save_cache_baselines'),
+                          baseline=copy.deepcopy(kw['baseline_parameters']),
+                          nntq=copy.deepcopy(kw['NNTQ_parameters']),
+                          meta=copy.deepcopy(kw['metamodel_NN_parameters'])))
+        loss = state['script'][trial][i]
         row = {'run': trial, 'num_runs': 1,         # as run.postprocess
                'loss_NNTQ': loss * 10, 'loss_meta': loss}
+        if state['template'] is not None:           # full row (history)
+            row = dict(state['template'], **row)
         return (None, row, None, None, None, (20, 0.),
                 (loss * 10, loss))          # (loss_NNTQ, loss_meta)
 
     monkeypatch.setattr(run, "run_model_once", fake_run_model_once)
     monkeypatch.setattr(Bayes_search, "plot_optuna", lambda *a, **k: None)
 
-    def _search(stage, num_trials=len(SCRIPT)):
+    def _search(stage, num_trials=len(SCRIPT), script=SCRIPT, history=None):
         csv = tmp_path / f"search_{stage.value}.csv"
+        state['script'] = script
+        if history is not None:
+            for row in history:                 # as the search writes them
+                run.append_csv_row(pd.DataFrame([row]), str(csv))
+            state['template'] = history[0]
         study_values = []
         orig_optimize = optuna.Study.optimize
 
         def optimize(self, func, n_trials, **k):
             orig_optimize(self, func, n_trials=n_trials, **k)
             study_values.extend(t.value for t in self.trials)
+            _search.trials = list(self.trials)
         monkeypatch.setattr(optuna.Study, "optimize", optimize)
 
         Bayes_search.run_Bayes_search(
@@ -225,3 +270,92 @@ def test_search_appends_through_the_checked_writer(search, monkeypatch):
                         lambda df, path, **k: written.append(path) or real(df, path, **k))
     calls, df, _ = search(Stage.meta, num_trials=2)
     assert len(written) == 2 and len(df) == 2
+
+
+
+# ---------------------------------------------------------------------------
+# history: the rows already in the csv enter the study before the new trials
+# ---------------------------------------------------------------------------
+HISTORY_META = [1.0, 2.0, 0.9]          # loss_meta of the csv rows (NNTQ: x10)
+# new trials, numbered after the 3 rows, i.e. past warm-up (min_num_trials 2):
+#   t3: 1.05 > loaded best 0.9 + wiggle 0.1 -> 1 run
+#       (with no history: warm-up, or threshold inf -> not a single run)
+#   t4: 0.95 <= 1.0                        -> 4 runs, clean_avg = 0.775
+HISTORY_SCRIPT = {3: [1.05, 9., 9., 9.], 4: [0.95, 0.8, 0.7, 0.75]}
+
+
+def _history_rows():
+    _postprocess_row = pytest.importorskip("test_run")._postprocess_row
+    rows = []
+    for k, loss in enumerate(HISTORY_META):
+        row, _ = _postprocess_row()
+        row.update(run=k, loss_NNTQ=loss * 10, loss_meta=loss)
+        rows.append(row)
+    return rows
+
+
+@pytest.mark.parametrize("stage", [Stage.NNTQ, Stage.meta])
+def test_history_is_loaded_before_the_new_trials(search, stage):
+    """The csv rows are the study's first trials, valued loss_<stage>; the new
+    trials are numbered from N (the history counts in the warm-up) and the
+    extra-run threshold uses the best loaded value."""
+    scale = 10 if stage == Stage.NNTQ else 1
+    calls, df, values = search(stage, num_trials=2, script=HISTORY_SCRIPT,
+                               history=_history_rows())
+    trials = search.trials
+    n = len(HISTORY_META)
+    assert [t.number for t in trials] == list(range(n + 2))
+    assert [t.state for t in trials[:n]] == \
+        [optuna.trial.TrialState.COMPLETE] * n
+    assert values[:n] == pytest.approx([scale * v for v in HISTORY_META])
+    assert calls[0]['trial'] == n                         # first new trial: N
+    assert _runs_per_trial(calls) == [1, 4]
+    assert values[n:] == pytest.approx([scale * 1.05, scale * 0.775])
+    assert len(df) == n + 2 and df['num_runs'].tolist()[n:] == [1, 4]
+
+
+# ---------------------------------------------------------------------------
+# each stage samples its own bundles only, and uses what it sampled
+# ---------------------------------------------------------------------------
+def _meta_key(name):
+    return name[len('metaNN_'):]
+
+
+def test_NNTQ_search_samples_NNTQ_only(search):
+    """NNTQ search: the NNTQ bundle passed to run_model_once holds the trial's
+    sampled values; baselines and meta-NN stay at their base values, except
+    meta-NN epochs = 1."""
+    calls, _, _ = search(Stage.NNTQ, num_trials=3)
+    base_nntq = dict(constants.NNTQ_PARAMETERS)
+    for c in calls:
+        params = search.trials[c['trial']].params
+        assert params and set(params) <= set(Bayes_search.DISTRIBUTIONS_NNTQ)
+        assert {k: c['nntq'][k] for k in params} == params
+        assert {k: v for k, v in c['nntq'].items() if k not in params} == \
+               {k: v for k, v in base_nntq.items() if k not in params}
+        assert c['baseline'] == constants.BASELINES_PARAMETERS
+        assert c['meta'] == dict(constants.METAMODEL_NN_PARAMETERS, epochs=1)
+    assert any(c['nntq'] != base_nntq for c in calls)
+
+
+def test_meta_search_samples_baselines_and_meta_NN_only(search):
+    """Meta search: the baselines and meta-NN bundles hold the trial's sampled
+    values (<model>_<key>, metaNN_<key>, num_cells_0/_1, epochs sampled, not
+    1); the NNTQ stays at its base values."""
+    calls, _, _ = search(Stage.meta, num_trials=3)
+    for c in calls:
+        params = search.trials[c['trial']].params
+        assert set(params) <= set(Bayes_search.DISTRIBUTIONS_BASELINES) | \
+                              set(Bayes_search.DISTRIBUTIONS_METAMODEL_NN)
+        assert c['nntq'] == dict(constants.NNTQ_PARAMETERS)
+        meta = {k: v for k, v in params.items() if k.startswith('metaNN_')}
+        assert c['meta']['num_cells'] == [meta.pop('metaNN_num_cells_0'),
+                                          meta.pop('metaNN_num_cells_1')]
+        assert meta and {_meta_key(k): c['meta'][_meta_key(k)] for k in meta} == \
+               {_meta_key(k): v for k, v in meta.items()}
+        assert c['meta']['epochs'] == params['metaNN_epochs'] >= 10
+        base = {k: v for k, v in params.items() if not k.startswith('metaNN_')}
+        assert base
+        for name, value in base.items():
+            model, key = name.split('_', 1)
+            assert c['baseline'][model][key] == value, name
