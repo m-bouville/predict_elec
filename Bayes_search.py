@@ -28,7 +28,7 @@ from   optuna.distributions import \
 # import matplotlib.pyplot as plt
 
 
-import run
+import run, plots
 from   constants import Stage
 
 
@@ -73,7 +73,7 @@ DISTRIBUTIONS_NNTQ = {
     'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
     'epochs':      IntDistribution(low=10, high=30, step=1),
-    'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128, 192]),
+    'batch_size':  CategoricalDistribution(choices=[64, 96, 128, 192]),
     'learning_rate':FloatDistribution(low=0.0004,high=0.018, step=0.0004),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.4, step=0.01),
@@ -214,9 +214,7 @@ def sample_NNTQ_parameters(
     if 'epochs' in p:
         p['epochs'        ] = trial.suggest_int  ('epochs', 10, 28, step=2)
     if 'batch_size' in p:
-        p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128, 192])
-        if p['batch_size'] == 32:
-            raise optuna.TrialPruned()   # kept in the choices for compatibility with the csv
+        p['batch_size'    ] = trial.suggest_categorical('batch_size', [64, 96, 128, 192])
     if 'learning_rate' in p:
         p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.018,step=0.0004)
     if 'weight_decay' in p:
@@ -355,7 +353,7 @@ def run_Bayes_search(
             cache_dir           : Optional[str] = None,
 
             # multi-run for best candidtes (robustness)
-            num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 7, Stage.meta:5},
+            num_runs            : Dict[Stage, int]  ={Stage.NNTQ: 9, Stage.meta:5},
             min_num_trials      : Dict[Stage, int]  ={Stage.NNTQ:40, Stage.meta:10},
             wiggle_value        : Dict[Stage, float]={Stage.NNTQ:2., Stage.meta:0.03},
 
@@ -623,7 +621,7 @@ def plot_optuna(study,
     plt.xlabel("trial number")
     plt.ylabel(f"{stage.value} loss")
     plt.yscale('log')
-    plt.show()
+    plots.finish()
 
 
     # Parameter importance

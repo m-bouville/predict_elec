@@ -193,7 +193,7 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
 
         plt.figure(figsize=(10,6))
         df.drop(columns=['consumption_GW']).iloc[-(8*24*2):].plot()
-        plt.show()
+        plots.finish()
 
         # # no time modification
         # plt.figure(figsize=(10,6))
@@ -341,7 +341,7 @@ def compare_models(true_series:     pd.Series,
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        plots.finish()
 
 
         print(f"\n[Diagnostics]{subset_str} RMSE by month of year{unit_str}")
@@ -369,7 +369,7 @@ def compare_models(true_series:     pd.Series,
         plt.grid(True, alpha=0.3)
         plt.legend()
         plt.tight_layout()
-        plt.show()
+        plots.finish()
 
     return df_metrics
 
@@ -531,7 +531,7 @@ def worst_days_by_loss(
         plt.xlabel('Month')
         plt.ylabel('Frequency')
         plt.xticks(range(1, 13))
-        plt.show()
+        plots.finish()
 
         # plt.figure(figsize=(10, 6))
         # sns.histplot(data=daily, x='year',bins=len(daily['year'].unique()),discrete=True)
@@ -545,7 +545,7 @@ def worst_days_by_loss(
         plt.title('Histogram of Average Temperature for Bad Days')
         plt.xlabel('Average Temperature (°C)')
         plt.ylabel('Frequency')
-        plt.show()
+        plots.finish()
 
         plt.figure(figsize=(10, 6))
         sns.histplot(data=daily, x='day_name', shrink=0.8)
@@ -553,7 +553,7 @@ def worst_days_by_loss(
         plt.xlabel('Day of the Week')
         plt.ylabel('Frequency')
         plt.xticks(rotation=45)
-        plt.show()
+        plots.finish()
 
 
     return daily, avg_abs_diff

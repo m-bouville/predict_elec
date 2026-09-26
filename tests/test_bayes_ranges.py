@@ -167,3 +167,4 @@ def test_numeric_rf_max_features_reloads(tmp_path):
     pd.DataFrame(rows).to_csv(csv, index=False, float_format="%.6f")
     trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.meta)
     assert [t.params['RF_max_features'] for t in trials] == ['sqrt', '0.4']
+

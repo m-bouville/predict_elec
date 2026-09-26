@@ -11,11 +11,39 @@
 
 from   typing import Dict, Tuple,Sequence, Optional  # List
 
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.dates  as mdates
 
 import numpy  as np
 import pandas as pd  # for types
+
+
+
+# backends that draw no window: after plt.show() the figure is of no further use
+try:
+    from matplotlib.backends import backend_registry, BackendFilter
+    _NON_INTERACTIVE = set(backend_registry.list_builtin(BackendFilter.NON_INTERACTIVE))
+except ImportError:   # matplotlib < 3.9
+    _NON_INTERACTIVE = {'agg', 'cairo', 'pdf', 'pgf', 'ps', 'svg', 'template'}
+
+
+def _closes_after_show(backend: Optional[str] = None) -> bool:
+    """True when figures can be closed once shown: non-interactive backends
+    (Agg, ...) and the inline backend (Spyder, Jupyter), which displays a
+    figure as an image (and closes it itself). False for window backends (Qt,
+    Tk, ...), where closing would remove the window, and interactive widgets."""
+    backend = (backend or matplotlib.get_backend()).lower()
+    return backend in _NON_INTERACTIVE or backend.endswith('backend_inline')
+
+
+def finish() -> None:
+    """End of every figure: show it, then close all figures unless they live
+    in windows. (/!\\ figures were never closed: under a non-interactive
+    backend, e.g. a search run from a terminal, they accumulated.)"""
+    plt.show()
+    if _closes_after_show():
+        plt.close('all')
 
 
 
@@ -39,7 +67,7 @@ def data(df,
     if getattr(df, 'ndim', 1) == 2 and df.shape[1] > 1:
         plt.legend()
 
-    plt.show()
+    finish()
 
 
 # common color codes
@@ -101,7 +129,7 @@ def convergence_quantile(list_train_loss: list, list_min_train_loss: list,
         handles2, labels2 = zip(*ordered)
         plt.legend(handles2, labels2, ncol=2)
 
-    plt.show()
+    finish()
 
 
 def loss_per_horizon(dict_evolution_loss: Dict[str, np.ndarray],
@@ -124,7 +152,7 @@ def loss_per_horizon(dict_evolution_loss: Dict[str, np.ndarray],
     if len(plt.gca().get_lines()) > 1:
         plt.legend()
 
-    plt.show()
+    finish()
 
 
 # --------------------------------------------------------
@@ -291,7 +319,7 @@ def curves( true_series        : Optional[pd.Series],
     if len(plt.gca().get_lines()) > 1:
         plt.legend()
 
-    plt.show()
+    finish()
 
 
 
@@ -379,7 +407,7 @@ def scatter(true_series        : Optional[pd.Series],
     if len(plt.gca().collections) + len(plt.gca().get_lines()) > 1:
         plt.legend()
 
-    plt.show()
+    finish()
 
 
 
@@ -549,4 +577,4 @@ def metrics(df_metrics: pd.DataFrame,
         plt.xlabel(subset +' |bias| [GW]'); plt.xlim(-0.01, 1.7)
         plt.ylabel(subset + ' RMSE [GW]' ); plt.ylim( 0.,   max_RMSE)
         plt.legend()
-        plt.show()
+        finish()

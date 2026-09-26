@@ -125,7 +125,7 @@ def drift_with_time(
     plt.ylabel("temperature [°C], annual moving average")
     plt.xlabel("year")
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 
@@ -203,7 +203,7 @@ def drift_with_time(
     plt.ylabel("consumption [GW], annual moving average")
     plt.xlabel("year")
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
     # print(_consumption.index.has_duplicates)
@@ -228,7 +228,7 @@ def drift_with_time(
     plt.xlabel("year")
     plt.ylabel("consumption residual [GW], annual moving average")
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 
@@ -237,21 +237,29 @@ def drift_with_time(
 # prices
 # -------------------------------------------------------
 
+def _price_profile_local(price_local: pd.Series) -> pd.Series:
+    """Mean price per local hour, index 0..24 (24 repeats 0 to close the day)."""
+    profile = price_local.groupby(price_local.index.hour).mean()
+    profile.loc[24] = profile.loc[0]
+    return profile.rename_axis('hour_local')
+
+
 def prices_per_season(price:   pd.Series,
                       country: str) -> None:
 
-    # TODO avoid code duplication
-
     print(country, "prices from", price.index.date.min(), "to", price.index.date.max())
 
-    winter = price[price.index.month.isin([12, 1, 2])].dropna().to_frame()
-    winter['year_as_January'] = (winter.index + pd.DateOffset(months=2)).year.astype(int)
-    #winter['year_pair']=winter.apply(lambda row:f"{row['year_as_January']-1}-"
-    #                                            f"{row['year_as_January']-2000}",axis=1)
+    # local time: hours AND months (/!\ was UTC + a fixed 1 h in winter and 2 h
+    #   in spring and summer, wrong for most of March)
+    price = plots.to_local_time(price.dropna())
 
-    spring = price[price.index.month.isin([ 3, 4, 5])]
-
-    summer = price[price.index.month.isin([ 6, 7, 8])]
+    seasons = {'winter': ([12, 1, 2], "December, January and February"),
+               'spring': ([ 3, 4, 5], "March, April and May"),
+               'summer': ([ 6, 7, 8], "June, July and August")}
+    # winter: year of January (December counts with the next year)
+    year_of = {'winter': price.index.year + (price.index.month == 12),
+               'spring': price.index.year,
+               'summer': price.index.year}
 
     first_year = 2019
     ranges = {'winter': range(2016, 2027),
@@ -266,111 +274,45 @@ def prices_per_season(price:   pd.Series,
     styles.pop('std');  names.pop('std')
 
     _ylim = [0, 150]
-    _dict_stats = {'avg_winter': [], 'std_winter': [], 'range_winter': [],
-                   'avg_spring': [], 'std_spring': [], 'range_spring': [],
-                   'avg_summer': [], 'std_summer': [], 'range_summer': []}
+    _dict_stats = {f'{_stat}_{_season}': [] for _season in seasons
+                   for _stat in names}
 
+    for _season, (_months, _months_name) in seasons.items():
+        in_season = price.index.month.isin(_months)
+        years_with_data = []
 
-    # winter
-    plt.figure(figsize=(10,6))
-    for _year in ranges['winter']:
-        _winter = winter[winter['year_as_January'] == _year].\
-                  drop(columns=['year_as_January'])
-        _winter = _winter.groupby(_winter.index.hour).mean()
+        plt.figure(figsize=(10,6))
+        for _year in ranges[_season]:
+            _price = price[in_season & (year_of[_season] == _year)]
+            if len(_price) == 0:   # /!\ spring and summer used to crash
+                continue
+            years_with_data.append(_year)
+            _profile = _price_profile_local(_price)
 
-        # print(country, _year, len(_winter))
-        if len(_winter) > 0:  # if df not empty
-            _dict_stats['avg_winter'  ].append(float(_winter.mean().iloc[0]))
-            # _dict_stats['std_winter'  ].append(float(_winter.std ().iloc[0]))
-            _dict_stats['range_winter'].append(float((_winter.max()-_winter.min()).iloc[0]))
-
-            _winter = _winter.rename(lambda x: x + 1).rename_axis('hour_local')
-            _winter.loc[0] = _winter.loc[24]
-            _winter.sort_index(inplace=True)
-            # print(_year, _winter)
+            _hours = _profile.drop(index=24)       # stats over the 24 hours
+            _dict_stats['avg_'   + _season].append(float(_hours.mean()))
+            _dict_stats['range_' + _season].append(float(_hours.max() - _hours.min()))
 
             if _year >= first_year:
-                plt.plot(_winter.index, _winter.values,
-                         color=colors[_year], label=f"{_year-1}-{_year-2000}")
-        else:
-            ranges['winter'] = [e for e in ranges['winter'] if e != _year]
+                if _season == 'winter':
+                    _color, _label = colors[_year], f"{_year-1}-{_year-2000}"
+                else:   # spring and summer 2021 go with 2022,
+                        #   whereas the 2020-21 winter is like 2020
+                    _color = colors[_year] if _year != 2021 else 'orange'
+                    _label = _year
+                plt.plot(_profile.index, _profile.values, color=_color, label=_label)
 
-    plt.title(f"Winter spot price in {country} (December, January and February)")
-    plt.ylabel("spot price [€/MWh]")
-    plt.xlabel("local time of day")
+        ranges[_season] = years_with_data
 
-    plt.xlim(0, 24)
-    plt.xticks(range(0, 25, 4))
-    plt.ylim(_ylim)
-    plt.legend()
-    plt.show()
+        plt.title(f"{_season.capitalize()} spot price in {country} ({_months_name})")
+        plt.ylabel("spot price [€/MWh]")
+        plt.xlabel("local time of day")
 
-
-    # spring
-    plt.figure(figsize=(10,6))
-    for _year in ranges['spring']:
-        _spring = spring[spring.index.year == _year]
-        _spring = _spring.groupby(_spring.index.hour).mean()
-
-        _dict_stats['avg_spring'  ].append(float(_spring.mean()))
-        # _dict_stats['std_spring'  ].append(float(_spring.std ().iloc[0]))
-        _dict_stats['range_spring'].append(float((_spring.max()-_spring.min())))
-
-        _spring = _spring.rename(lambda x: x + 2).rename_axis('hour_local')
-        _spring[0] = _spring[24]
-        _spring[1] = _spring[25]
-        _spring.drop(index=[25], inplace=True)
-        _spring.sort_index(inplace=True)
-        # print(_year, _spring)
-
-        if _year >= first_year:
-            plt.plot(_spring.index, _spring.values,
-                     color=colors[_year] if _year!=2021 else 'orange', label=_year)
-            # spring 2021 goes with 2022, whereas 2020-21 winter is like 2020
-
-    plt.title (f"Spring spot price in {country} (March, April and May)")
-    plt.ylabel("spot price [€/MWh]")
-    plt.xlabel("local time of day")
-
-    plt.xlim(0, 24)
-    plt.xticks(range(0, 25, 4))
-    plt.ylim(_ylim)
-    plt.legend()
-    plt.show()
-
-
-
-    # summer
-    plt.figure(figsize=(10,6))
-    for _year in ranges['summer']:
-        _summer = summer[summer.index.year == _year]
-        _summer = _summer.groupby(_summer.index.hour).mean()
-
-        _dict_stats['avg_summer'  ].append(float(_summer.mean()))
-        # _dict_stats['std_summer'  ].append(float(_summer.std ().iloc[0]))
-        _dict_stats['range_summer'].append(float((_summer.max()-_summer.min())))
-
-        _summer = _summer.rename(lambda x: x + 2).rename_axis('hour_local')
-        _summer[0] = _summer[24]
-        _summer[1] = _summer[25]
-        _summer.drop(index=[25], inplace=True)
-        _summer.sort_index(inplace=True)
-        # print(_year, _summer)
-
-        if _year >= first_year:
-            plt.plot(_summer.index, _summer.values,
-                     color=colors[_year] if _year!=2021 else 'orange', label=_year)
-            # summer 2021 goes with 2022, whereas 2020-21 winter is like 2020
-
-    plt.title (f"Summer spot price in {country} (June, July and August)")
-    plt.ylabel("spot price [€/MWh]")
-    plt.xlabel("local time of day")
-
-    plt.xlim(0, 24)
-    plt.xticks(range(0, 25, 4))
-    plt.ylim(_ylim)
-    plt.legend()
-    plt.show()
+        plt.xlim(0, 24)
+        plt.xticks(range(0, 25, 4))
+        plt.ylim(_ylim)
+        plt.legend()
+        plots.finish()
 
 
 
@@ -386,7 +328,7 @@ def prices_per_season(price:   pd.Series,
     plt.xlim(2014, 2027)
     plt.ylim(_ylim)
     plt.legend(ncols=2)
-    plt.show()
+    plots.finish()
 
     _dict_ref = {}
     for key in list(_dict_stats.keys()):
@@ -405,7 +347,7 @@ def prices_per_season(price:   pd.Series,
     plt.xlim(2014, 2027)
     plt.ylim(0, 6)
     plt.legend(ncols=2)
-    plt.show()
+    plots.finish()
 
 
     _dict_ref = {}
@@ -428,7 +370,7 @@ def prices_per_season(price:   pd.Series,
     plt.xlim(2014, 2027)
     plt.ylim(0, 2)
     plt.legend(loc='upper left')
-    plt.show()
+    plots.finish()
 
 
 
@@ -474,7 +416,7 @@ def production_function_price(
         _legend  = plt.legend(loc='upper right')
         for handle in _legend.legend_handles:
             handle.set_alpha(1)
-        plt.show()
+        plots.finish()
 
 
         # scatter plot: production (as fraction of consumption) as function of price
@@ -490,7 +432,7 @@ def production_function_price(
         _legend  = plt.legend(loc='upper right')
         for handle in _legend.legend_handles:
             handle.set_alpha(1)
-        plt.show()
+        plots.finish()
 
 
         # CO2 as function of price, with regressions
@@ -519,7 +461,7 @@ def production_function_price(
         plt.ylim(0, 100)
         plt.xlabel("price [€/MWh]")
         plt.ylabel("CO2 [kg/MWh]")
-        plt.show()
+        plots.finish()
 
 
 
@@ -566,7 +508,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     plt.ylim(0.6, 1.7)
     plt.xlabel("average daily temperature [°C]")
     plt.ylabel("national consumption / its average")
-    plt.show()
+    plots.finish()
 
 
     # per région
@@ -583,7 +525,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     plt.ylim(0.6, 1.8)
     plt.xlabel("average daily temperature [°C]")
     plt.ylabel("consumption / its average")
-    plt.show()
+    plots.finish()
 
     list_regions_plots = ['Occi.', 'HdF']
 
@@ -613,7 +555,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     plt.ylim(0.6, 1.9)
     plt.xlabel(f"average daily temperature < {threshold_winter_degC:n} °C")
     plt.ylabel("consumption / its average")
-    plt.show()
+    plots.finish()
 
 
     # per région, summer
@@ -641,7 +583,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     plt.ylim(0.6, 1.1)
     plt.xlabel(f"average daily temperature > {threshold_summer_degC:n} °C")
     plt.ylabel("consumption / its average")
-    plt.show()
+    plots.finish()
 
 
     _df_slopes_pc = pd.concat([_slopes_winter_pc.T, _slopes_summer_pc.T], axis=1)
@@ -883,7 +825,7 @@ def thermosensitivity_peak_hour(
         plt.xticks(range(0, 25, 4))
         plt.ylim(30, 82)
         plt.legend(loc='lower center' if season in ['all','winter'] else 'upper left')
-        plt.show()
+        plots.finish()
 
 
         # _stats = {'avg': dict_df[season].mean(0), 'std': dict_df[season].std(0),
@@ -914,7 +856,7 @@ def thermosensitivity_peak_hour(
         plt.ylim(-20, 20)
         plt.legend(loc='lower right', ncols=2)
             # if season in ['all','winter'] else 'upper left')
-        plt.show()
+        plots.finish()
 
 
         _idx   = dict_T    [season] <= 13
@@ -953,7 +895,7 @@ def thermosensitivity_peak_hour(
     plt.xlim( 0, 24)
     plt.xticks(range(0, 25, 4))
     plt.legend(loc='lower right', ncols=2)
-    plt.show()
+    plots.finish()
 
     # plotting consumption w.r.t. summer
     plt.plot(figsize=(12,5))
@@ -967,7 +909,7 @@ def thermosensitivity_peak_hour(
     plt.xlim( 0, 24)
     plt.xticks(range(0, 25, 4))
     plt.legend(loc='lower left', ncols=2)
-    plt.show()
+    plots.finish()
 
 
     # plotting thermosensitivity
@@ -983,7 +925,7 @@ def thermosensitivity_peak_hour(
     # if plt.ylim()[0] > 1.5:  # ensure zero is part of the axis
     #     plt.ylim(bottom = 1.5)
     plt.legend(loc='upper left')
-    plt.show()
+    plots.finish()
 
 
 
@@ -1015,7 +957,7 @@ def thermosensitivity_peak_hour(
         plt.xticks(range(0, 25, 4))
         plt.ylim(30, 80)
         plt.legend()
-        plt.show()
+        plots.finish()
 
 
 # -------------------------------------------------------
@@ -1093,6 +1035,18 @@ def threshold_temp_sensitivity(
     return _df
 
 
+def _sensitivity_per_temperature(conso: pd.Series, temp: pd.Series,
+                                 thresholds_degC: Sequence[float],
+                                 num_steps_per_day: int) -> pd.DataFrame:
+    """Thermosensitivity of the actual consumption at each temperature
+    threshold (width 1): shared by the 'by season' and 'hysteresis' figures."""
+    return threshold_temp_sensitivity(
+            conso, {}, {}, {},
+            temp.round(1), conso.index, name_col='T_degC',
+            thresholds=thresholds_degC, direction='==',
+            num_steps_per_day=num_steps_per_day, width = 1)
+
+
 def thermosensitivity_per_temperature_by_season(
      consumption      : pd.Series,
      temperature      : pd.Series,
@@ -1101,21 +1055,16 @@ def thermosensitivity_per_temperature_by_season(
      deltaT_K         : float = 1.5
      )   -> None:
 
-    def _sensitivity(conso: pd.Series, temp: pd.Series)  -> pd.DataFrame:
-        return threshold_temp_sensitivity(
-                conso, {}, {}, {},
-                temp.round(1), conso.index, name_col='T_degC',
-                thresholds=thresholds_degC, direction='==',
-                num_steps_per_day=num_steps_per_day, width = 1)
-
     sensitivity_df = pd.DataFrame()
-    sensitivity_df["all"] = _sensitivity(consumption, temperature)
+    sensitivity_df["all"] = _sensitivity_per_temperature(
+        consumption, temperature, thresholds_degC, num_steps_per_day)
 
     for _season in list(months_seasons.keys()):
         # print(_state, sum(df_temperature[_state]))
-        sensitivity_df[_season] = _sensitivity(
+        sensitivity_df[_season] = _sensitivity_per_temperature(
             consumption[consumption.index.month.isin(months_seasons[_season])],
-            temperature[temperature.index.month.isin(months_seasons[_season])])
+            temperature[temperature.index.month.isin(months_seasons[_season])],
+            thresholds_degC, num_steps_per_day)
 
     plt.figure(figsize=(10,6))
     for _season in ["all"] + list(months_seasons.keys()):
@@ -1126,7 +1075,7 @@ def thermosensitivity_per_temperature_by_season(
     plt.ylabel("thermosensitivity [GW/K]")
     plt.ylim(bottom=-3.5)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 
@@ -1137,13 +1086,6 @@ def thermosensitivity_per_temperature_hysteresis(
      num_steps_per_day: int,
      deltaT_K         : float = 1.
      )   -> None:
-
-    def _sensitivity(conso: pd.Series, temp: pd.Series)  -> pd.DataFrame:
-        return threshold_temp_sensitivity(
-                conso, {}, {}, {},
-                temp.round(1), conso.index, name_col='T_degC',
-                thresholds=thresholds_degC, direction='==',
-                num_steps_per_day=num_steps_per_day, width = 1)
 
     colors = {'all': 'black', 'is_warmer': 'orange',
               'is_colder': 'skyblue', 'is_stable': 'grey'}
@@ -1165,13 +1107,15 @@ def thermosensitivity_per_temperature_hysteresis(
 
 
     sensitivity_df = pd.DataFrame()
-    sensitivity_df["all"] = _sensitivity(_consumption, _temperature)
+    sensitivity_df["all"] = _sensitivity_per_temperature(
+        _consumption, _temperature, thresholds_degC, num_steps_per_day)
 
     for _state in ['is_warmer', 'is_colder', 'is_stable']:
         print(_state, sum(df_temperature[_state]))
-        sensitivity_df[_state] = _sensitivity(
+        sensitivity_df[_state] = _sensitivity_per_temperature(
             _consumption[df_temperature[_state]],
-            _temperature[df_temperature[_state]])
+            _temperature[df_temperature[_state]],
+            thresholds_degC, num_steps_per_day)
 
     plt.figure(figsize=(10,6))
     for _state in ['all', 'is_warmer', 'is_colder', 'is_stable']:
@@ -1182,7 +1126,7 @@ def thermosensitivity_per_temperature_hysteresis(
     plt.ylabel("thermosensitivity [GW/K]")
     plt.ylim(bottom=-3.5)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 
@@ -1357,7 +1301,7 @@ def thermosensitivity_per_date_discrete(
                f"and {ranges_years[1][0]}-{ranges_years[1][1]-2000}")
     for i, v in enumerate(ratios.values()):      # display values on bars
         plt.text(v, i, f" {v:.0f}%", color='black', va='center')
-    plt.show()
+    plots.finish()
 
 
     # plotting breakdown
@@ -1474,7 +1418,7 @@ def production_by_price(production: pd.DataFrame,
     for _idx in _indices_plot:
         plt.annotate(_idx, (_df_cost.loc[_idx]['prod_TWh_per_year'] + 1.5,
                             _df_cost.loc[_idx]['cost_euro_per_MWh'] + 0.5))
-    plt.show()
+    plots.finish()
 
 
 
@@ -1551,7 +1495,7 @@ def production_by_price(production: pd.DataFrame,
             plt.annotate('import '+_idx,
                 (_df_interconnect.loc['import_'+_idx]['prod_TWh_per_year'] + x_off,
                  _df_interconnect.loc['import_'+_idx]['cost_euro_per_MWh'] + y_off))
-    plt.show()
+    plots.finish()
 
 
 
@@ -1645,7 +1589,7 @@ def eco2mix(df: pd.DataFrame) -> None:
         _y_max = 10
     plt.ylim(-15, _y_max)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
     # matching floats will not work: one must round
@@ -1668,7 +1612,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xlim(35, 90)
     # plt.ylim(-15, 60 if ('Nucléaire' in _df_SMA_old.columns) else 10)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 
@@ -1703,7 +1647,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xlabel("year")
     plt.ylim(bottom= 0.)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
     # prod as function of time of day
@@ -1729,7 +1673,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.ylabel("summer production [GW]")
     plt.ylim(y_lim_GW)
     plt.legend(loc='upper left')
-    plt.show()
+    plots.finish()
 
     df_winter = df.loc[df.index.month.isin([12, 1, 2])]
     plt.figure(figsize=(10,6))
@@ -1740,7 +1684,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.ylabel("winter production [GW]")
     plt.ylim(y_lim_GW)
     plt.legend(loc='upper left')
-    plt.show()
+    plots.finish()
 
 
     # as fraction of consumption
@@ -1758,7 +1702,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xlabel("year")
     plt.yscale('log')
     plt.legend()
-    plt.show()
+    plots.finish()
 
     plt.figure(figsize=(10,6))
     df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', # 'Eolien_offshore',
@@ -1767,7 +1711,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.ylabel("production [%]")
     plt.xlabel('time of day (UTC)')
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
     # interconnectors
@@ -1796,7 +1740,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xticks(range(0, 25, 4))
     plt.ylim(y_lim_GW)
     plt.legend()
-    plt.show()
+    plots.finish()
 
     _dateofyear = plots.date_of_year(df_interconnect.index)
     plt.figure(figsize=(10,6))
@@ -1813,7 +1757,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xlim(_dateofyear.min(), _dateofyear.max())
     plt.ylim(y_lim_GW)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
     # variation
@@ -1884,7 +1828,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(reversed(handles), reversed(labels),
               title='filière', loc='upper center')
-    plt.show()
+    plots.finish()
 
 
     # Fourier transform
@@ -1913,7 +1857,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.xscale('log')
     plt.grid(True)
     plt.legend()
-    plt.show()
+    plots.finish()
 
 
 

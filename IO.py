@@ -46,6 +46,40 @@ def add_calendar_columns(df: pd.DataFrame, timeofday: bool = True) -> pd.DataFra
 
 
 
+def _download(url: str, path: str, verbose: int = 0) -> None:
+    """Save the file at `url` to `path` as it is served (byte for byte), via a
+    temporary file: an interrupted download leaves no truncated file behind."""
+    if verbose >= 1:
+        print(f"Downloading {url}...")
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    _tmp = path + '.part'
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()   # raise an error for bad status codes
+            with open(_tmp, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1 << 20):
+                    f.write(chunk)
+        os.replace(_tmp, path)
+    finally:
+        if os.path.exists(_tmp):
+            os.remove(_tmp)
+
+
+def _read_or_download(path: str, url: str, verbose: int = 0,
+                      **read_csv_kwargs) -> pd.DataFrame:
+    """Read the csv at `path`, downloading it from `url` first if it is absent.
+    The file is read the same way in both cases.
+    (/!\\ the URL used to be read directly, then saved with to_csv: the first
+     run and the next ones differed, e.g. no na_values on download (eco2mix
+     crashed on 'ND'), and the saved index came back as an 'Unnamed: 0' column)"""
+    if not os.path.exists(path):
+        _download(url, path, verbose)
+    elif verbose >= 1:
+        print(f"Loading {path}...")
+    return pd.read_csv(path, **read_csv_kwargs)
+
+
+
 os.makedirs('data',  exist_ok=True)
 os.makedirs('cache', exist_ok=True)
 
@@ -63,6 +97,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
     if do_plot_statistics is None:
         do_plot_statistics = (verbose >= 3)
+
+    eco2mix_plotted = False   # its plots are made inside load_eco2mix
 
     # either load pickle...
     if (cache_fname is not None) and (os.path.exists(cache_fname)):
@@ -149,6 +185,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
         df_eco2mix = load_eco2mix(do_plot_statistics=do_plot_statistics,
                                   verbose=verbose)
+        eco2mix_plotted = do_plot_statistics
         # df_nuclear = load_nuclear(verbose=verbose)
         starts['eco2mix'] = df_eco2mix.index.tz_convert('UTC').min()
         ends  ['eco2mix'] = df_eco2mix.index.tz_convert('UTC').max()
@@ -296,7 +333,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
              range_prices= [-20, 260] # euro/MWh
         )
 
-        load_eco2mix(do_plot_statistics=do_plot_statistics, verbose=verbose)
+        if not eco2mix_plotted:   # (cache loaded) /!\ was parsed and plotted twice
+            load_eco2mix(do_plot_statistics=True, verbose=verbose)
 
         load_temperature_world()
 
@@ -340,16 +378,7 @@ def load_consumptions_recent(
     verbose:   int = 0) -> Tuple[pd.Series, pd.DataFrame]:
 
     # national data
-    if os.path.exists(path_nation):
-        if verbose >= 1:
-            print(f"loading {path_nation}...")
-        df_nation = pd.read_csv(path_nation, sep=';')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"downloading {url_nation}...")
-        df_nation = pd.read_csv(url_nation, sep=';')
-        df_nation.to_csv(path_nation, sep=';')
+    df_nation = _read_or_download(path_nation, url_nation, verbose, sep=';')
 
     df_nation['Date - Heure'] = pd.to_datetime(df_nation['Date - Heure'], utc=True)
     df_nation = df_nation.set_index('Date - Heure').sort_index()
@@ -363,16 +392,7 @@ def load_consumptions_recent(
 
 
     # régional
-    if os.path.exists(path_region):
-        if verbose >= 1:
-            print(f"loading {path_region}...")
-        df_region = pd.read_csv(path_region, sep=';')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"downloading {url_region}...")
-        df_region = pd.read_csv(url_region, sep=';')
-        df_region.to_csv(path_region, sep=';')
+    df_region = _read_or_download(path_region, url_region, verbose, sep=';')
 
     df_region['Date - Heure'] = pd.to_datetime(df_region['Date - Heure'], utc=True)
     df_region = df_region.set_index('Date - Heure').sort_index()
@@ -425,16 +445,7 @@ def load_consumption(
         verbose: int = 0) -> pd.DataFrame:
 
     # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        if verbose >= 1:
-            print(f"Loading {path}...")
-        df = pd.read_csv(path, sep=';')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"downloading {url}...")
-        df = pd.read_csv(url, sep=';')
-        df.to_csv(path, sep=';')
+    df = _read_or_download(path, url, verbose, sep=';')
 
 
     col_datetime = 'Date - Heure'  # tz-aware
@@ -508,16 +519,7 @@ def load_consumption_by_region(
 
     # download csv if it does not exist locally
     if not os.path.exists(path):
-        if verbose >= 1:
-            print(f"Downloading {url}...")
-        response = requests.get(url)
-        response.raise_for_status()  # Raise an error for bad status codes
-
-        with open(path, 'wb') as f:
-            f.write(response.content)
-
-        # df = pd.read_csv(url, sep=';')
-        # df.to_csv(path, sep=';')
+        _download(url, path, verbose)
     # now, we are sure to have the csv locally
 
     # identify csv file by size and date
@@ -544,13 +546,7 @@ def load_consumption_by_region(
 
     # ... or compute
     else:
-        # load local file if it exists, otherwise get it online
-        if os.path.exists(path):
-            df = pd.read_csv(path, sep=';')
-        else:
-            # Load from URL
-            df = pd.read_csv(url, sep=';')
-            df.to_csv(path, sep=';')
+        df = pd.read_csv(path, sep=';')   # downloaded above if needed
 
         # `Date` + `Heure` are Paris LOCAL (wall-clock) time.
         # /!\ was tz_localize('+02:00'): a constant summer-time offset, which
@@ -657,12 +653,7 @@ def load_weights(
         verbose: int = 0) -> [Dict[str, float], Dict[str, float]]:
 
     # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        df_weigths = pd.read_csv(path, sep=';')
-    else:
-        # Load from URL
-        df_weigths = pd.read_csv(url, sep=';')
-        df_weigths.to_csv(path, sep=';')
+    df_weigths = _read_or_download(path, url, verbose, sep=';')
 
 
     # print(df_weigths.columns)
@@ -766,16 +757,7 @@ def load_temperature(
     # temperature data
 
     # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        if verbose >= 1:
-            print(f"Loading {path}...")
-        df = pd.read_csv(path, sep=';')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"Downloading {url}...")
-        df = pd.read_csv(url, sep=';')
-        df.to_csv(path, sep=';')
+    df = _read_or_download(path, url, verbose, sep=';')
 
 
     if 'Date' not in df.columns:
@@ -1026,7 +1008,7 @@ def load_temperature_world(
                (f", tilted by {_slope*10} K/decade" if _slope != 0 else "") + " [K]")
     plt.xlabel("year")
     plt.legend()
-    plt.show()
+    plots.finish()
 
     # sys.exit()
 
@@ -1092,13 +1074,7 @@ def load_price(
     # load local file if it exists, otherwise get it online
     if not os.path.exists(path_csv):   # we don't have the csv file locally
         if not os.path.exists(path_zip):  # nor the zip file locally
-            if verbose >= 1:
-                print(f"Downloading {url}...")
-            response = requests.get(url)
-            response.raise_for_status()  # Raise an error for bad status codes
-
-            with open(path_zip, 'wb') as f:
-                f.write(response.content)
+            _download(url, path_zip, verbose)
         # we have the zip file locally
 
         with zipfile.ZipFile(path_zip, 'r') as zip_ref:
@@ -1214,7 +1190,7 @@ def load_price(
 
             plt.title(f"{country} spot price, {_range[0]}-{_range[1]-2000}")
 
-            plt.show()
+            plots.finish()
 
 
     return df
@@ -1237,16 +1213,7 @@ def load_nuclear(
         verbose: int = 0) -> pd.Series:
 
     # load local file if it exists, otherwise get it online
-    if os.path.exists(path):
-        if verbose >= 1:
-            print(f"Loading {path}...")
-        df = pd.read_csv(path, sep=';')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"Downloading {url}...")
-        df = pd.read_csv(url, sep=';')
-        df.to_csv(path, sep=';')
+    df = _read_or_download(path, url, verbose, sep=';')
 
     df['datetime_utc'] = pd.to_datetime(df['Date heure'], utc=True)
     df = df.set_index('datetime_utc').sort_index()
@@ -1264,13 +1231,13 @@ def load_nuclear(
         df['prod_nuclear_GW'].rolling(24*365).mean().plot()
         plt.ylabel("nuclear production [GW], annual moving average")
         plt.xlabel("year")
-        plt.show()
+        plots.finish()
 
         plt.figure(figsize=(10,6))
         df.groupby('timeofday').mean()['prod_nuclear_GW'].plot()
         plt.ylabel("nuclear production [GW]")
         plt.xlabel('time of day (UTC)')
-        plt.show()
+        plots.finish()
 
         plt.figure(figsize=(10,6))
         df.groupby('dateofyear').mean() \
@@ -1278,7 +1245,7 @@ def load_nuclear(
             ['prod_nuclear_GW'].plot()
         plt.ylabel("nuclear production [GW], weekly moving average")
         plt.xlabel('dateofyear')
-        plt.show()
+        plots.finish()
 
 
     return df['prod_nuclear_GW']
@@ -1303,16 +1270,8 @@ def load_eco2mix(
 
     # older data `monhtly`
     # load local files if they exist, otherwise get them online
-    if os.path.exists(path_monthly):
-        if verbose >= 1:
-            print(f"Loading {path_monthly}...")
-        df_monthly = pd.read_csv(path_monthly, sep=';', na_values='ND')
-    else:
-        # Load from URL
-        if verbose >= 1:
-            print(f"Downloading {url_monthly}...")
-        df_monthly = pd.read_csv(url_monthly, sep=';')
-        df_monthly.to_csv(path_monthly, sep=';')
+    df_monthly = _read_or_download(path_monthly, url_monthly, verbose,
+                                   sep=';', na_values='ND')
 
     df_monthly['Date et Heure'] = pd.to_datetime(df_monthly['Date et Heure'], utc=True)
     df_monthly = df_monthly.set_index('Date et Heure').sort_index()
@@ -1328,12 +1287,7 @@ def load_eco2mix(
 
 
     # recent (real time) data
-    if os.path.exists(path_recent):
-        df_recent = pd.read_csv(path_recent, sep=';')
-    else:
-        # Load from URL
-        df_recent = pd.read_csv(url_recent, sep=';')
-        df_recent.to_csv(path_recent, sep=';')
+    df_recent = _read_or_download(path_recent, url_recent, verbose, sep=';')
 
 
     df_recent['Date - Heure'] = pd.to_datetime(df_recent['Date - Heure'], utc=True)
@@ -1561,12 +1515,7 @@ def school_holidays(
         fname2: str= 'data/vacances_scolaires_2015_2017.csv') -> pd.DataFrame:
 
     # load local file if it exists, otherwise get it online
-    if os.path.exists(fname1):
-        holidays = pd.read_csv(fname1, sep=";")
-    else:
-        # Load from URL
-        holidays = pd.read_csv(url1, sep=';')
-        holidays.to_csv(fname1, sep=';')
+    holidays = _read_or_download(fname1, url1, sep=';')
 
 
     # Keep only metropolitan France, which is A/B/C zones
@@ -1856,4 +1805,4 @@ def print_model_summary(
     elif params_per_sample > 1000:
         print(f"{msg} — high risk of overfitting (recommended < 1000).")
     elif params_per_sample > 300:
-        print(f"{msg} — moderate capacity. Works only with strong regularization.")
+        print(f"{msg} — moderate capacity. Works only with strong regularization.")

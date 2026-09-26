@@ -6,7 +6,10 @@ Tests for the plotting code (``plots``, ``plot_statistics``, ``plot_optuna``).
   series used to be processed as MA -> groupby -> range);
 * calendar groupings (time of day, day of week) in French local time;
 * robustness: single-quantile curves, Series input, legends, default title;
+* ``plots.finish``: figures closed after being shown, except in windows;
 * ``plot_statistics``: ``drift_with_time`` runs, a 0 degC threshold is a threshold;
+  ``prices_per_season`` in local time (hours and months), seasons without data
+  skipped; one shared thermosensitivity helper;
 * ``plot_optuna``: parameter-importance table.
 
 ``plots`` only needs matplotlib/numpy/pandas; the other tests need torch (via
@@ -124,28 +127,79 @@ def test_loss_per_horizon_default_title():
     assert "class" not in plt.gca().get_title()
 
 
-def test_data_accepts_series_and_single_curve_has_no_legend():
+def test_data_accepts_series_and_single_curve_has_no_legend(monkeypatch):
+    shown = _figures_shown(monkeypatch, plots)
     s = pd.Series(np.arange(5.), name="x")
     plots.data(s)                                        # used to IndexError
-    assert plt.gca().get_legend() is None
     plots.data(pd.DataFrame({"a": np.arange(5.), "b": np.arange(5.)}))
-    assert plt.gca().get_legend() is not None
+    assert [f["legend"] for f in shown] == [False, True]
 
 
-def test_scatter_has_legend_with_two_clouds():
+def test_scatter_has_legend_with_two_clouds(monkeypatch):
+    shown = _figures_shown(monkeypatch, plots)
     idx = pd.date_range("2022-01-01", periods=20, freq="D", tz="UTC")
     true = pd.Series(np.arange(20.), index=idx)
     x = pd.Series(np.arange(20.) + 1, index=idx)
     plots.scatter(true, {"q50": true * 1.1}, None, None, x_axis_series=x)
-    assert plt.gca().get_legend() is not None
+    assert shown[-1]["legend"]
 
 
-def test_curves_with_a_single_non_median_quantile():
+def test_curves_with_a_single_non_median_quantile(monkeypatch):
+    shown = _figures_shown(monkeypatch, plots)
     idx = pd.date_range("2022-01-01", periods=48 * 10, freq="30min", tz="UTC")
     true = pd.Series(np.sin(np.arange(len(idx)) / 10), index=idx)
     plots.curves(true, {"q10": true - 1}, {}, {})       # used to KeyError 'q50'
-    labels = [l.get_label() for l in plt.gca().get_lines()]
+    labels = [label for label, _, _ in shown[-1]["lines"]]
     assert "NNTQ (q10)" in labels
+
+
+# ---------------------------------------------------------------------------
+# plots.finish: every figure shown, then closed (except in windows)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("backend, closes", [
+    ("agg", True), ("Agg", True), ("pdf", True),
+    ("module://matplotlib_inline.backend_inline", True),   # Spyder, Jupyter
+    ("QtAgg", False), ("TkAgg", False), ("macosx", False),
+    ("module://ipympl.backend_nbagg", False)])              # widgets
+def test_finish_closes_only_when_no_window(backend, closes):
+    assert plots._closes_after_show(backend) is closes
+
+
+def test_finish_closes_every_figure_under_agg():
+    plt.figure(); plt.figure()
+    plots.finish()
+    assert plt.get_fignums() == []
+
+
+def test_finish_keeps_figures_in_windows(monkeypatch):
+    monkeypatch.setattr(plots, "_closes_after_show", lambda backend=None: False)
+    monkeypatch.setattr(plots.plt, "show", lambda *a, **k: None)
+    plt.figure()
+    plots.finish()
+    assert len(plt.get_fignums()) == 1
+
+
+def test_diagnostic_plots_leave_no_figure_open():
+    """(/!\\ 30 figures were open after 3 `diagnostics` calls)"""
+    idx = pd.date_range("2022-01-01", periods=48 * 30, freq="30min", tz="UTC")
+    true = pd.Series(np.sin(np.arange(len(idx)) / 10), index=idx)
+    plots.curves(true, {"q10": true - 1, "q50": true, "q90": true + 1}, {}, {})
+    plots.data(true)
+    assert plt.get_fignums() == []
+
+
+def test_no_bare_plt_show_left():
+    """Every figure ends with plots.finish() (commented-out calls aside)."""
+    import pathlib, re
+    root = pathlib.Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in root.glob("*.py"):
+        if path.name in ("plots.py", "MC_search.py"):   # finish itself; outdated
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.match(r"\s*plt\.show\(", line):
+                offenders.append(f"{path.name}:{n}")
+    assert offenders == []
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +227,88 @@ def test_threshold_zero_degC_is_a_threshold():
     slopes = out.iloc[:, 0]
     # at 0 degC the slope is local (small), as at +-1 degC, not the global fit
     assert abs(slopes.loc[0.]) < 5 and abs(slopes.loc[0.]) <= abs(slopes.loc[1.]) + 1
+
+
+def _figures_shown(monkeypatch, module):
+    """Replace plt.show in `module` by a recorder of the lines of each figure."""
+    shown = []
+
+    def _show(*a, **k):
+        fig = plt.gcf()
+        shown.append({"title": fig.axes[0].get_title() if fig.axes else "",
+                      "legend": any(ax.get_legend() is not None for ax in fig.axes),
+                      "lines": [(l.get_label(), np.asarray(l.get_xdata()),
+                                 np.asarray(l.get_ydata(), float))
+                                for ax in fig.axes for l in ax.get_lines()]})
+        plt.close(fig)
+    monkeypatch.setattr(module.plt, "show", _show)
+    return shown
+
+
+def test_prices_per_season_in_local_time(monkeypatch):
+    """Price = local hour of day: every seasonal curve must be y == x (24 -> 0),
+    including March (/!\ was UTC + a fixed 2 h in spring: 1 h off before the
+    last Sunday of March). A season without data (spring 2015: data start in
+    June) is skipped (/!\ used to crash)."""
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import plot_statistics
+    idx   = pd.date_range("2015-06-01", "2022-01-01", freq="h", tz="UTC",
+                          inclusive="left")
+    price = pd.Series(idx.tz_convert("Europe/Paris").hour.astype(float), index=idx)
+    shown = _figures_shown(monkeypatch, plot_statistics)
+    monkeypatch.setattr("builtins.print", lambda *a, **k: None)
+
+    plot_statistics.prices_per_season(price, "France")
+
+    seasonal = [f for f in shown if "spot price in France" in f["title"]]
+    assert [f["title"].split()[0] for f in seasonal] == ["Winter", "Spring", "Summer"]
+    for fig in seasonal:
+        assert fig["lines"], fig["title"]
+        for label, x, y in fig["lines"]:
+            np.testing.assert_array_equal(x, np.arange(25))
+            np.testing.assert_allclose(y, np.r_[np.arange(24), 0], err_msg=label)
+    # March only (the DST month): same, local hours
+    march = price[price.index.tz_convert("Europe/Paris").month == 3]
+    prof  = plot_statistics._price_profile_local(plots.to_local_time(march))
+    np.testing.assert_allclose(prof.to_numpy(), np.r_[np.arange(24), 0])
+
+
+def test_thermosensitivity_figures_share_one_sensitivity(monkeypatch):
+    """The 'by season' and 'hysteresis' figures call threshold_temp_sensitivity
+    through one helper, with the same arguments as the former closures."""
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import plot_statistics
+    calls = []
+    real  = plot_statistics.threshold_temp_sensitivity
+
+    def _spy(*a, **k):
+        calls.append((a, k))
+        return real(*a, **k)
+    monkeypatch.setattr(plot_statistics, "threshold_temp_sensitivity", _spy)
+    _figures_shown(monkeypatch, plot_statistics)
+    monkeypatch.setattr("builtins.print", lambda *a, **k: None)
+
+    idx  = pd.date_range("2019-01-01", "2020-12-31", freq="D", tz="UTC")
+    t    = np.arange(len(idx))
+    temp = pd.Series(12 + 8 * np.sin(2 * np.pi * t / 365) +
+                     np.random.default_rng(0).normal(0, 2, len(t)),
+                     index=idx, name="Tavg_degC")
+    cons = 55 - 1.5 * (temp - 12)
+    thresholds = np.arange(0., 20., 1.)
+    plot_statistics.thermosensitivity_per_temperature_by_season(
+        cons, temp, thresholds, 1)
+    plot_statistics.thermosensitivity_per_temperature_hysteresis(
+        cons, temp, thresholds, 1)
+
+    assert len(calls) == 1 + len(plot_statistics.months_seasons) + 1 + 3
+    for a, k in calls:
+        assert a[1:4] == ({}, {}, {})
+        assert k.keys() == {'name_col', 'thresholds', 'direction',
+                            'num_steps_per_day', 'width'}
+        assert (k['name_col'], k['direction'], k['num_steps_per_day'], k['width']) \
+               == ('T_degC', '==', 1, 1)
+        assert k['thresholds'] is thresholds
+        pd.testing.assert_series_equal(a[4], a[4].round(1))   # rounded temperatures
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +392,8 @@ def _regional_data():
     return conso, temp
 
 
+# the synthetic regions are not the two plotted ones ('Occi.', 'HdF'): empty legends
+@pytest.mark.filterwarnings("ignore:No artists with labels found")
 def test_thermosensitivity_regions_leaves_its_input_unchanged():
     pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
     import plot_statistics

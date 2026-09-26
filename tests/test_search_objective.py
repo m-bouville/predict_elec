@@ -183,7 +183,7 @@ def test_meta_one_NNTQ_variant_per_run(search):
 
 
 def test_NNTQ_search_no_variant_no_metamodel(search, monkeypatch):
-    # no sampling: a pruned trial (batch_size 32) would shift the trial numbers
+    # no sampling: the scripted losses stay independent of the parameters
     monkeypatch.setattr(Bayes_search, "sample_NNTQ_parameters",
                         lambda trial, p: dict(p))
     calls, df, values = search(Stage.NNTQ)
