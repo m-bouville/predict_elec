@@ -4,7 +4,12 @@ Tests for ``run`` (outside the model itself) and ``predict_elec``:
 * ``postprocess`` builds the csv row without modifying its input dicts;
 * ``load_and_create_df``: ``dates_df``, part of the cache keys, depends
   neither on ``verbose`` nor on today's date;
-* ``run_model``: warning when ``num_trials`` would not be used;
+* ``run_model``: warning when ``num_trials`` would not be used, and in a
+  search when ``validate_every`` is not 1 (searches validate every epoch);
+* ``recalculate_loss``: single-run rows recomputed (current column names),
+  multi-run rows (averaged losses) left unchanged;
+* ``input_cache_fname``: the input pickle is keyed on the data files; the
+  obsolete pickles are removed;
 * ``enforce_ranges`` (csv maintenance) works with pandas >= 3;
 * ``append_csv_row`` refuses a row whose columns differ from the file;
 * ``predict_elec``: the 'statistics' split and the RUN_FAST parameters are
@@ -97,6 +102,83 @@ def test_num_trials_warning_fires(monkeypatch):
             train_split_fraction=.8, valid_ratio=.25, forecast_hour=12, seed=0,
             force_calc_baselines=False,
             validate_every=1, display_every=1, plot_conv_every=1)
+
+
+@pytest.mark.parametrize("validate_every, warns", [(2, True), (1, False)])
+def test_search_warns_when_validate_every_is_not_used(monkeypatch, validate_every,
+                                                      warns):
+    """(/!\\ the checks were `x in locals()`, never true)"""
+    import warnings as _w
+    import run
+    monkeypatch.setattr(run.Bayes_search, "run_Bayes_search", lambda **kw: None)
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        run.run_model(
+            mode='Bayes_NNTQ', num_trials=3,
+            baseline_parameters=constants.BASELINES_PARAMETERS,
+            NNTQ_parameters=dict(constants.NNTQ_PARAMETERS),
+            metamodel_NN_parameters=dict(constants.METAMODEL_NN_PARAMETERS),
+            dict_input_csv_fnames={}, minutes_per_step=30,
+            train_split_fraction=.8, valid_ratio=.25, forecast_hour=12, seed=0,
+            force_calc_baselines=False,
+            validate_every=validate_every, display_every=5, plot_conv_every=5)
+    messages = [str(w.message) for w in caught if "validate_every" in str(w.message)]
+    assert bool(messages) is warns, messages
+
+
+# ---------------------------------------------------------------------------
+# recalculate_loss: current column names, multi-run rows kept
+# ---------------------------------------------------------------------------
+def test_recalculate_loss(tmp_path):
+    import run
+    metrics = {f"test_{m}_{k}": 1. for m in ['NNTQ', 'LR', 'RF', 'LGBM',
+                                              'meta_LR', 'meta_NN']
+               for k in ['bias', 'RMSE', 'MAE']}
+    cov = {'q10': .01, 'q25': -.02, 'q50': 0., 'q75': .03, 'q90': -.01}
+    rows = [dict(timestamp="2026-09-26 10:00:00", **metrics, **cov,
+                 avg_abs_worst_days_test=1.5, num_runs=n,
+                 loss_NNTQ=99., loss_meta=99.) for n in (1, 5)]
+    csv = tmp_path / "search.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False)
+
+    run.recalculate_loss(str(csv))        # /!\ used to KeyError ('test_NN_bias')
+
+    df = pd.read_csv(csv)
+    assert df.loc[0, 'loss_NNTQ'] == pytest.approx(run.loss_NNTQ(cov, 1.5))
+    assert df.loc[0, 'loss_meta'] == pytest.approx(run.loss_meta(metrics))
+    assert df.loc[1, ['loss_NNTQ', 'loss_meta']].tolist() == [99., 99.]  # averaged
+
+
+# ---------------------------------------------------------------------------
+# input pickle keyed on the data files
+# ---------------------------------------------------------------------------
+def test_input_cache_fname_follows_the_data(tmp_path, monkeypatch):
+    import os, time
+    import run
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("data"); os.makedirs("cache")
+    open("data/a.csv", "w").write("x\n1\n")
+    open("data/eco2mix.csv", "w").write("y\n1\n")      # read by a loader, not listed
+    inputs = {"consumption": "data/a.csv"}
+
+    name = run.input_cache_fname("cache", inputs)
+    assert name == run.input_cache_fname("cache", inputs)          # stable
+    assert os.path.basename(name).startswith("input_data_")
+
+    open("data/eco2mix.csv", "a").write("2\n")                    # other file changed
+    assert run.input_cache_fname("cache", inputs) != name
+    name2 = run.input_cache_fname("cache", inputs)
+    t = time.time() + 100
+    os.utime("data/a.csv", (t, t))                                 # newer download
+    assert run.input_cache_fname("cache", inputs) != name2
+
+    # obsolete pickles (and the former unkeyed one) removed, current one kept
+    current = run.input_cache_fname("cache", inputs)
+    for f in (current, name, "cache/input_data.pkl", "cache/NNTQ_preds_x.pkl"):
+        open(f, "wb").write(b"0")
+    run.remove_other_input_caches("cache", keep=current)
+    assert sorted(os.listdir("cache")) == sorted([os.path.basename(current),
+                                                  "NNTQ_preds_x.pkl"])
 
 
 # ---------------------------------------------------------------------------

@@ -352,6 +352,30 @@ def NNTQ_variants_cached(cache_dir: str, cache_key: str, num_variants: int) -> b
         return len(json.load(f)["variants"]) == num_variants
 
 
+def input_cache_fname(cache_dir: str, dict_input_csv_fnames: Dict[str, str]) -> str:
+    """Pickle of the merged input data, keyed on the size and modification time
+    of every file in the folder(s) of the input csv files (the loaders also
+    read other files there: eco2mix, weights, school holidays, ...).
+    (/!\\ was a fixed 'input_data.pkl': updated csv files were ignored once it
+     existed)"""
+    folders = sorted({os.path.dirname(p) or '.' for p in dict_input_csv_fnames.values()})
+    files   = {os.path.relpath(f): (os.path.getsize(f), int(os.path.getmtime(f)))
+               for d in folders for f in sorted(glob.glob(os.path.join(d, '*')))
+               if os.path.isfile(f)}
+    key_str = json.dumps({'inputs': dict_input_csv_fnames, 'files': files},
+                         sort_keys=True)
+    return os.path.join(cache_dir,
+                        f"input_data_{hashlib.md5(key_str.encode()).hexdigest()}.pkl")
+
+
+def remove_other_input_caches(cache_dir: str, keep: str) -> None:
+    """Delete the input pickles of former data (and the former unkeyed one)."""
+    for _path in glob.glob(os.path.join(cache_dir, 'input_data*.pkl')):
+        if os.path.normcase(os.path.abspath(_path)) != \
+           os.path.normcase(os.path.abspath(keep)):
+            os.remove(_path)
+
+
 def build_NNTQ_variants(train_NNTQ,
                         paths_variants: List[str],
                         cache_dir     : str,
@@ -474,13 +498,14 @@ def run_model_once(
 
 
     # load data from csv and create pd.DataFrame
-    _cache_fname = os.path.join(cache_dir, 'input_data.pkl')
-                # 'input_data_full.pkl' if do_plot_statistics else 'input_data.pkl')
+    _cache_fname = input_cache_fname(cache_dir, dict_input_csv_fnames)
     num_steps_per_day = int(round(24*60/minutes_per_step))
     (df, names_cols, dates, Tavg_full, holidays_full, weights_regions, dates_df) = \
         load_and_create_df(
             dict_input_csv_fnames, _cache_fname, NNTQ_parameters['pred_length'],
             num_steps_per_day, minutes_per_step, do_plot_statistics, verbose)
+    if os.path.exists(_cache_fname):   # the current one exists: the others are obsolete
+        remove_other_input_caches(cache_dir, keep=_cache_fname)
     # print("Tavg_full:", Tavg_full)
 
     # print(f"num cols: cols_Y_regions {len(cols_Y_regions)}, "
@@ -917,13 +942,12 @@ def run_model(
 
 
     else:   # search for hyperparameters
-        # no display => some arguments are not used
-        if validate_every in locals() and validate_every > 0:
-            warnings.warn(f"validate_every ({validate_every}) will not nbe used")
-        if display_every in locals() and validate_every > 0:
-            warnings.warn(f"display_every ({display_every}) will not nbe used")
-        if plot_conv_every in locals() and validate_every > 0:
-            warnings.warn(f"plot_conv_every ({plot_conv_every}) will not nbe used")
+        # the searches validate every epoch (early stopping) and display nothing
+        #   (/!\ were `x in locals()`: tested the VALUE as a variable name, never
+        #    true; display_every and plot_conv_every are not worth a warning)
+        if validate_every is not None and validate_every != 1:
+            warnings.warn(f"validate_every ({validate_every}) is not used: "
+                          f"the searches validate every epoch")
 
         if mode in ['random', 'Monte Carlo', 'MC']:
             # /!\ no longer maintained
@@ -1155,6 +1179,11 @@ def loss_meta(
 
 def recalculate_loss(csv_path: str,
                      verbose : int   = 0) -> None:
+    """Recompute loss_NNTQ and loss_meta from the metric columns (after a
+    change of the loss functions) and overwrite the csv.
+    Only single-run rows are recomputed: in a multi-run row the metrics are
+    those of the last run while the losses average all the runs (clean_avg),
+    which the metrics cannot reproduce; those rows are left unchanged."""
     # Load the CSV file containing runs so far
     results_df = pd.read_csv(csv_path, index_col=False)
 
@@ -1172,11 +1201,15 @@ def recalculate_loss(csv_path: str,
     _list_losses_meta = []
 
     for index, row in results_df.iterrows():
+        if row.get('num_runs', 1) > 1:   # losses averaged over the runs: keep
+            _list_losses_NNTQ.append(row['loss_NNTQ'])
+            _list_losses_meta.append(row['loss_meta'])
+            continue
         flat_metrics = (row \
-        [['test_NN_bias',     'test_NN_RMSE',     'test_NN_MAE',
+        [['test_NNTQ_bias',   'test_NNTQ_RMSE',   'test_NNTQ_MAE',
           'test_LR_bias',     'test_LR_RMSE',     'test_LR_MAE',
           'test_RF_bias',     'test_RF_RMSE',     'test_RF_MAE',
-          'test_GB_bias',     'test_GB_RMSE',     'test_GB_MAE',
+          'test_LGBM_bias',   'test_LGBM_RMSE',   'test_LGBM_MAE',
           'test_meta_LR_bias','test_meta_LR_RMSE','test_meta_LR_MAE',
           'test_meta_NN_bias','test_meta_NN_RMSE','test_meta_NN_MAE']]).to_dict()
 

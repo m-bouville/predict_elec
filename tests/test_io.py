@@ -2,8 +2,9 @@
 Tests for ``IO.load_data`` beyond the time zones (those: test_io_timezone.py).
 
 * statistics mode: eco2mix is parsed (and its figures drawn) once, whether the
-  input data come from the pickle or not (/!\ it was parsed and plotted a
-  second time at the end of the statistics block);
+  input data come from the pickle or not, and at verbose 3 (/!\ it was parsed
+  and plotted a second time at the end of the statistics block, and parsed a
+  third time for the verbose-3 checks);
 * ``_read_or_download``: a missing csv is downloaded as served, then read like
   a local one (/!\ the first run used to read the URL with other options, e.g.
   eco2mix without na_values='ND', and saved an extra index column); a failed
@@ -64,6 +65,55 @@ def test_statistics_parse_eco2mix_once(tmp_path, monkeypatch, from_cache):
 
     assert len(calls) == 1 and calls[0]["do_plot_statistics"] is True
     assert cache.exists()
+
+
+@pytest.mark.filterwarnings("ignore")
+def test_statistics_verbose_3_parse_eco2mix_once(tmp_path, monkeypatch, capsys):
+    """Every input computed (none from a pickle), verbose 3: eco2mix parsed
+    once, and the verbose-3 check of its dates uses that frame."""
+    idx = pd.date_range("2023-01-01", "2024-12-31 23:30", freq="30min", tz="UTC")
+    conso = pd.DataFrame({"consumption_GW": 50.}, index=idx)
+    IO.add_calendar_columns(conso)
+    regions = pd.DataFrame({"NE": 30., "S": 20.}, index=idx)
+    days = pd.date_range("2023-01-01", "2024-12-31", freq="D", tz="UTC")
+    temps = pd.DataFrame({"Tmin_degC": 5., "Tavg_degC": 10., "Tmax_degC": 15.},
+                         index=days)
+    hours = pd.date_range("2023-01-01", "2024-12-31 23:00", freq="h", tz="UTC")
+    price = pd.DataFrame({"price_euro_per_MWh": 80.}, index=hours)
+    df_eco2mix = pd.DataFrame({"EnR_GW": 1., "net_charge_GW": 1.,
+                               "Ech_physiques_GW": 1., "Taux_de_CO2_g/kWh": 1.},
+                              index=idx)
+
+    monkeypatch.setattr(IO, "load_weights", lambda **k: ({}, {}))
+    monkeypatch.setattr(IO, "load_consumptions_recent", lambda: (None, None))
+    monkeypatch.setattr(IO, "load_consumption", lambda *a, **k: conso.copy())
+    monkeypatch.setattr(IO, "load_consumption_by_region",
+                        lambda *a, **k: (regions.copy(), None))
+    monkeypatch.setattr(IO, "load_temperature",
+                        lambda *a, **k: (temps.copy(), None, None, None))
+    monkeypatch.setattr(IO, "load_price", lambda **k: price.copy())
+    monkeypatch.setattr(IO, "load_nuclear", lambda *a, **k: price.copy())
+    calls, analyzed = [], []
+    monkeypatch.setattr(IO, "load_eco2mix",
+                        lambda **k: calls.append(k) or df_eco2mix)
+    real_analyze = IO.analyze_datetime
+    monkeypatch.setattr(IO, "analyze_datetime", lambda df, **k:
+                        analyzed.append(k.get("name")) or real_analyze(df, **k))
+    monkeypatch.setattr(IO, "load_temperature_world", lambda *a, **k: None)
+    monkeypatch.setattr(IO.plots, "data", lambda *a, **k: None)
+    monkeypatch.setattr(IO, "plot_statistics", _stub_module([
+        "prices_per_season", "production_by_price",
+        "thermosensitivity_per_temperature_by_season",
+        "thermosensitivity_per_date_discrete", "thermosensitivity_peak_hour",
+        "production_function_price"]))
+
+    IO.load_data({"consumption": "-", "consumption_by_region": "-",
+                  "temperature": "-", "price": "-"},
+                 str(tmp_path / "input.pkl"), 48, 30,
+                 do_plot_statistics=True, verbose=3)
+
+    assert len(calls) == 1 and calls[0]["do_plot_statistics"] is True
+    assert "eco2mix" in analyzed
 
 
 # ---------------------------------------------------------------------------
@@ -145,3 +195,22 @@ def test_no_loader_reads_a_url_directly():
     assert len(offenders) == 1
     assert src.rfind("def ", 0, offenders[0]) == src.find("def load_temperature_world")
     assert "requests.get(" not in src.replace("requests.get(url, stream=True", "")
+
+
+def test_temperature_world_first_run_and_cache_agree(tmp_path, monkeypatch):
+    """The Berkeley Earth file is parsed from the URL (whitespace-separated,
+    '%' comments) and cached in its own format.
+    (/!\\ delim_whitespace=True: TypeError on the first run with pandas 3)"""
+    monkeypatch.setattr(IO.plots, "finish", lambda: None)
+    lines = ["% Berkeley Earth, header", "%"] + [
+        f"  {y} {m:2d}  {0.01*(y-1960):.3f} 0.1  NaN  NaN  NaN NaN NaN NaN NaN NaN"
+        for y in range(1960, 1990) for m in range(1, 13)]
+    source = tmp_path / "Complete_TAVG_complete.txt"
+    source.write_text("\n".join(lines) + "\n")
+    path = str(tmp_path / "world.csv")
+    first  = IO.load_temperature_world(path=path, url=str(source))   # parsed
+    second = IO.load_temperature_world(path=path, url="unused")      # cached csv
+    assert len(first) == 30 * 12
+    np.testing.assert_allclose(first["monthly_diff_K"].to_numpy(),
+                               second["monthly_diff_K"].to_numpy())
+    np.testing.assert_allclose(first.index.to_numpy(), second.index.to_numpy())

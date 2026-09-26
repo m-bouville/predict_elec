@@ -94,8 +94,9 @@ def drift_with_time(
     # ------------------
 
 
-    _temperature_annual = temperature.rolling(365, min_periods=365, center=True) \
+    _temperature_annual = _temperature.rolling(365, min_periods=365, center=True) \
                      .mean().dropna()
+        # /!\ was on the half-hourly `temperature`: 365 steps = 7.6 days
     _year_annual = pd.Series(_temperature_annual.index.year - year_ref + \
                              _temperature_annual.index.dayofyear/365,
                       index = _temperature_annual.index, name="year")  # for long-term drift
@@ -136,8 +137,9 @@ def drift_with_time(
     # _temperature  = (temperature.rolling(moving_average, center=True) \
     #                  .mean()).loc[start_date:end_date]
 
-    _temperature_sat_annual = ((temperature.clip(upper=15) - 15).\
+    _temperature_sat_annual = ((_temperature.clip(upper=15) - 15).\
                 rolling(365, min_periods=365, center=True).mean()).dropna()
+        # daily, like _consumption (/!\ was half-hourly: see above)
     _consumption_annual = (_consumption.rolling(365, min_periods=365, center=True) \
                      .mean()).dropna()
     _year_annual = pd.Series(_consumption_annual.index.year - year_ref + \
@@ -175,7 +177,8 @@ def drift_with_time(
 
     # linear regression to quantify thermosensitivity in winter
     model_with_T = LinearRegression()
-    X = pd.concat([_temperature_common, _year_common], axis=1)
+    X = pd.concat([_temperature_common.rename("T_sat"), _year_common], axis=1)
+        # named: sklearn refuses mixed column names (unnamed series -> 0)
     model_with_T.fit(X, _consumption_common)
     # _slope = -round(float(model_LR.coef_[0]) * 100, 2)
     _formula_model_with_T = f"{model_with_T.intercept_:.1f} GW  " \
@@ -284,7 +287,9 @@ def prices_per_season(price:   pd.Series,
         plt.figure(figsize=(10,6))
         for _year in ranges[_season]:
             _price = price[in_season & (year_of[_season] == _year)]
-            if len(_price) == 0:   # /!\ spring and summer used to crash
+            if _price.index.normalize().nunique() < 30:
+                # no data (/!\ spring and summer used to crash), or a few hours
+                #   only (the last UTC hours of a month are the next local month)
                 continue
             years_with_data.append(_year)
             _profile = _price_profile_local(_price)
@@ -501,6 +506,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
     # national
     _avg_conso = df_consumption.mean().mean()
+    plt.figure()   # /!\ each plot of this function drew on the current figure
     plt.scatter(df_temperature.mean(axis=1),
                 df_consumption.mean(axis=1) / _avg_conso,
                 s=10, alpha=0.15)
@@ -512,7 +518,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
 
     # per région
-
+    plt.figure()
     for _col in list(df_consumption.columns):
         _avg_conso = df_consumption[_col].mean()
         _consumption_norm = df_consumption[_col]/_avg_conso
@@ -532,6 +538,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
     # per région, winter
     _slopes_winter_pc = pd.Series(dtype=float)
+    plt.figure()   # /!\ drew on whatever figure was current
 
     for _col in list(df_consumption.columns):
         _avg_conso = df_consumption[_col].mean()
@@ -560,6 +567,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
 
     # per région, summer
     _slopes_summer_pc = pd.Series(dtype=float)
+    plt.figure()   # /!\ drew on whatever figure was current
 
     for _col in list(df_consumption.columns):
         _avg_conso = df_consumption[_col].mean()
@@ -590,6 +598,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     _df_slopes_pc.columns = ["winter", "summer"]
 
     # plot summer f° winter
+    plt.figure()
     plt.scatter(_df_slopes_pc['winter'], _df_slopes_pc['summer'], s=100)
 
     # Annotate each point with its key
@@ -604,6 +613,7 @@ def thermosensitivity_regions(df_consumption       : pd.DataFrame,
     plt.ylim(top=plt.ylim()[1]+0.05)
     # plt.xlim(top=plt.xlim()[1]+0.05)
     plt.title("Seasonal thermosensitivities [% avg demand per K]")
+    plots.finish()   # /!\ was missing: never shown (nor closed) outside inline
 
 
 
@@ -1139,7 +1149,8 @@ def thermosensitivity_per_temperature_model(
     sensitivity_df = threshold_temp_sensitivity(
             data_split.true_nation_GW, data_split.dict_preds_NNTQ,
             data_split.dict_preds_ML, data_split.dict_preds_meta,
-            data_split.Tavg_degC.round(1), data_split.dates,
+            data_split.Tavg_degC.round(1), data_split.dates, name_col='T_degC',
+                # /!\ was missing: TypeError at the end of every run with verbose >= 2
             thresholds=thresholds_degC, direction='==',
             num_steps_per_day=num_steps_per_day, width=2)
 
@@ -1642,7 +1653,7 @@ def eco2mix(df: pd.DataFrame) -> None:
             # 'Ech_physiques_GW',
             'turbinage_STEP_GW']].\
         rolling(2*24*365, min_periods=2*24*350).mean().\
-                loc[df.index.year>=2013].plot()
+                loc[df.index.year>=2013].plot(ax=plt.gca())
     plt.ylabel("production [GW], annual moving average")
     plt.xlabel("year")
     plt.ylim(bottom= 0.)
@@ -1668,7 +1679,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.figure(figsize=(10,6))
     df_summer[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
                'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].\
-        groupby('timeofday').mean().plot()
+        groupby('timeofday').mean().plot(ax=plt.gca())
     plt.xlabel('time of day (UTC)')
     plt.ylabel("summer production [GW]")
     plt.ylim(y_lim_GW)
@@ -1679,7 +1690,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.figure(figsize=(10,6))
     df_winter[['Hydraulique_GW', 'Solaire_GW', 'Eolien_GW', # 'Eolien_offshore_GW',
                'Ech_physiques_GW', 'turbinage_STEP_GW', 'timeofday']].\
-        groupby('timeofday').mean().plot()
+        groupby('timeofday').mean().plot(ax=plt.gca())
     plt.xlabel('time of day (UTC)')
     plt.ylabel("winter production [GW]")
     plt.ylim(y_lim_GW)
@@ -1697,7 +1708,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     df_norm_pc[['Hydraulique', 'Solaire', 'Eolien',
                 'Eolien_offshore', 'turbinage_STEP']].\
         rolling(2*24*365, min_periods=2*24*350).mean().\
-            loc[df.index.year>=2013].plot()
+            loc[df.index.year>=2013].plot(ax=plt.gca())
     plt.ylabel("production [%], annual moving average")
     plt.xlabel("year")
     plt.yscale('log')
@@ -1707,7 +1718,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.figure(figsize=(10,6))
     df_norm_pc[['Hydraulique', 'Solaire', 'Eolien', # 'Eolien_offshore',
                 'Ech_physiques', 'turbinage_STEP', 'timeofday']].\
-        groupby('timeofday').mean().plot()
+        groupby('timeofday').mean().plot(ax=plt.gca())
     plt.ylabel("production [%]")
     plt.xlabel('time of day (UTC)')
     plt.legend()
@@ -1732,7 +1743,7 @@ def eco2mix(df: pd.DataFrame) -> None:
     plt.figure(figsize=(10,6))
     df_by_timeofday = df_interconnect.groupby(_timeofday).mean()
     df_by_timeofday.loc[24] = df_by_timeofday.loc[0]
-    df_by_timeofday.plot()
+    df_by_timeofday.plot(ax=plt.gca())
     plt.hlines(0, 0, 24, color="black")
     plt.xlabel('local time of day')
     plt.ylabel("exchange [GW]")
@@ -1749,7 +1760,7 @@ def eco2mix(df: pd.DataFrame) -> None:
 
     df_by_dateofyear = df_by_dateofyear[~((df_by_dateofyear.index.month == 2) & \
                                           (df_by_dateofyear.index.day == 29))]
-    df_by_dateofyear.plot()
+    df_by_dateofyear.plot(ax=plt.gca())
 
     plt.hlines(0, _dateofyear.min(), _dateofyear.max(), color="black")
     plt.xlabel('date of year')
@@ -1766,7 +1777,9 @@ def eco2mix(df: pd.DataFrame) -> None:
 
     df_diff = df.loc[(df.index.year >= 2023) & (df.index.year <= 2025)].\
         drop(columns=['Prévision_J1_GW', 'Prévision_J_GW',
-                      'Taux_de_CO2_g/kWh']).diff()
+                      'Taux_de_CO2_g/kWh', 'timeofday']).diff()
+        # /!\ timeofday was differenced too: -23.5 at midnight, so the outlier
+        #     filter below dropped every 00:00 row
 
     # these are not found in older data, which messes with dropna
     # TODO find workaround?

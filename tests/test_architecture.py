@@ -407,3 +407,47 @@ def test_subset_evaluation_copies_to_cpu_only_at_the_end(monkeypatch):
                         lambda self, *a, **k: calls.append(1) or real_cpu(self, *a, **k))
     architecture.subset_evaluation(net, data.complete.loader)
     assert len(data.complete.loader) > 1 and len(calls) == 6
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_subset_evaluation_keeps_every_tensor_on_the_model_device(monkeypatch):
+    """Model on another device than the loader's (CPU) tensors: every input of
+    the losses must be moved to it. The 'meta' device stands for a GPU (a
+    tensor left on the CPU raises 'Expected all tensors to be on the same
+    device'); copies out of it are replaced by zeros."""
+    import containers
+    data, _, _ = _small_bundle()
+    for lambda_regions in (0., .05):
+        net = _small_net(data, lambda_regions=lambda_regions)
+        net.model.to('meta')
+        net.device = torch.device('meta')
+        real_cpu = torch.Tensor.cpu
+        monkeypatch.setattr(torch.Tensor, "cpu", lambda self, *a, **k:
+            torch.zeros(self.shape, dtype=self.dtype) if self.is_meta
+            else real_cpu(self, *a, **k))
+        loss_h, dict_h = architecture.subset_evaluation(net, data.complete.loader)
+        assert loss_h.shape == (48,) and set(dict_h) >= {'pinball', 'coverage'}
+        monkeypatch.undo()
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_training_loop_returns_the_profile_of_the_restored_model(monkeypatch):
+    """The validation profile returned with the model is that of the model
+    returned (the best one, restored), not of the last epoch.
+    (restore is replaced by a visible change of the weights)"""
+    data, _, _ = _small_bundle()
+    net = _small_net(data, epochs=2)
+
+    def restore(model, verbose=0):
+        with torch.no_grad():
+            for p in model.parameters():
+                p.mul_(0.5)
+    monkeypatch.setattr(net.save_best_model, "restore", restore)
+
+    *_, profile, parts = net.training_loop(
+        data.train.loader, data.valid.loader, validate_every=1,
+        display_every=999, plot_conv_every=999, verbose=0)
+    expected, expected_parts = architecture.subset_evaluation(net, data.valid.loader)
+    np.testing.assert_allclose(profile, expected, rtol=1e-6)
+    for k in parts:
+        np.testing.assert_allclose(parts[k], expected_parts[k], rtol=1e-6, atol=1e-9)

@@ -671,6 +671,11 @@ class NeuralNet:
         # restore best model
         self.save_best_model.restore(self.model, verbose)
 
+        # validation profile of the model returned, i.e. the best one
+        #   (/!\ was the profile of the last epoch)
+        valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
+            architecture.subset_evaluation(self, valid_loader)
+
         return (list_of_min_losses, list_of_lists, valid_loss_quantile_h_scaled, \
                 dict_valid_loss_quantile_h)
 

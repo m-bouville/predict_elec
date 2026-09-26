@@ -7,7 +7,10 @@ Tests for the plotting code (``plots``, ``plot_statistics``, ``plot_optuna``).
 * calendar groupings (time of day, day of week) in French local time;
 * robustness: single-quantile curves, Series input, legends, default title;
 * ``plots.finish``: figures closed after being shown, except in windows;
-* ``plot_statistics``: ``drift_with_time`` runs, a 0 degC threshold is a threshold;
+* ``plot_statistics``: ``drift_with_time`` runs, with a one-year average; a
+  0 degC threshold is a threshold; eco2mix variation fits keep midnight;
+* one figure per plot, no empty figure (thermosensitivity_regions, eco2mix,
+  plot_optuna);
   ``prices_per_season`` in local time (hours and months), seasons without data
   skipped; one shared thermosensitivity helper;
 * ``plot_optuna``: parameter-importance table.
@@ -159,6 +162,7 @@ def test_curves_with_a_single_non_median_quantile(monkeypatch):
 @pytest.mark.parametrize("backend, closes", [
     ("agg", True), ("Agg", True), ("pdf", True),
     ("module://matplotlib_inline.backend_inline", True),   # Spyder, Jupyter
+    ("inline", True),                                       # its short name
     ("QtAgg", False), ("TkAgg", False), ("macosx", False),
     ("module://ipympl.backend_nbagg", False)])              # widgets
 def test_finish_closes_only_when_no_window(backend, closes):
@@ -245,6 +249,7 @@ def _figures_shown(monkeypatch, module):
     return shown
 
 
+@pytest.mark.filterwarnings("ignore:No artists with labels found")   # empty seasons
 def test_prices_per_season_in_local_time(monkeypatch):
     """Price = local hour of day: every seasonal curve must be y == x (24 -> 0),
     including March (/!\ was UTC + a fixed 2 h in spring: 1 h off before the
@@ -267,6 +272,12 @@ def test_prices_per_season_in_local_time(monkeypatch):
         for label, x, y in fig["lines"]:
             np.testing.assert_array_equal(x, np.arange(25))
             np.testing.assert_allclose(y, np.r_[np.arange(24), 0], err_msg=label)
+    # a season with a few hours only is skipped: data ending on 31 May 23:00 UTC
+    #   give 2 hours of "summer" (1 June, local time)
+    shown.clear()
+    plot_statistics.prices_per_season(price[:"2016-05-31 23:00"], "France")
+    summer = next(f for f in shown if f["title"].startswith("Summer"))
+    assert [label for label, _, _ in summer["lines"]] == []   # 2015 < first_year, 2016 skipped
     # March only (the DST month): same, local hours
     march = price[price.index.tz_convert("Europe/Paris").month == 3]
     prof  = plot_statistics._price_profile_local(plots.to_local_time(march))
@@ -309,6 +320,142 @@ def test_thermosensitivity_figures_share_one_sensitivity(monkeypatch):
                == ('T_degC', '==', 1, 1)
         assert k['thresholds'] is thresholds
         pd.testing.assert_series_equal(a[4], a[4].round(1))   # rounded temperatures
+
+
+def test_thermosensitivity_per_temperature_model_runs(monkeypatch):
+    """(/!\\ TypeError, name_col missing: crashed every run with verbose >= 2)"""
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import types, plot_statistics
+    from constants import Split
+    _figures_shown(monkeypatch, plot_statistics)
+    idx = pd.date_range("2022-01-01", periods=48 * 60, freq="30min", tz="UTC")
+    T = np.linspace(-5, 20, len(idx))
+    y = pd.Series(60 - 1.5 * T, index=idx)
+    for name, display in [(Split.train, "training"), (Split.test, "testing")]:
+        split = types.SimpleNamespace(
+            name=name, name_display=display, true_nation_GW=y,
+            dict_preds_NNTQ={'q50': y + .1},
+            dict_preds_ML={'LR': y - .1, 'RF': y, 'LGBM': y + .2},
+            dict_preds_meta={'LR': y, 'NN': y - .2}, Tavg_degC=T, dates=idx)
+        plot_statistics.thermosensitivity_per_temperature_model(
+            split, thresholds_degC=np.arange(0., 15., 1.), num_steps_per_day=48)
+
+
+# ---------------------------------------------------------------------------
+# figures: each plot in its own figure, none left empty
+# ---------------------------------------------------------------------------
+def _figures_kept(monkeypatch):
+    """plots.finish replaced by a recorder that does NOT close the figures:
+    a plot drawn on an older figure, or an empty extra figure, then shows."""
+    shown = []
+    monkeypatch.setattr(plots, "finish", lambda: shown.append(plt.gcf()))
+    return shown
+
+
+def _assert_one_figure_per_plot(shown):
+    assert len({id(f) for f in shown}) == len(shown), "a plot reused a figure"
+    empty = [n for n in plt.get_fignums() if not plt.figure(n).axes]
+    assert empty == [], f"{len(empty)} empty figure(s)"
+
+
+@pytest.mark.filterwarnings("ignore")
+def test_thermosensitivity_regions_one_figure_per_plot(monkeypatch):
+    """(/!\\ the winter and summer scatter plots drew on the current figure)"""
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import plot_statistics
+    conso, temp = _regional_data()
+    conso.columns = ["consumption_Occi._GW", "consumption_HdF_GW"]   # the plotted ones
+    temp.columns  = ["Occi.", "HdF"]
+    shown = _figures_kept(monkeypatch)
+    plot_statistics.thermosensitivity_regions(conso, temp)
+    assert len(shown) >= 3
+    _assert_one_figure_per_plot(shown)
+
+
+def test_plot_optuna_leaves_no_empty_figure(monkeypatch, capsys):
+    """(/!\\ plt.figure() then df.plot(), which opens its own figure)"""
+    pytest.importorskip("torch", reason="Bayes_search imports run -> torch")
+    optuna = pytest.importorskip("optuna")
+    import Bayes_search as bs
+    from constants import Stage
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=0))
+    study.optimize(lambda t: t.suggest_float("x", 0, 1), n_trials=30)
+    shown = _figures_kept(monkeypatch)
+    bs.plot_optuna(study, Stage.meta, list_parameters_hist=["x"],
+                   num_best_runs_params=5, num_best_runs_hist=10)
+    _assert_one_figure_per_plot(shown)
+
+
+def test_drift_with_time_annual_average_is_one_year(monkeypatch):
+    """Temperature = annual cycle + 8 degC weekly cycle: a 365-day average is
+    flat; the former 365-step average on half-hourly data (7.6 days) kept the
+    annual cycle."""
+    pytest.importorskip("torch", reason="plot_statistics imports constants -> torch")
+    import plot_statistics
+    shown = _figures_shown(monkeypatch, plot_statistics)
+    idx = pd.date_range("2016-01-01", "2020-12-31 23:30", freq="30min", tz="UTC")
+    days = np.arange(len(idx)) / 48
+    temp = pd.Series(12 + 8 * np.sin(2 * np.pi * days / 365.25), index=idx)
+    cons = 55 - 1.5 * (temp - 12)
+    plot_statistics.drift_with_time(cons, temp, 48)
+    _, _, real = next(line for line in shown[0]["lines"] if line[0] == "real")
+    real = real[np.isfinite(real)]
+    assert real.size > 300 and np.ptp(real) < 0.5, np.ptp(real)   # was ~16 degC
+
+
+@pytest.fixture(scope="module")
+def eco2mix_frame(tmp_path_factory):
+    """load_eco2mix on synthetic files with the real headers (2015-2025)."""
+    pytest.importorskip("torch", reason="IO imports torch")
+    import os, IO
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    with open(os.path.join(here, "eco2mix-national-cons-def_sample.csv"),
+              encoding="utf-8-sig") as f:
+        head = f.readline().strip().split(";")
+    idx = pd.date_range("2015-01-01", "2026-01-01", freq="30min", tz="UTC",
+                        inclusive="left")
+    t = np.arange(len(idx))
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({c: 1000 + 500 * np.sin(2 * np.pi * t / 48 + k)
+                          + rng.normal(0, 20, len(t))
+                       for k, c in enumerate(head[5:])})
+    for k, (c, v) in enumerate([("Périmètre", "France"), ("Nature", "n"),
+                                ("Date", "d"), ("Heure", "h"),
+                                ("Date et Heure",
+                                 idx.strftime("%Y-%m-%dT%H:%M:%S+00:00"))]):
+        df.insert(k, c, v)
+    folder = tmp_path_factory.mktemp("eco2mix")
+    df[head].to_csv(folder / "def.csv", sep=";", index=False)
+    with open(os.path.join(here, "eco2mix-national-tr_sample.csv"), "rb") as f:
+        (folder / "tr.csv").write_bytes(f.read())
+    return IO.load_eco2mix(path_monthly=str(folder / "def.csv"), url_monthly="-",
+                           path_recent=str(folder / "tr.csv"), url_recent="-")
+
+
+@pytest.mark.filterwarnings("ignore")
+def test_eco2mix_plots(eco2mix_frame, monkeypatch):
+    """The variation fits keep the midnight rows (/!\\ timeofday was differenced:
+    -23.5 at 00:00, dropped as an outlier); one figure per plot, none empty
+    (/!\\ plt.figure() then df.plot())."""
+    import plot_statistics
+    fitted = []
+    real_fit = plot_statistics.LinearRegression.fit
+
+    def _fit(self, X, y, *a, **k):
+        fitted.append(X)
+        return real_fit(self, X, y, *a, **k)
+    monkeypatch.setattr(plot_statistics.LinearRegression, "fit", _fit)
+    monkeypatch.setattr("builtins.print", lambda *a, **k: None)
+    shown = _figures_kept(monkeypatch)
+
+    plot_statistics.eco2mix(eco2mix_frame.copy())
+
+    diffs = [X for X in fitted if list(X.columns) in (["Solaire"], ["Eolien"])]
+    assert diffs
+    for X in diffs:
+        assert ((X.index.hour == 0) & (X.index.minute == 0)).any()
+    _assert_one_figure_per_plot(shown)
 
 
 # ---------------------------------------------------------------------------

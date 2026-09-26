@@ -25,6 +25,7 @@ from   scipy.optimize       import minimize
 
 
 import plots # losses  # architecture
+from   constants import FORECAST_TZ
 
 
 
@@ -192,8 +193,7 @@ def prepare_meta_data(
     df_features['NNTQ_inter']=_NNTQ_inter
 
     if 'horizon' not in df_features.columns:
-        df_features['horizon']=(df_features.index.hour*2 + \
-                                df_features.index.minute/30).round().astype(np.int16)
+        df_features['horizon'] = horizon(df_features.index)
 
     df = pd.concat([df, df_features], axis=1)
 
@@ -202,6 +202,17 @@ def prepare_meta_data(
 
     # print(f"Meta-model {name} data: {df.shape}")
     return df
+
+
+def horizon(index: pd.DatetimeIndex) -> np.ndarray:
+    """Half-hour of the Paris day (0: 00:00-00:30, ..., 47: 23:30-24:00): the
+    position in the scored day ahead, i.e. a fixed lead time after the noon
+    (Paris) origin. One metamodel network per value.
+    (/!\\ was the UTC half-hour: since the origins are at noon Paris time, it
+     would mix two lead times and two local times, 1 h apart, in each network)"""
+    if getattr(index, 'tz', None) is not None:
+        index = index.tz_convert(FORECAST_TZ)
+    return (index.hour * 2 + index.minute // 30).to_numpy().astype(np.int16)
 
 
 # 3. TRAIN META-MODEL
@@ -231,9 +242,7 @@ def to_tensors(df: pd.DataFrame, cols_features: List[str]):
     # Context features (exclude predictions and target)
 
     if 'horizon' not in df.columns:
-        df['horizon'] = \
-            (df.index.hour*2 + df.index.minute/30).round().astype(np.int16)
-            # (df.index.hour + df.index.minute/60) / 24
+        df['horizon'] = horizon(df.index)
 
     context_cols = _context_cols(cols_features + ['NNTQ_inter'])
     context = torch.tensor(

@@ -192,7 +192,7 @@ def df_features(dict_input_csv_fnames: Dict[str, str], cache_fname: str,
         # print(df.head().to_string())
 
         plt.figure(figsize=(10,6))
-        df.drop(columns=['consumption_GW']).iloc[-(8*24*2):].plot()
+        df.drop(columns=['consumption_GW']).iloc[-(8*24*2):].plot(ax=plt.gca())
         plots.finish()
 
         # # no time modification

@@ -136,7 +136,7 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
                     path, df_recent=consumption_nation_recent, verbose=verbose)
 
             if name == 'consumption_by_region':
-                dfs[name], names_regions = load_consumption_by_region(
+                dfs[name], _ = load_consumption_by_region(
                     path, df_recent=consumption_region_recent, verbose=verbose)
 
             elif name == 'temperature':
@@ -171,7 +171,6 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
             # analyze_datetime(load_solar(path, verbose=verbose), freq="3h", name="solar")
             analyze_datetime(dfs['price'],   freq="h",    name="price")
             analyze_datetime(load_nuclear(), freq="h",    name="nuclear")
-            analyze_datetime(load_eco2mix(), freq="30min",name="eco2mix")
 
 
         # print("dfs['temperature']", dfs['temperature'])
@@ -186,6 +185,8 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
         df_eco2mix = load_eco2mix(do_plot_statistics=do_plot_statistics,
                                   verbose=verbose)
         eco2mix_plotted = do_plot_statistics
+        if verbose >= 3:   # /!\ was a third parse of the eco2mix files
+            analyze_datetime(df_eco2mix, freq="30min", name="eco2mix")
         # df_nuclear = load_nuclear(verbose=verbose)
         starts['eco2mix'] = df_eco2mix.index.tz_convert('UTC').min()
         ends  ['eco2mix'] = df_eco2mix.index.tz_convert('UTC').max()
@@ -665,8 +666,8 @@ def load_weights(
         ).T
 
     weights_regions = (df_weigths / df_weigths.sum()).round(5)
-    weights_regions.columns = [SHORT_NAMES_REGIONS[normalize_name(r)]
-                             for r in weights_regions.index]
+    # (/!\ removed: `weights_regions.columns = [short names]`, which does nothing
+    #   on a Series; the users of these weights map the long names themselves)
 
     if not np.isclose(weights_regions.sum(), 1.):
         raise ValueError(f"Consumption weights do not sum to 100% "
@@ -978,7 +979,7 @@ def load_temperature_world(
 
         df = pd.read_csv(
             url,
-            delim_whitespace=True,
+            sep      = r'\s+',   # /!\ was delim_whitespace=True: removed in pandas 3
             comment  = '%',
             names    = cols,
             na_values= ['***', 'NaN']

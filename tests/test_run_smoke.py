@@ -190,6 +190,21 @@ def test_cache_pickle_is_slim(tmp_path, monkeypatch):
     assert path.stat().st_size < 0.8 * full, (path.stat().st_size, full)
 
 
+@pytest.mark.filterwarnings("ignore")   # plots under Agg, legends, etc.
+def test_verbose_run_from_the_cache(tmp_path, monkeypatch, capsys):
+    """verbose=2 (comparisons, diagnostic and thermosensitivity plots) with the
+    NNTQ trained, then loaded from the slim pickle: nothing needed downstream
+    is missing from it (/!\\ the verbose >= 2 plots crashed on a TypeError);
+    every figure is closed."""
+    import matplotlib.pyplot as plt
+    for _ in range(2):                           # trained, then from the cache
+        _, _, metrics, *_ = _once(tmp_path, monkeypatch, save_cache_NNTQ=True,
+                                  verbose=2)
+        assert np.isfinite(metrics.to_numpy()).all()
+        assert plt.get_fignums() == []
+    assert "Loading NNTQ predictions" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # NNTQ variants (metamodel Bayesian search)
 # ---------------------------------------------------------------------------

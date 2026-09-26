@@ -34,7 +34,8 @@ def _closes_after_show(backend: Optional[str] = None) -> bool:
     figure as an image (and closes it itself). False for window backends (Qt,
     Tk, ...), where closing would remove the window, and interactive widgets."""
     backend = (backend or matplotlib.get_backend()).lower()
-    return backend in _NON_INTERACTIVE or backend.endswith('backend_inline')
+    return backend in _NON_INTERACTIVE or backend.endswith('backend_inline') \
+        or backend == 'inline'        # short name (matplotlib >= 3.9, IPython)
 
 
 def finish() -> None:

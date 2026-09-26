@@ -616,8 +616,8 @@ def plot_optuna(study,
     df["best_so_far"]  = df["value"].cummin()
 
     import matplotlib.pyplot as plt
-    plt.figure()
     df.plot(x="number", y=["value", "moving_median", "best_so_far"])
+        # /!\ was after plt.figure(): df.plot opens its own, leaving an empty one
     plt.xlabel("trial number")
     plt.ylabel(f"{stage.value} loss")
     plt.yscale('log')

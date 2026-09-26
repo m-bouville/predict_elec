@@ -175,3 +175,42 @@ def test_metamodel_context_excludes_predictions():
     cols = ['Tavg_degC', 'consumption_LR', 'consumption_RF', 'consumption_LGBM',
             'consumption_NNTQ', 'NNTQ_inter']
     assert metamodel._context_cols(cols) == ['Tavg_degC', 'NNTQ_inter']
+
+
+# ---------------------------------------------------------------------------
+# metamodel horizon: half-hour of the Paris day
+# ---------------------------------------------------------------------------
+def test_metamodel_horizon_is_the_paris_half_hour():
+    """One network per horizon: horizon h must be the same local time (and lead
+    time after the noon Paris origin) in winter and in summer.
+    (/!\\ was the UTC half-hour: 1 h apart between CET and CEST)"""
+    pytest.importorskip("torch", reason="metamodel imports torch")
+    import metamodel
+    stamps = pd.DatetimeIndex(["2022-01-10 23:00", "2022-07-10 22:00",   # 00:00 Paris
+                               "2022-01-11 22:30", "2022-07-11 21:30"],  # 23:30 Paris
+                              tz="UTC")
+    assert metamodel.horizon(stamps).tolist() == [0, 0, 47, 47]
+    naive = pd.DatetimeIndex(["2022-01-10 00:00", "2022-01-10 23:30"])  # local already
+    assert metamodel.horizon(naive).tolist() == [0, 47]
+
+
+def test_meta_data_horizons_cover_each_paris_day():
+    """prepare_meta_data on Paris-day stamps (as prediction_day_ahead makes
+    them): each day has horizons 0..47 once, 0..3 and 6..47 on the spring-forward
+    Sunday (02:00-03:00 does not exist)."""
+    pytest.importorskip("torch", reason="metamodel imports torch")
+    import metamodel
+    local = pd.date_range("2022-03-25", "2022-03-30", freq="30min",
+                          tz="Europe/Paris", inclusive="left")
+    dates = local.tz_convert("UTC")
+    n = len(dates)
+    s = lambda v: pd.Series(v, index=dates)
+    df = metamodel.prepare_meta_data(
+        "test", {'q25': s(np.full(n, 49.)), 'q50': s(np.full(n, 50.)),
+                 'q75': s(np.full(n, 51.))},
+        {'LR': s(np.full(n, 50.)), 'RF': s(np.full(n, 50.)), 'LGBM': s(np.full(n, 50.))},
+        np.zeros((n, 1)), np.full(n, 50.), dates, ['f0'])
+    per_day = df.groupby(df.index.tz_convert("Europe/Paris").date)['horizon']
+    for day, h in per_day:
+        expected = [k for k in range(48) if not (str(day) == "2022-03-27" and k in (4, 5))]
+        assert sorted(h.tolist()) == expected, day
