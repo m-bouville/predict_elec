@@ -832,8 +832,8 @@ class BlockWeighting(nn.Module):
 
 # ----------------------------------------------------------------------
 # calculate losses for:
-#    - training (torch)
-#    - validation and testing (numpy)
+#    - training (with gradients)
+#    - validation and testing (without gradients)
 # ----------------------------------------------------------------------
 
 
@@ -940,14 +940,20 @@ def subset_evolution_torch(
 
 
 @torch.no_grad()
-def subset_evolution_numpy(
+def subset_evaluation(
         model_NN, #: containers.NeuralNet
         subset_loader: DataLoader
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
+    Loss per horizon on a validation or test loader: the same torch losses as
+    in training, without gradients, computed on the model's device. Only the
+    averages over the batches go to the CPU.
+    (/!\\ was `subset_evolution_numpy`: every batch was copied to the CPU to
+     run numpy twins of the losses, which had to be kept identical by hand)
+
     Returns:
         loss_quantile_scaled_h: np.ndarray
-            shape (V, ), its average is used for gradients
+            shape (V, ): average over the batches of the total loss
         dict_losses_h: Dict[str, np.ndarray]
             components of the loss, each of shape (V, ): used for diagnostics
     """
@@ -956,76 +962,39 @@ def subset_evolution_numpy(
     device      = model_NN.device
     valid_length= model_NN.valid_length
 
-
     model.eval()
 
-    # Q = len(quantiles)
-    # T = len(dates)
+    loss_quantile_scaled_h = torch.zeros(valid_length, device=device)
+    dict_losses_h = {key: torch.zeros(valid_length, device=device) for key in
+                     ['pinball', 'coverage', 'crossing', 'derivative', 'median']}
 
-    loss_quantile_scaled_h = np.zeros(valid_length)
-    dict_losses_h = {#'quantile_with_crossing': np.zeros(valid_length),
-            'pinball':   np.zeros(valid_length),
-            'coverage':  np.zeros(valid_length), 'crossing':np.zeros(valid_length),
-            'derivative':np.zeros(valid_length), 'median':  np.zeros(valid_length)}
-    # print("initial:\n", loss_quantile_scaled_h.round(2))
-    # print("initial:\n", pd.DataFrame(dict_losses_h).round(2).head())
-
-    # main loop
     for (X_scaled, Y_regions_scaled, y_nation_scaled,
-         T_degC, _, origin_unix) in subset_loader:
-        X_scaled_dev             = X_scaled.to(device)
-        Y_regions_scaled_cpu     = Y_regions_scaled[:, :, :].cpu().numpy() # (B, H, R)
-        y_median_nation_scaled_cpu=y_nation_scaled [:, :, 0].cpu().numpy() # (B, H)
-        T_degC_cpu               = T_degC          [:, :, 0].cpu().numpy() # (B, H)
+         T_degC, _, _) in subset_loader:
+        (pred_nation_scaled, pred_regions_scaled) = model(X_scaled.to(device))
 
-        # origins_cpu = [pd.Timestamp(t, unit='s') for t in origin_unix.tolist()].cpu()
-
-        # NN forward
-        (pred_nation_scaled, pred_regions_scaled) = model(X_scaled_dev)
-        pred_nation_scaled_cpu = pred_nation_scaled .cpu().numpy() # (B, H, Q)
-        pred_regions_scaled_cpu= pred_regions_scaled.cpu().numpy() # (B, H, R)
-
-        # assert y_scaled_cpu.shape[1] == pred_scaled_cpu.shape[1] == pred_length
-
-        # validation and plotting will be over VALID_LENGTH, not PRED_LENGTH
-        # loss
-        loss_quantile_scaled_h_batch, dict_losses_h_batch = losses.quantile_numpy(
-            pred_nation_scaled_cpu    [:, -valid_length:],
-            y_median_nation_scaled_cpu[:, -valid_length:],
-            **{_name: getattr(model_NN, _name) for _name in ['quantiles', \
-                 'lambda_cross', 'lambda_coverage', 'lambda_deriv', \
-                 'lambda_median', 'smoothing_cross',
+        # validation and plotting are over VALID_LENGTH, not PRED_LENGTH
+        loss_scaled_h_batch, dict_losses_h_batch = losses.quantile_torch(
+            pred_nation_scaled[:, -valid_length:, :],                  # (B, V, Q)
+            y_nation_scaled   [:, -valid_length:, 0].to(device),        # (B, V)
+            model_NN.quantiles,
+            **{_name: getattr(model_NN, _name) for _name in ['lambda_cross', \
+                 'lambda_coverage','lambda_deriv','lambda_median','smoothing_cross',
                  'saturation_cold_degC', 'threshold_cold_degC', 'lambda_cold']},
-                Tavg_current=T_degC_cpu[:, -valid_length:])
+            Tavg_current=T_degC[:, -valid_length:, 0].to(device))
 
         if model_NN.lambda_regions > 0:
-            loss_region_scaled_h_batch = losses.regions_numpy(
-                    pred_regions_scaled_cpu[:, -valid_length:, :],     # (B, V, R)
-                    Y_regions_scaled_cpu   [:, -valid_length:, :],     # (B, V, R)
-                    model_NN.lambda_regions, model_NN.lambda_regions_sum
-                )
-            loss_scaled_h_batch= loss_quantile_scaled_h_batch+loss_region_scaled_h_batch
-        else:
-            loss_scaled_h_batch= loss_quantile_scaled_h_batch
-
-
-        # print("batch:\n", loss_scaled_h_batch.round(2))
-
-        # print("previous total:\n", pd.DataFrame(dict_losses_h).round(2).head())
-        # print("batch:\n", pd.DataFrame(dict_losses_h_batch).round(2).head())
+            loss_scaled_h_batch = loss_scaled_h_batch + losses.regions_torch(
+                    pred_regions_scaled[:, -valid_length:, :],          # (B, V, R)
+                    Y_regions_scaled   [:, -valid_length:, :].to(device),
+                    model_NN.lambda_regions, model_NN.lambda_regions_sum)
 
         loss_quantile_scaled_h += loss_scaled_h_batch
-        dict_losses_h = {key: dict_losses_h[key] + dict_losses_h_batch[key]
-                         for key in dict_losses_h}
+        for key in dict_losses_h:
+            dict_losses_h[key] += dict_losses_h_batch[key]
 
-        # print("running total:\n", loss_quantile_scaled_h.round(2))
-        # print("running total:\n", pd.DataFrame(dict_losses_h).round(2).head())
+    def _to_numpy(t: torch.Tensor) -> np.ndarray:
+        return (t / len(subset_loader)).cpu().numpy().astype(np.float64)
 
-    loss_quantile_scaled_h      /= len(subset_loader)
-    dict_losses_h = {key: value /  len(subset_loader)
-                     for (key, value) in dict_losses_h.items()}
-
-    # print("after norm:\n", pd.DataFrame(dict_losses_h).round(2).head())
-
-    return loss_quantile_scaled_h, dict_losses_h
+    return _to_numpy(loss_quantile_scaled_h), \
+           {key: _to_numpy(value) for (key, value) in dict_losses_h.items()}
 

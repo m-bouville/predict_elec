@@ -630,7 +630,7 @@ class NeuralNet:
 
                 t_valid_start     = time.perf_counter()
                 valid_loss_quantile_h_scaled, dict_valid_loss_quantile_h = \
-                    architecture.subset_evolution_numpy(self, valid_loader)
+                    architecture.subset_evaluation(self, valid_loader)
 
                 if verbose >= 2:
                     print(f"validation took: {time.perf_counter()-t_valid_start:.2f} s")
@@ -720,7 +720,7 @@ class NeuralNet:
 
         # test loss
         test_loss_quantile_h_scaled, dict_test_loss_quantile_h = \
-           architecture.subset_evolution_numpy(self, data.test.loader)
+           architecture.subset_evaluation(self, data.test.loader)
 
         if verbose >= 3:
             print(pd.DataFrame(dict({"total": test_loss_quantile_h_scaled}, \

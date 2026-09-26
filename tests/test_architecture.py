@@ -336,3 +336,74 @@ def test_training_loss_sums_are_detached():
     assert loss_h.shape == (48,) and torch.isfinite(loss_h).all()
     assert not loss_h.requires_grad
     assert not any(v.requires_grad for v in dict_losses_h.values())
+
+
+# ---------------------------------------------------------------------------
+# validation / test loss: the torch losses without gradients, on the device
+# ---------------------------------------------------------------------------
+def _small_net(data, **overrides):
+    import constants, containers
+    params = dict(constants.NNTQ_PARAMETERS, device=torch.device('cpu'),
+                  input_length=144, pred_length=72, valid_length=48,
+                  model_dim=16, num_heads=2, num_layers=1, ffn_size=2,
+                  num_geo_blocks=2, patch_length=48, stride=24)
+    params.update(overrides)
+    torch.manual_seed(0)
+    return containers.NeuralNet(**params, len_train_data=len(data.train.loader),
+                                num_features=data.num_features,
+                                weights_regions={'NE': 1.})
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+@pytest.mark.parametrize("lambda_regions", [0., .05])
+def test_subset_evaluation_is_the_training_loss_without_gradients(lambda_regions):
+    """subset_evaluation = average over the batches of losses.quantile_torch
+    (+ regions_torch), as in training; float64 numpy out; no gradient.
+    (/!\\ replaces subset_evolution_numpy and the numpy twins of the losses)"""
+    import losses
+    data, _, _ = _small_bundle()
+    net = _small_net(data, lambda_regions=lambda_regions, lambda_deriv=.05,
+                     lambda_median=.2, lambda_coverage=.01, lambda_cold=.2)
+    loader = data.complete.loader     # ordered, several batches
+    assert len(loader) > 1
+
+    loss_h, dict_h = architecture.subset_evaluation(net, loader)
+
+    V, names = 48, ['lambda_cross', 'lambda_coverage', 'lambda_deriv', 'lambda_median',
+                    'smoothing_cross', 'saturation_cold_degC', 'threshold_cold_degC',
+                    'lambda_cold']
+    expected, expected_dict = 0., {k: 0. for k in dict_h}
+    with torch.no_grad():
+        for (X, Y_regions, y, T, _, _) in loader:
+            pred, pred_regions = net.model(X)
+            batch, parts = losses.quantile_torch(
+                pred[:, -V:], y[:, -V:, 0], net.quantiles,
+                **{n: getattr(net, n) for n in names}, Tavg_current=T[:, -V:, 0])
+            if lambda_regions > 0:
+                batch = batch + losses.regions_torch(
+                    pred_regions[:, -V:], Y_regions[:, -V:],
+                    net.lambda_regions, net.lambda_regions_sum)
+            expected = expected + batch.numpy()
+            expected_dict = {k: expected_dict[k] + parts[k].numpy() for k in dict_h}
+
+    assert loss_h.dtype == np.float64 and loss_h.shape == (V,)
+    np.testing.assert_allclose(loss_h, expected / len(loader), rtol=1e-5)
+    assert set(dict_h) == {'pinball', 'coverage', 'crossing', 'derivative', 'median'}
+    for k in dict_h:
+        np.testing.assert_allclose(dict_h[k], expected_dict[k] / len(loader),
+                                   rtol=1e-5, atol=1e-7, err_msg=k)
+    assert all(p.grad is None for p in net.model.parameters())
+    assert not net.model.training
+
+
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_subset_evaluation_copies_to_cpu_only_at_the_end(monkeypatch):
+    """One copy per result (total + 5 components), not one per batch."""
+    data, _, _ = _small_bundle()
+    net = _small_net(data)
+    calls = []
+    real_cpu = torch.Tensor.cpu
+    monkeypatch.setattr(torch.Tensor, "cpu",
+                        lambda self, *a, **k: calls.append(1) or real_cpu(self, *a, **k))
+    architecture.subset_evaluation(net, data.complete.loader)
+    assert len(data.complete.loader) > 1 and len(calls) == 6
