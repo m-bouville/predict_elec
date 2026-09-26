@@ -18,7 +18,6 @@ Bayes_search imports run -> torch, and optuna: skipped without them.
 """
 import copy
 import os
-import pandas as pd
 
 import pytest
 
@@ -112,9 +111,6 @@ def test_csv_loads_and_sampling_works(stage):
     path = os.path.join(ROOT, f"parameter_search_{stage.value}.csv")
     if not os.path.exists(path):
         pytest.skip(f"{os.path.basename(path)} not found")
-    if 'search_NNTQ_MAE' not in pd.read_csv(path, nrows=0).columns:
-        pytest.skip(f"{os.path.basename(path)}: objective on the whole test "
-                    "period (before the split in two): not reloadable")
 
     trials = bs.load_frozen_trials(path, ALL_DISTRIBUTIONS, stage)
     study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=0))
@@ -172,3 +168,28 @@ def test_numeric_rf_max_features_reloads(tmp_path):
     trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.meta)
     assert [t.params['RF_max_features'] for t in trials] == ['sqrt', '0.4']
 
+
+
+def test_rows_outside_the_current_ranges_are_skipped(tmp_path):
+    """A row whose value is no longer allowed (a batch size dropped from the
+    choices, a learning rate above the new maximum) is left out; the others
+    load (/!\ add_trial raised on the first such row: the search did not
+    start)."""
+    import pandas as pd
+    _postprocess_row = pytest.importorskip("test_run")._postprocess_row
+    nntq = copy.deepcopy(constants.NNTQ_PARAMETERS)
+    rows = []
+    for batch_size, learning_rate in [(96, .002), (10_000, .002), (96, 10.)]:
+        nntq.update(batch_size=batch_size, learning_rate=learning_rate)
+        row, _ = _postprocess_row(copy.deepcopy(nntq))
+        row.update(loss_NNTQ=20., loss_meta=2.3)
+        rows.append(row)
+    csv = tmp_path / "search.csv"
+    pd.DataFrame(rows).to_csv(csv, index=False, float_format="%.6f")
+
+    trials = bs.load_frozen_trials(str(csv), ALL_DISTRIBUTIONS, Stage.NNTQ)
+
+    assert [t.params['batch_size'] for t in trials] == [96]
+    study = optuna.create_study()
+    for t in trials:
+        study.add_trial(t)                 # the ones loaded are valid

@@ -101,7 +101,9 @@ class DayAheadDataset(torch.utils.data.Dataset):
         _mask  = ((_local.hour   == forecast_hour) &
                   (_local.minute == 0) &
                   (_idx >= input_length) & (_idx >= context_length) &
-                  (_idx + pred_length < len(data_subset)))
+                  (_idx + pred_length <= len(data_subset)))
+            # (the target is rows _idx ... _idx+pred_length-1; /!\ was `<`:
+            #  the last whole day of a split was never forecast)
         self.start_indices_subset= _idx[_mask].tolist()
         self.forecast_origins    = list(dates_subset[_mask])     # as given (UTC)
         self.context_length      = int(context_length)

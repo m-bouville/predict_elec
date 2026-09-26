@@ -178,6 +178,11 @@ def test_cache_key_follows_the_validation_split_and_regions(tmp_path, monkeypatc
     run.run_model_once(**_once_args(tmp_path, save_cache_NNTQ=True))
     assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 3
 
+    # the cached worst days depend on their number (/!\ not in the key: a
+    #   stale avg_abs_worst_days, hence loss_NNTQ, was reloaded)
+    _once(tmp_path, monkeypatch, save_cache_NNTQ=True, num_worst_days=5)
+    assert len(list(tmp_path.glob("NNTQ_preds_*.pkl"))) == 4
+
 
 def test_regional_errors_in_national_units(tmp_path, monkeypatch):
     """The NNTQ gets regions_to_nation = region std / national std (training
@@ -336,3 +341,38 @@ def test_early_stopping_only_on_validated_epochs(tmp_path, monkeypatch):
     _once(tmp_path, monkeypatch, nntq_overrides={'epochs': 5, 'patience': 5},
           validate_every=3, do_metamodel=False)
     assert len(seen) == 2              # epochs 1 and 3 (index 0 and 2), not 5
+
+
+# ---------------------------------------------------------------------------
+# search objective on the first half of the test period, second half reported
+# ---------------------------------------------------------------------------
+def test_objective_on_the_first_half_of_the_test_period(tmp_path, monkeypatch):
+    """Coverage and worst days (loss_NNTQ) on the first half of the test
+    period, the reported coverage on the second half; recomputed here from
+    the predictions."""
+    data, row, _, _, cov, (top_n, worst), _ = _once(tmp_path, monkeypatch)
+    cut   = containers.search_period_end(data.test)
+    true  = data.test.true_nation_GW
+    halves= {'search': true.index < cut, 'test': true.index >= cut}
+
+    def coverage(key, keep):
+        pred = data.test.dict_preds_NNTQ[key].reindex(true.index)
+        return float(np.mean(true[keep] <= pred[keep])) - int(key[1:]) / 100
+
+    whole = np.ones(len(true), bool)
+    assert any(coverage(k, halves['search']) != coverage(k, whole) for k in cov)
+    for key in cov:
+        assert cov[key] == pytest.approx(coverage(key, halves['search']))
+        assert row[f"test_coverage_{key}"] == \
+            pytest.approx(coverage(key, halves['test']))
+
+    def worst_days(keep):
+        err = (data.test.dict_preds_NNTQ['q50'].reindex(true.index) - true)[keep]
+        err = err.abs().round(2)
+        days = err.groupby(err.index.tz_convert("Europe/Paris").normalize())
+        daily = days.mean()[days.size() == 48]            # whole days only
+        return float(daily.sort_values(ascending=False).head(top_n).mean())
+
+    assert worst_days(halves['search']) != pytest.approx(worst_days(whole), abs=.01)
+    assert worst == pytest.approx(worst_days(halves['search']), abs=.01)
+    assert row['avg_abs_worst_days_search'] == worst

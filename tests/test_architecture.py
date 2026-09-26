@@ -363,7 +363,8 @@ def test_subset_evaluation_is_the_training_loss_without_gradients(lambda_regions
     import losses
     data, _, _ = _small_bundle()
     net = _small_net(data, lambda_regions=lambda_regions, lambda_deriv=.05,
-                     lambda_median=.2, lambda_coverage=.01, lambda_cold=.2)
+                     lambda_median=.2, lambda_coverage=.01, lambda_cold=.2,
+                     regions_to_nation=np.array([.3]))   # region std / national std
     loader = data.complete.loader     # ordered, several batches
     assert len(loader) > 1
 
@@ -384,7 +385,8 @@ def test_subset_evaluation_is_the_training_loss_without_gradients(lambda_regions
         if lambda_regions > 0:
             expected = expected + losses.regions_torch(
                 pred_regions[:, -V:], Y_regions[:, -V:],
-                net.lambda_regions, net.lambda_regions_sum)
+                net.lambda_regions, net.lambda_regions_sum,
+                regions_to_nation=torch.tensor([.3]))    # in national units
 
     assert loss_h.dtype == np.float64 and loss_h.shape == (V,)
     np.testing.assert_allclose(loss_h, expected.numpy(), rtol=1e-5)
@@ -545,3 +547,52 @@ def test_patch_order_matters():
         with torch.no_grad():
             outputs.append(model(X)[0])
     assert (outputs[0] - outputs[1]).abs().max() > 1e-4
+
+
+# ---------------------------------------------------------------------------
+# the last whole day of a split is forecast
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("features_in_future", [0, 1])
+def test_last_whole_day_of_the_data_is_forecast(features_in_future):
+    """Data ending at 23:30 (Paris): the noon origin of the day before covers
+    it, its pred_length rows being the last ones (/!\ `idx + pred_length <
+    len`: that day was never forecast)."""
+    end = pd.Timestamp("2024-11-30 23:30", tz="Europe/Paris").tz_convert("UTC")
+    idx = pd.date_range(end=end, periods=48 * 10, freq="30min")
+    n = len(idx)
+    ds = architecture.DayAheadDataset(
+        data_subset=np.arange(2 * n, dtype=np.float32).reshape(n, 2),
+        dates_subset=idx, temperatures_subset=np.zeros(n, np.float32),
+        input_length=48, pred_length=72, features_in_future=features_in_future,
+        forecast_hour=12, index_y_nation=[0], indices_Y_regions=[])
+    assert ds.forecast_origins[-1].tz_convert("Europe/Paris") == \
+        pd.Timestamp("2024-11-29 12:00", tz="Europe/Paris")
+    X, _, y, *_ = ds[len(ds) - 1]
+    assert y.shape == (72, 1) and float(y[-1, 0]) == 2 * (n - 1)   # last row
+    assert X.shape[0] == 48 + 72 * features_in_future
+
+
+# ---------------------------------------------------------------------------
+# NNTQ feature scaler fit on the training rows only
+# ---------------------------------------------------------------------------
+@pytest.mark.filterwarnings("ignore:batch_size")
+def test_features_scaled_on_the_training_rows_only():
+    """The features trend upwards: scaled with the training rows, those have
+    mean 0 / std 1 and the later rows do not (fit on all rows: both 0 / 1)."""
+    import copy
+    n = 48 * 60
+    dates = pd.date_range("2021-01-01", periods=n, freq="30min", tz="UTC")
+    names_cols = {'y_nation': ['consumption_GW'], 'Y_regions': ['consumption_NE_GW'],
+                  'features': ['f0', 'f1'],
+                  'ML_preds': ['consumption_LR', 'consumption_RF']}
+    array = np.random.default_rng(0).normal(size=(n, 6)).astype(np.float32)
+    array[:, 2:4] += np.linspace(0, 10, n, dtype=np.float32)[:, None]
+    data, _ = architecture.make_X_and_y(
+        array, dates, np.zeros(n, np.float32), int(n * .8), int(n * .8 * .25),
+        copy.deepcopy(names_cols), False, {'NE': 1.}, 30, 144, 72, True, 16)
+
+    X = data.complete.loader.dataset.data_subset[:, 2:4]     # after y, regions
+    n_train = len(data.train.dates)
+    np.testing.assert_allclose(X[:n_train].mean(0), 0., atol=1e-4)
+    np.testing.assert_allclose(X[:n_train].std(0),  1., atol=1e-4)
+    assert (X.mean(0) > .5).all()                              # later rows higher

@@ -59,6 +59,8 @@ def _download(url: str, path: str, verbose: int = 0) -> None:
             with open(_tmp, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1 << 20):
                     f.write(chunk)
+        if os.path.getsize(_tmp) == 0:   # /!\ was kept: every later run failed
+            raise RuntimeError(f"{url}: empty response, nothing saved")
         os.replace(_tmp, path)
     finally:
         if os.path.exists(_tmp):
@@ -245,7 +247,15 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
 
             delta = df.index.to_series().diff().dropna().mode()[0]
             if delta == pd.Timedelta(days=1):
-                d = d.ffill(limit=num_steps_per_day)
+                # daily, stamped at local midnight: each half-hour gets the
+                #   value of its local day (/!\ was ffill(limit=num_steps_per_day):
+                #   the 50th half-hour of the fall-back day stayed NaN, and its
+                #   row was dropped every October)
+                if df.index.tz is not None:
+                    d = df.reindex(idx.tz_convert(df.index.tz).normalize())
+                    d.index = idx
+                else:
+                    d = d.ffill(limit=num_steps_per_day)
             elif delta == pd.Timedelta(hours=1):  # price
                 d = d.ffill(limit=   2)
             elif delta == pd.Timedelta(hours=3):  # solar
@@ -349,9 +359,12 @@ def load_data(dict_input_csv_fnames: dict, cache_fname: str,
     #    its last day, which was cut to one row)
     _ends_inputs = {name: end for (name, end) in ends.items()
                     if name not in SOURCES_NOT_MODEL_INPUTS}
-    if 'temperature' in _ends_inputs:   # daily: covers its whole last day
-        _ends_inputs['temperature'] += pd.Timedelta(days=1) - \
-                                       pd.Timedelta(minutes=minutes_per_step)
+    if 'temperature' in _ends_inputs:   # daily: covers its whole last LOCAL day
+        #   (/!\ was + 24 h: one hour off when that day is a DST day)
+        _last_day = _ends_inputs['temperature'].tz_convert('Europe/Paris')
+        _ends_inputs['temperature'] = \
+            (_last_day + pd.DateOffset(days=1)).tz_convert('UTC') - \
+            pd.Timedelta(minutes=minutes_per_step)
     common_start  = max(starts.values()); common_end = min(_ends_inputs.values())
     if verbose >= 3:
         print(f"intersection start: {common_start  }, end: {common_end}")
@@ -403,7 +416,8 @@ def load_consumptions_recent(
     # quarter-hourly -> half-hourly: the value at :00 (or :30), as in the
     #   historical files (/!\ was the mean of :00 and :15: another quantity
     #   than the history, 0.2 GW apart on average)
-    df_nation = df_nation.resample('30min').first()
+    df_nation = df_nation[df_nation.index.minute % 30 == 0].resample('30min').first()
+        # (/!\ .first() alone: a missing :00 value was replaced by the :15 one)
 
 
     # régional
@@ -423,7 +437,8 @@ def load_consumptions_recent(
         index="datetime_utc", columns="Région", values='consumption_GW',
         aggfunc='mean').sort_index()
 
-    df_region = df_region.resample('30min').first()   # as the national data
+    df_region = df_region[df_region.index.minute % 30 == 0]\
+        .resample('30min').first()                      # as the national data
 
     # remove rows with at least 2 NAs
     df_region = df_region.dropna(thresh=2)

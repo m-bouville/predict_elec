@@ -123,6 +123,8 @@ def test_statistics_verbose_3_parse_eco2mix_once(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("temperature_last_day, expected_end", [
     ("2025-06-30", "2025-06-30 21:30"),   # whole last Paris day (CEST: 22:00 UTC)
     ("2025-07-31", "2025-07-15 23:30"),   # consumption ends first
+    ("2025-03-30", "2025-03-30 21:30"),   # 23-h day: 23:30 CEST (/!\ was 00:30 of D+1)
+    ("2025-01-31", "2025-01-31 22:30"),   # winter: 23:30 CET
 ])
 def test_data_end_at_the_end_of_the_model_inputs(tmp_path, temperature_last_day,
                                                  expected_end):
@@ -147,6 +149,46 @@ def test_data_end_at_the_end_of_the_model_inputs(tmp_path, temperature_last_day,
     assert out.index.max() == pd.Timestamp(expected_end, tz="UTC")
 
 
+def test_data_end_on_the_fall_back_day(tmp_path):
+    """Last temperature day = the 25-h day: its last half-hour is 23:30 CET
+    (/!\ was + 24 h: 22:30 CET, an hour lost)."""
+    idx = pd.date_range("2025-10-01", "2025-11-30 23:30", freq="30min", tz="UTC")
+    t_end = pd.Timestamp("2025-10-26", tz="Europe/Paris").tz_convert("UTC")
+    ends = {"consumption": idx[-1], "temperature": t_end}
+    cache = tmp_path / "input.pkl"
+    with open(cache, "wb") as f:
+        pickle.dump((pd.DataFrame({"consumption_GW": 50.}, index=idx), None,
+                     pd.DataFrame(), {k: idx[0] for k in ends}, ends, {}), f)
+    out, _, _ = IO.load_data({}, str(cache), 48, 30, do_plot_statistics=False)
+    assert out.index.max() == pd.Timestamp("2025-10-26 22:30", tz="UTC")
+
+
+def test_daily_temperature_covers_every_half_hour_of_its_local_day(monkeypatch):
+    """Each half-hour gets its Paris day's temperature, the 50 of the fall-back
+    day and the 46 of the spring-forward day included (/!\ ffill(limit=48):
+    the 50th half-hour of the fall-back day was NaN, its row then dropped)."""
+    idx = pd.date_range("2025-03-25", "2025-11-05", freq="30min", tz="UTC")
+    conso = pd.DataFrame({"consumption_GW": 50.}, index=idx)
+    days = pd.date_range("2025-03-25", "2025-11-05", freq="D", tz="Europe/Paris")
+    temps = pd.DataFrame({"Tavg_degC": np.arange(len(days), dtype=float)}, index=days)
+    monkeypatch.setattr(IO, "load_weights", lambda **k: ({}, {}))
+    monkeypatch.setattr(IO, "load_consumptions_recent", lambda: (None, None))
+    monkeypatch.setattr(IO, "load_consumption", lambda *a, **k: conso.copy())
+    monkeypatch.setattr(IO, "load_temperature",
+                        lambda *a, **k: (temps.copy(), None, None, None))
+    monkeypatch.setattr(IO, "load_eco2mix", lambda **k: conso[[]])
+
+    out, _, _ = IO.load_data({"consumption": "-", "temperature": "-"}, None, 48, 30,
+                             do_plot_statistics=False)
+
+    local_day = out.index.tz_convert("Europe/Paris").normalize()
+    expected  = temps["Tavg_degC"].reindex(local_day).to_numpy()
+    np.testing.assert_array_equal(out["Tavg_degC"].to_numpy(), expected)
+    for day, n in [("2025-03-30", 46), ("2025-10-26", 50)]:
+        rows = out[local_day == pd.Timestamp(day, tz="Europe/Paris")]
+        assert len(rows) == n and rows["Tavg_degC"].notna().all()
+
+
 def test_real_time_consumption_takes_the_half_hour_value(tmp_path):
     """National (sample of the real file) and regional real-time data: the
     half-hourly value is the reading at :00 / :30, not the mean with :15."""
@@ -167,6 +209,38 @@ def test_real_time_consumption_takes_the_half_hour_value(tmp_path):
     assert (nation.index.minute % 30 == 0).all()
     assert regions["Bretagne"].tolist() == pytest.approx([2.0, 2.02, 2.04, 2.06])
     assert regions["Occitanie"].iloc[0] == pytest.approx(3.0)
+
+    # a missing :00 reading stays missing (/!\ .first() took the :15 one)
+    rows = [r for r in rows if not (r.startswith(stamps[2].isoformat())
+                                    and ";Bretagne;" in r)]
+    regional.write_text("Date - Heure;Région;Consommation (MW)\n" + "\n".join(rows)
+                        + "\n", encoding="utf-8")
+    _, regions = IO.load_consumptions_recent(
+        path_nation=os.path.join(DATA, "eco2mix-national-tr_sample.csv"),
+        url_nation="-", path_region=str(regional), url_region="-")
+    assert regions["Bretagne"].iloc[0] == pytest.approx(2.0)
+    assert np.isnan(regions["Bretagne"].iloc[1])        # 00:30 missing (not 00:45)
+
+
+def test_real_time_national_missing_half_hour_is_not_the_quarter_after(tmp_path):
+    """National file without its 00:30 row: no value from 00:45 in its place."""
+    with open(os.path.join(DATA, "eco2mix-national-tr_sample.csv"), "rb") as f:
+        lines = f.read().split(b"\r\n")
+    path = tmp_path / "nation.csv"
+    path.write_bytes(b"\r\n".join(l for l in lines if b"T00:30:00+02:00" not in l))
+    regional = tmp_path / "regional.csv"
+    regional.write_text("Date - Heure;Région;Consommation (MW)\n"
+                        + "".join(f"2026-07-01T00:00:00+00:00;{r};1000\n" for r in
+                                  ["Nouvelle-Aquitaine", "Bretagne", "Occitanie"]),
+                        encoding="utf-8")
+
+    nation, _ = IO.load_consumptions_recent(
+        path_nation=str(path), url_nation="-", path_region=str(regional),
+        url_region="-")
+
+    assert nation.iloc[0] == pytest.approx(46.807)
+    assert 43.599 not in nation.round(3).tolist()        # the 00:45 reading
+    assert (nation.index.minute % 30 == 0).all()
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +292,28 @@ def test_failed_download_leaves_no_file(tmp_path, server):
     with pytest.raises(IO.requests.HTTPError):
         IO._read_or_download(str(path), "http://x/a.csv", sep=';')
     assert list(tmp_path.iterdir()) == []           # neither a.csv nor a.csv.part
+
+
+def test_empty_download_leaves_no_file(tmp_path, server):
+    """HTTP 200 with no body: an error, and nothing saved (/!\ an empty a.csv
+    was kept, and every later run failed on it)."""
+    path = tmp_path / "a.csv"
+    with pytest.raises(RuntimeError, match="empty"):
+        IO._read_or_download(str(path), "http://x/a.csv", sep=';')
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_interrupted_download_leaves_no_file(tmp_path, monkeypatch):
+    """The connection drops after the first chunk: neither a.csv nor a.csv.part."""
+    class _Broken(_Response):
+        def iter_content(self, chunk_size):
+            yield self.content[:7]
+            raise IO.requests.ConnectionError("dropped")
+    monkeypatch.setattr(IO.requests, "get", lambda url, **k: _Broken(CSV.encode()))
+    path = tmp_path / "a.csv"
+    with pytest.raises(IO.requests.ConnectionError):
+        IO._read_or_download(str(path), "http://x/a.csv", sep=';')
+    assert list(tmp_path.iterdir()) == []
 
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

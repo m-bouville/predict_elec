@@ -616,6 +616,7 @@ def run_model_once(
             #     weights, reloaded a model trained with different ones
             "n_valid"      : n_valid,
             "weights_regions": weights_regions,
+            "num_worst_days": num_worst_days,  # /!\ was missing: stale worst days
             "cols_features": names_cols['features'],
             "dates_df"     : dates_df.to_json(orient='index')} |
             {key: value for key, value in NNTQ_parameters.items() if key!='device'} |

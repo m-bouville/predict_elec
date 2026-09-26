@@ -277,3 +277,25 @@ def test_sma_window_matches_its_name():
     for weeks in (2, 4):
         after = idx[step_at + lag + num_steps_per_day * 7 * weeks + 2]
         assert df[f"consumption_SMA_{weeks}wk_GW"].loc[after] == pytest.approx(1.)
+
+
+def test_sma_needs_80pc_of_its_window():
+    """An SMA value needs 80% of its window: none before 269 of the 336
+    half-hours of a week, none over a 2-day gap (71%), one over a 1-day gap."""
+    pytest.importorskip("torch", reason="utils imports torch via IO/architecture")
+    pytest.importorskip("holidays")
+    import utils
+
+    steps, lag = 48, 48
+    idx = pd.date_range("2022-01-01", periods=steps * 60, freq="30min", tz="UTC")
+    consumption = pd.Series(1., index=idx)
+    sma = utils.df_features_past_consumption(consumption, lag, steps)["consumption_SMA_1wk_GW"]
+    assert idx.get_loc(sma.first_valid_index()) == lag + int(round(steps * 7 * .8)) - 1
+
+    for gap_days, valid in [(2, False), (1, True)]:
+        c = consumption.copy()
+        start = steps * 30
+        c.iloc[start: start + steps * gap_days] = np.nan
+        sma = utils.df_features_past_consumption(c, lag, steps)["consumption_SMA_1wk_GW"]
+        after_gap = idx[start + steps * gap_days + lag + steps]   # window holds the gap
+        assert bool(np.isfinite(sma.loc[after_gap])) is valid, gap_days

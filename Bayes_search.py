@@ -728,9 +728,7 @@ def load_frozen_trials(csv_path     : str,
 
     # print(list(results_df.columns))
     _superfluous = set(_cols_not_paras) - set(results_df.columns)
-    assert len(_superfluous) == 0, \
-        (f"{csv_path}: columns missing (a csv from before the test period was "
-         f"cut in two cannot be reloaded: start a new one)", _superfluous)
+    assert len(_superfluous) == 0, _superfluous
 
     results_df.drop(columns=_cols_not_paras, inplace=True)
     print(f"{csv_path} loaded: {results_df.shape}")
@@ -761,6 +759,7 @@ def load_frozen_trials(csv_path     : str,
     # Create a list of FrozenTrial objects
     trials = []
     distributions_keys = distributions.keys()
+    _outside = {}   # parameter -> number of rows skipped for it
     for index, row in results_df.iterrows():
         # print(index)  #, row)
         _params = {k: row[k] for k in row.keys() if k not in _special_keys}
@@ -768,6 +767,15 @@ def load_frozen_trials(csv_path     : str,
                set(_params.keys()) - set(distributions_keys)
         assert set(distributions_keys) - set(_params.keys()) == set(), \
                set(distributions_keys) - set(_params.keys())
+
+        # rows outside the current ranges (ranges narrowed since): skipped
+        #   (/!\ add_trial raised on the first one: the search did not start)
+        _bad = [k for k, v in _params.items()
+                if not _in_distribution(distributions[k], v)]
+        if _bad:
+            for k in _bad:
+                _outside[k] = _outside.get(k, 0) + 1
+            continue
 
         # relevant loss
         _value = row['loss_NNTQ'] + row['loss_meta'] if stage == Stage.all \
@@ -789,7 +797,20 @@ def load_frozen_trials(csv_path     : str,
         )
         trials.append(trial)
 
+    if _outside:
+        print(f"{csv_path}: {len(results_df) - len(trials)} of {len(results_df)} "
+              f"rows outside the current ranges, not loaded "
+              f"(rows per parameter: {_outside})")
     return trials
+
+
+def _in_distribution(distribution, value) -> bool:
+    """True if `value` is a valid value of `distribution` (in its choices, or
+    in its range and on its step grid), as optuna checks it in add_trial."""
+    try:
+        return bool(distribution._contains(distribution.to_internal_repr(value)))
+    except (ValueError, TypeError):   # e.g. not among the choices
+        return False
 
 
 
