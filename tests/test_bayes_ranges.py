@@ -268,7 +268,9 @@ def test_metamodel_NN_sampling_reaches_the_parameters():
     """metaNN_<key> -> p[key]; metaNN_num_cells_0 / _1 -> p['num_cells'], in
     that order; metaNN_epochs -> p['epochs']."""
     base = copy.deepcopy(constants.METAMODEL_NN_PARAMETERS)
-    ref  = copy.deepcopy(base)
+    base.update({k[len('metaNN_'):]: None for k in META_SCRIPT
+                 if 'num_cells' not in k}, num_cells=None)   # changes visible,
+    ref  = copy.deepcopy(base)                               #   whatever the defaults
     trial = _ScriptedTrial(META_SCRIPT)
     p = bs.sample_metamodel_NN_parameters(trial, base)
     assert sorted(trial.asked) == sorted(META_SCRIPT)
@@ -276,7 +278,7 @@ def test_metamodel_NN_sampling_reaches_the_parameters():
                 if 'num_cells' not in k}
     expected['num_cells'] = [44, 8]
     assert {k: p[k] for k in expected} == expected
-    assert p['epochs'] == 15 != base['epochs']
+    assert p['epochs'] == 15
     assert _unchanged_except(p, base, expected)
     assert base == ref
 
@@ -286,6 +288,9 @@ def test_baseline_sampling_reaches_the_parameters():
     float); the other entries (random_state, n_jobs...) and the input dict
     are unchanged."""
     base = copy.deepcopy(constants.BASELINES_PARAMETERS)
+    for name in BASELINES_SCRIPT:                # every sampled value visible,
+        model, key = name.split('_', 1)          #   whatever the defaults
+        base[model][key] = None
     ref  = copy.deepcopy(base)
     trial = _ScriptedTrial(BASELINES_SCRIPT)
     p = bs.sample_baseline_parameters(trial, base)
@@ -300,3 +305,33 @@ def test_baseline_sampling_reaches_the_parameters():
                 if n.startswith(model + '_')}
         assert _unchanged_except(p[model], base[model], keys), model
     assert base == ref
+
+
+# ---------------------------------------------------------------------------
+# the defaults of constants.py lie inside the search ranges
+# ---------------------------------------------------------------------------
+def test_defaults_are_inside_the_search_ranges():
+    """Each search keeps the other bundles at their defaults (NNTQ search:
+    baselines and meta-NN; meta search: NNTQ), and those values are written to
+    every row of its csv. A default outside DISTRIBUTIONS_* makes every such
+    row skipped on reload (and the reload tests above fail). Lists the
+    offending parameters."""
+    outside = []
+    for model, params in constants.BASELINES_PARAMETERS.items():
+        for key, value in params.items():
+            name = f"{model}_{key}"
+            if name in bs.DISTRIBUTIONS_BASELINES and \
+                    not bs._in_distribution(bs.DISTRIBUTIONS_BASELINES[name], value):
+                outside.append((name, value))
+    for key, value in constants.NNTQ_PARAMETERS.items():
+        if key in bs.DISTRIBUTIONS_NNTQ and \
+                not bs._in_distribution(bs.DISTRIBUTIONS_NNTQ[key], value):
+            outside.append((key, value))
+    for key, value in constants.METAMODEL_NN_PARAMETERS.items():
+        values = {f"metaNN_num_cells_{i}": v for i, v in enumerate(value)} \
+            if key == 'num_cells' else {f"metaNN_{key}": value}
+        for name, v in values.items():
+            if name in bs.DISTRIBUTIONS_METAMODEL_NN and \
+                    not bs._in_distribution(bs.DISTRIBUTIONS_METAMODEL_NN[name], v):
+                outside.append((name, v))
+    assert outside == [], f"defaults outside the search ranges: {outside}"

@@ -77,7 +77,8 @@ def _parameters():
     base = copy.deepcopy(base)
     nntq.update(device=torch.device('cpu'), epochs=1, input_length=48 * 3,
                 batch_size=32, warmup_steps=5, patch_length=48, stride=24,
-                model_dim=16, num_heads=2)
+                model_dim=16, num_heads=2,
+                use_ML_features=0)   # the tests that need 1 set it themselves
     meta.update(device=torch.device("cpu"), batch_size=8)
     return base, nntq, meta
 
