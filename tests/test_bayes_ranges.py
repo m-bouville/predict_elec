@@ -254,8 +254,8 @@ def test_NNTQ_sampling_reaches_the_parameters():
     p[name]; the other entries (device, quantiles...) and the input dict are
     unchanged."""
     base = copy.deepcopy(constants.NNTQ_PARAMETERS)
-    ref  = copy.deepcopy(base)
-    assert all(base[k] != v for k, v in NNTQ_SCRIPT.items())   # all visible
+    base.update({k: None for k in NNTQ_SCRIPT})   # every sampled value visible,
+    ref  = copy.deepcopy(base)                    #   whatever the defaults
     trial = _ScriptedTrial(NNTQ_SCRIPT)
     p = bs.sample_NNTQ_parameters(trial, base)
     assert sorted(trial.asked) == sorted(NNTQ_SCRIPT)

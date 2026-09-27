@@ -70,8 +70,10 @@ FORECAST_TZ  :str = 'Europe/Paris'
 # NN model with Transformer and quantiles
 _patch_length = days_to_steps(0.5)
 
-# defaults: best trial of the Bayesian search (parameter_search_NNTQ.csv, run 142,
-#   loss_NNTQ 17.12, average over 7 runs)
+# defaults: trial 223 of the Bayesian search (parameter_search_NNTQ.csv,
+#   loss_NNTQ 10.58, average over 9 runs; objective on the first half of the
+#   test period): not the lowest loss, but a lower MAE than the trials after it
+# (previously: run 142, loss_NNTQ 17.12, average over 7 runs)
 NNTQ_PARAMETERS: dict = {
     'use_ML_features'  :   0,  # Boolean as int for compatibility with Optuna
     'device'           : DEVICE,
@@ -83,27 +85,29 @@ NNTQ_PARAMETERS: dict = {
     'valid_length'     : days_to_steps( 1),       # 24h: full day ahead
     'features_in_future':True,                 # features do not stop at noon
 
-    'epochs'           :  22,   # Number of training epochs
-    'batch_size'       :  96,   # Training batch size
+    'epochs'           :  32,   # Number of training epochs
+    'batch_size'       : 128,   # Training batch size
 
     # architecture size
-    'model_dim'        : 672,  # Transformer embedding dimension (112 per head)
-    'num_layers'       :   4,    # Number of transformer encoder layers
-    'num_heads'        :   6,    # Number of attention heads
-    'ffn_size'         :   7,    # expansion factor
-    'num_geo_blocks'   :   5,    # Number of geometric blocks
+    'model_dim'        : 416,  # Transformer embedding dimension (100 per head)
+    'num_layers'       :   5,    # Number of transformer encoder layers
+    'num_heads'        :   4,    # Number of attention heads
+    'ffn_size'         :   6,    # expansion factor
+    'num_geo_blocks'   :  10,    # Number of geometric blocks
 
     # optimizer
-    'learning_rate'    :   0.0032,  # Optimizer learning rate
-    'weight_decay'     :   1.312e-9,
-    'dropout'          :   0.14,
-    'warmup_steps'     : 3100,
+    'learning_rate'    :  65.e-6,  # Optimizer learning rate
+    'weight_decay'     :  10.6e-9,
+    'dropout'          :   0.18,
+    'warmup_steps'     : 1500,
         # [optimizer steps = batches], capped at 25% of the run by
         #   lr_warmup_cosine: with ~25 batches/epoch x 22 epochs, 3100 means 25%
+        #   (/!\ with batch_size 128, 32 epochs and TRAIN_SPLIT_FRACTION 0.7,
+        #    25% of the run is fewer steps than 1500: the cap applies)
 
     # early stopping
-    'patience'         :   6,
-    'min_delta'        :   0.048,
+    'patience'         :  13,
+    'min_delta'        :   0.040,
 
     # PatchEmbedding
     'patch_length'     :  48,  # [half-hours]
@@ -115,22 +119,22 @@ NNTQ_PARAMETERS: dict = {
 
     # quantile loss
     'quantiles'        : (0.1, 0.25, 0.5, 0.75, 0.9),
-    'lambda_cross'     : 0.068,   # enforcing correct order of quantiles
-    'lambda_coverage'  : 0.012,
-    'lambda_deriv'     : 0.052,   # derivative weight in loss function
+    'lambda_cross'     : 0.058,   # enforcing correct order of quantiles
+    'lambda_coverage'  : 0.080,
+    'lambda_deriv'     : 0.192,   # derivative weight in loss function
     'lambda_median'    : 0.0,
-    'smoothing_cross'  : 0.022,
+    'smoothing_cross'  : 0.114,
 
         # temperature-dependence (pinball loss, coverage penalty):
         #   lambda * {1 + lambda_cold * [(threshold_cold_degC - Tavg_degC) / dT_K,
         #       clipped to interval [0, 1])]}
         #   where dT_K = (threshold_cold_degC - saturation_cold_degC)
-    'saturation_cold_degC':-7.6,
-    'threshold_cold_degC': -0.2,
-    'lambda_cold'      :    0.17,
+    'saturation_cold_degC':-5.2,
+    'threshold_cold_degC':  0.6,
+    'lambda_cold'      :    0.04,
 
-    'lambda_regions'   :    0.048,
-    'lambda_regions_sum':   0.04,
+    'lambda_regions'   :    0.072,
+    'lambda_regions_sum':   0.32,
 }
 
 # NNTQ_PARAMETERS['num_patches'] = \

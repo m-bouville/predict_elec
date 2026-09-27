@@ -72,18 +72,18 @@ DISTRIBUTIONS_NNTQ = {
     'stride':      IntDistribution(low= 6, high=24, step=3),
     'input_length':IntDistribution(low=12*48,high=16*48,step=2*48),
 
-    'epochs':      IntDistribution(low=10, high=30, step=1),
+    'epochs':      IntDistribution(low=10, high=40, step=1),
     'batch_size':  CategoricalDistribution(choices=[32, 64, 96, 128]),
-    'learning_rate':FloatDistribution(low=0.0004,high=0.01, log=True),
+    'learning_rate':FloatDistribution(low=25.e-6,high=0.01, log=True),
     'weight_decay':FloatDistribution(low=1e-9,  high=1e-5, log=True),
     'dropout':     FloatDistribution(low=0,     high=0.4, step=0.01),
 
     # quantile loss
     'lambda_cross':   FloatDistribution(low=0., high=0.1, step=0.002),
     'lambda_coverage':FloatDistribution(low=0., high=0.4, step=0.004),
-    'lambda_deriv':   FloatDistribution(low=0., high=0.1, step=0.002),
+    'lambda_deriv':   FloatDistribution(low=0., high=0.2, step=0.002),
     'lambda_median':  FloatDistribution(low=0., high=0.1, step=0.004),
-    'smoothing_cross':FloatDistribution(low=0.004, high=0.072, step=0.001),
+    'smoothing_cross':FloatDistribution(low=0.004, high=0.14, step=0.001),
         # temperature-dependence (pinball loss, coverage penalty)
     'threshold_cold_degC': FloatDistribution(low=-1., high= 5., step=0.1),
     'saturation_cold_degC':FloatDistribution(low=-8., high=-2., step=0.1),
@@ -100,7 +100,7 @@ DISTRIBUTIONS_NNTQ = {
     'num_geo_blocks': IntDistribution(low=2, high=12, step=1),
 
     'warmup_steps': IntDistribution(low=500, high=4000, step=100),
-    'patience':     IntDistribution(low=3, high=10, step=1),
+    'patience':     IntDistribution(low=3, high=15, step=1),
     'min_delta':    FloatDistribution(low=0.005, high=0.048, step=0.001),
 }
 
@@ -211,11 +211,11 @@ def sample_NNTQ_parameters(
         p['input_length' ] = trial.suggest_int  ('input_length',14*48,14*48,step=2*48)
 
     if 'epochs' in p:
-        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 28, step=2)
+        p['epochs'        ] = trial.suggest_int  ('epochs', 10, 40, step=2)
     if 'batch_size' in p:
         p['batch_size'    ] = trial.suggest_categorical('batch_size', [32, 64, 96, 128])
     if 'learning_rate' in p:
-        p['learning_rate' ] = trial.suggest_float('learning_rate',0.0004,0.01,log=True)
+        p['learning_rate' ] = trial.suggest_float('learning_rate',25.e-6,0.01,log=True)
     if 'weight_decay' in p:
         p['weight_decay'  ] = trial.suggest_float('weight_decay',1e-9,1e-5,log=True)
     if 'dropout' in p:
@@ -227,11 +227,11 @@ def sample_NNTQ_parameters(
     if 'lambda_coverage' in p:
         p['lambda_coverage']= trial.suggest_float('lambda_coverage',0.0,0.10, step=0.004)
     if 'lambda_deriv' in p:
-        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.096, step=0.004)
+        p['lambda_deriv'  ] = trial.suggest_float('lambda_deriv',   0., 0.2, step=0.004)
     if 'lambda_median' in p:
         p['lambda_median' ] = trial.suggest_float('lambda_median',  0., 0., step=0.008)
     if 'smoothing_cross' in p:
-        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.02,0.072,step=0.002)
+        p['smoothing_cross']=trial.suggest_float('smoothing_cross',0.02,0.14,step=0.002)
 
         # temperature-dependence (pinball loss, coverage penalty)
     if 'threshold_cold_degC' in p:
@@ -267,7 +267,7 @@ def sample_NNTQ_parameters(
     if 'warmup_steps' in p:
         p['warmup_steps'] = trial.suggest_int  ('warmup_steps', 500,4000,step=100)
     if 'patience' in p:
-        p['patience'    ] = trial.suggest_int  ('patience', 3, 10)
+        p['patience'    ] = trial.suggest_int  ('patience', 3, 15)
     if 'min_delta' in p:
         p['min_delta'   ] = trial.suggest_float('min_delta', 0.012, 0.048, step=0.002)
 

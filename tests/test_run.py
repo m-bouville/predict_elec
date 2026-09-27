@@ -304,8 +304,8 @@ def _exec_predict_elec(monkeypatch, mode, run_fast):
 
 
 @pytest.mark.parametrize("mode, run_fast, num_trials, verbose, split", [
-    ('Bayes_NNTQ', True,  40, 0, None),     # RUN_FAST: one-off only
-    ('Bayes_meta', False, 40, 0, None),
+    ('Bayes_NNTQ', True,  'Bayes', 0, None),  # RUN_FAST: one-off only
+    ('Bayes_meta', False, 'Bayes', 0, None),   # 'Bayes': NUM_TRIALS as set there
     ('once',       False,  1, 1, None),
     ('statistics', False,  1, 1, (0.99, 0.01)),
     ('stats_only', False,  0, 1, None),
@@ -315,6 +315,12 @@ def test_predict_elec_modes(monkeypatch, mode, run_fast, num_trials, verbose, sp
     to run.run_model (the constants themselves, RUN_FAST ignored in the
     searches)."""
     kw = _exec_predict_elec(monkeypatch, mode, run_fast)
+    if num_trials == 'Bayes':      # the user's setting, read from the Bayes branch
+        import os
+        src = open(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                "predict_elec.py"), encoding='utf-8').read()
+        branch = src[src.index("elif 'Bayes' in MODE:"):]
+        num_trials = int(re.search(r"NUM_TRIALS\s*=\s*(\d+)", branch).group(1))
     assert kw['mode'] == mode and kw['num_trials'] == num_trials
     assert kw['verbose'] == verbose
     assert (kw['train_split_fraction'], kw['valid_ratio']) == \
